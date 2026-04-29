@@ -5,7 +5,7 @@ RUN apk add --no-cache git gcc musl-dev sqlite-dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -o /app/server ./cmd/server
+RUN go mod tidy && CGO_ENABLED=1 GOOS=linux go build -o /app/server ./cmd/server
 
 # Runtime stage
 FROM mcr.microsoft.com/powershell:7.4-alpine-3.20
