@@ -8,7 +8,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/server ./cmd/server
 
 # Runtime stage
-FROM mcr.microsoft.com/powershell:7.4-alpine-3.19
+FROM mcr.microsoft.com/powershell:7.4-alpine-3.20
 RUN apk add --no-cache sqlite-libs ca-certificates tzdata curl
 # Install VMware PowerCLI
 RUN pwsh -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -Scope AllUsers"
