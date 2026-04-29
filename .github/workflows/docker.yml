@@ -1,0 +1,25 @@
+name: docker
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  backend-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t esxi-iso-builder-backend:ci .
+
+  frontend-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build frontend image
+        run: docker build -t esxi-iso-builder-frontend:ci ./frontend
