@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+    volumes:
+      - .:/app
+      - esxi-data:/data
+      - esxi-cache:/cache
+    command: ["air"]
+    environment:
+      - GIN_MODE=debug
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: ["npm", "run", "dev", "--", "--host"]
+    ports:
+      - "5173:5173"

@@ -1,0 +1,7 @@
+.git
+.tmp
+*.md
+bin/
+data/
+frontend/node_modules/
+frontend/dist/
