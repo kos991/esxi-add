@@ -15,7 +15,10 @@ try {
     $profile = Get-EsxImageProfile | Select-Object -First 1
     Write-Host "[PROGRESS] 50 Cloning profile: $($profile.Name)"
     $custom = New-EsxImageProfile -CloneProfile $profile.Name -Name "Custom-$ESXiVersion-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    $drivers = $DriverPaths -split ","
+    $drivers = @()
+    if (-not [string]::IsNullOrWhiteSpace($DriverPaths)) {
+        $drivers = @($DriverPaths -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    }
     $i = 0
     foreach ($d in $drivers) {
         $i++; $pct = 50 + [int]($i / $drivers.Count * 30)

@@ -1,3 +1,193 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    font-family: Inter, "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #030712;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    letter-spacing: 0;
+  }
+}
+
+@layer components {
+  .sidebar {
+    background-color: #f9f9fb;
+    border-right: 1px solid #e5e7eb;
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 4px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: #4b5563;
+    transition: background-color 0.12s ease, color 0.12s ease;
+  }
+
+  .sidebar-item:hover {
+    background-color: #f3f4f6;
+    color: #000;
+  }
+
+  .sidebar-item.active {
+    background-color: #eef2ff;
+    color: #0051c3;
+    font-weight: 600;
+  }
+
+  .sidebar-section-title {
+    padding: 16px 12px 6px;
+    color: #6b7280;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #6b7280;
+    font-size: 12px;
+  }
+
+  .btn-primary {
+    border: 1px solid #0051c3;
+    border-radius: 4px;
+    background-color: #0051c3;
+    padding: 6px 16px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color 0.16s ease;
+  }
+
+  .btn-primary:hover {
+    background-color: #0043a5;
+  }
+
+  .btn-primary:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .btn-secondary {
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background-color: #fff;
+    padding: 6px 16px;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .btn-secondary:hover {
+    border-color: #9ca3af;
+    background-color: #f9fafb;
+  }
+
+  .table-header {
+    border-bottom: 1px solid #e5e7eb;
+    background-color: #f9f9fb;
+    color: #4b5563;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .table-row {
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 13px;
+    transition: background-color 0.1s ease;
+  }
+
+  .table-row:hover {
+    background-color: #f9f9fb;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .tag-blue,
+  .tag-running,
+  .tag-pending {
+    border-color: #c7d2fe;
+    background-color: #eef2ff;
+    color: #0051c3;
+  }
+
+  .tag-green,
+  .tag-completed {
+    border-color: #bbf7d0;
+    background-color: #f0fdf4;
+    color: #166534;
+  }
+
+  .tag-gray {
+    border-color: #e5e7eb;
+    background-color: #f3f4f6;
+    color: #4b5563;
+  }
+
+  .tag-red,
+  .tag-failed {
+    border-color: #fecaca;
+    background-color: #fef2f2;
+    color: #b91c1c;
+  }
+
+  .tag-orange {
+    border-color: #ffedd5;
+    background-color: #fff7ed;
+    color: #9a3412;
+  }
+
+  .stat-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    background: #fff;
+    padding: 20px;
+  }
+
+  .field-label {
+    color: #4b5563;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .field-input {
+    width: 100%;
+    border-radius: 4px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    padding: 10px 12px;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .field-input:focus {
+    border-color: #0051c3;
+    box-shadow: 0 0 0 1px #0051c3;
+  }
+}

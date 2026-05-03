@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -40,6 +42,9 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 	var req createBuildRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("invalid request body"))
+	}
+	if err := validateCreateBuildRequest(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
 	}
 
 	driversJSON, err := json.Marshal(req.DriverPaths)
@@ -167,4 +172,26 @@ func parsePositiveInt(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func validateCreateBuildRequest(req *createBuildRequest) error {
+	if req == nil {
+		return fmt.Errorf("request body is required")
+	}
+	if req.BucketID == 0 {
+		return fmt.Errorf("bucket_id is required")
+	}
+	req.ESXiVersion = strings.TrimSpace(req.ESXiVersion)
+	if req.ESXiVersion == "" {
+		return fmt.Errorf("esxi_version is required")
+	}
+	req.DepotPath = strings.TrimSpace(req.DepotPath)
+	if req.DepotPath == "" {
+		return fmt.Errorf("depot_path is required")
+	}
+	for i, driverPath := range req.DriverPaths {
+		req.DriverPaths[i] = strings.TrimSpace(driverPath)
+	}
+	req.CustomISOName = strings.TrimSpace(req.CustomISOName)
+	return nil
 }

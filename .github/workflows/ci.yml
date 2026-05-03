@@ -23,6 +23,10 @@ jobs:
           go mod tidy
           go mod download
 
+      - name: Test backend
+        working-directory: .
+        run: go test ./...
+
       - name: Vet backend
         working-directory: .
         run: go vet ./...

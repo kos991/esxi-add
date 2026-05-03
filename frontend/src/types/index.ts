@@ -3,12 +3,14 @@ export interface StorageBucket {
   name: string
   endpoint: string
   access_key: string
+  secret_key?: string
   bucket_name: string
   region: string
   use_ssl: boolean
   public_domain: string
   is_default: boolean
   created_at: string
+  updated_at?: string
 }
 
 export interface FileMetadata {
@@ -18,10 +20,16 @@ export interface FileMetadata {
   type: 'depot' | 'driver' | 'iso'
   esxi_version?: string
   driver_category?: string
+  driver_type?: string
   driver_name?: string
   driver_description?: string
   driver_version?: string
+  is_latest?: boolean
+  conflicts_with?: string
+  depends_on?: string
+  sha256?: string
   size?: number
+  etag?: string
   last_modified?: string
 }
 
