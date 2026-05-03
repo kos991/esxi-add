@@ -230,7 +230,7 @@ func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (*
 
 func buildOutputFileName(customISOName, esxiVersion string) string {
 	if customISOName != "" {
-		name := filepath.Base(customISOName)
+		name := filepath.Base(strings.ReplaceAll(customISOName, "\\", "/"))
 		if strings.EqualFold(filepath.Ext(name), ".iso") {
 			return name
 		}
