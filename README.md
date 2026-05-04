@@ -4,11 +4,11 @@ Custom ESXi ISO build platform with:
 
 - Go backend
 - React + Vite frontend
-- S3/MinIO storage
+- Local disk storage and optional S3/MinIO buckets
 - Asynq async build queue
-- PowerShell/PowerCLI build execution
+- PowerShell/PowerCLI build execution through an external worker or host tooling
 - WebSocket log streaming
-- Docker Compose deployment
+- All-in-one Docker Compose deployment
 
 ## Project Structure
 
@@ -43,9 +43,9 @@ configs/                  YAML config
 - Task list and task detail pages
 
 ### Deployment
-- Backend Docker image
-- Frontend Nginx image
-- Compose stack with Redis + MinIO
+- One Docker image containing the Go server, built frontend, Redis, and MinIO
+- SQLite database and runtime data persisted under `/data`
+- The all-in-one image intentionally does not include PowerShell or PowerCLI
 
 ## Local Development
 
@@ -68,11 +68,13 @@ docker-compose build
 docker-compose up -d
 ```
 
-Dev mode:
+The app UI and API are served from:
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+http://localhost:8080
 ```
+
+MinIO is available at `http://localhost:9000`, with the console at `http://localhost:9001`.
 
 ## CI
 
@@ -83,6 +85,7 @@ GitHub Actions validates:
 - `go build ./...`
 - frontend dependency install
 - frontend production build
+- all-in-one Docker image build
 
 ## Environment
 
@@ -93,6 +96,7 @@ See:
 
 ## Notes
 
-- Frontend Docker build expects `frontend/package-lock.json`
-- PowerCLI is installed in the backend runtime image
+- Frontend assets are built in the main Dockerfile and served by the Go server
+- Redis, MinIO, SQLite, uploaded files, and build/cache data share the `/data` volume in Docker
+- PowerShell/PowerCLI are not installed in the all-in-one image
 - Bucket-specific S3 clients are supported at runtime

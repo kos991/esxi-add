@@ -1,27 +1,44 @@
-# Build stage
-FROM golang:1.21-bookworm AS builder
+# Frontend build stage
+FROM node:20-bookworm-slim AS frontend-builder
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# Backend build stage
+FROM golang:1.21-bookworm AS backend-builder
 WORKDIR /app
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git gcc libc6-dev libsqlite3-dev \
-    && rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go mod tidy && CGO_ENABLED=1 GOOS=linux go build -o /app/server ./cmd/server
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
 
-# Runtime stage
-FROM mcr.microsoft.com/powershell:7.4-debian-12
+# All-in-one runtime: Go app + built frontend + Redis + MinIO.
+# PowerShell and PowerCLI are intentionally not installed in this image.
+FROM debian:12-slim
+ARG TARGETARCH
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libsqlite3-0 ca-certificates tzdata curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
+    && curl -fsSL "https://dl.min.io/server/minio/release/linux-${TARGETARCH:-amd64}/minio" -o /usr/local/bin/minio \
+    && chmod +x /usr/local/bin/minio \
     && rm -rf /var/lib/apt/lists/*
-# Install VMware PowerCLI
-RUN pwsh -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -Scope AllUsers"
+
 WORKDIR /app
-COPY --from=builder /app/server /usr/local/bin/server
-COPY scripts/ ./scripts/
+COPY --from=backend-builder /out/server /usr/local/bin/server
+COPY --from=frontend-builder /frontend/dist/ /app/frontend/dist/
 COPY configs/ ./configs/
-RUN mkdir -p /data /cache
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD curl -f http://localhost:8080/health || exit 1
-CMD ["server"]
+COPY scripts/ ./scripts/
+COPY docker/all-in-one-entrypoint.sh /usr/local/bin/all-in-one-entrypoint
+RUN chmod +x /usr/local/bin/all-in-one-entrypoint \
+    && mkdir -p /data/db /data/storage /data/builds /data/minio /data/redis
+
+EXPOSE 8080 9000 9001
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+  CMD curl -f http://127.0.0.1:8080/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/all-in-one-entrypoint"]

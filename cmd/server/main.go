@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"mime"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
@@ -117,6 +120,7 @@ func main() {
 	app.Use(middleware.CORS())
 
 	handlers.RegisterRoutes(app, db, cfg, taskClient, wsManager)
+	registerFrontendRoutes(app, frontendDistDir())
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	serverErr := make(chan error, 1)
@@ -167,4 +171,81 @@ func ensureRuntimeDirectories(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+func frontendDistDir() string {
+	if dir := strings.TrimSpace(os.Getenv("FRONTEND_DIST_DIR")); dir != "" {
+		return dir
+	}
+
+	return "/app/frontend/dist"
+}
+
+func registerFrontendRoutes(app *fiber.App, distDir string) {
+	indexPath := filepath.Join(distDir, "index.html")
+	if _, err := os.Stat(indexPath); err != nil {
+		return
+	}
+
+	app.Get("*", func(c *fiber.Ctx) error {
+		if isBackendNamespace(c.Path()) {
+			return fiber.ErrNotFound
+		}
+
+		if filePath, ok := frontendAssetPath(distDir, c.Path()); ok {
+			if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+				return sendFrontendFile(c, filePath)
+			}
+		}
+
+		return sendFrontendFile(c, indexPath)
+	})
+}
+
+func isBackendNamespace(path string) bool {
+	return path == "/health" ||
+		path == "/api" ||
+		strings.HasPrefix(path, "/api/") ||
+		path == "/ws" ||
+		strings.HasPrefix(path, "/ws/")
+}
+
+func frontendAssetPath(distDir, requestPath string) (string, bool) {
+	cleanPath := path.Clean("/" + requestPath)
+	if cleanPath == "/" {
+		return "", false
+	}
+
+	relPath := strings.TrimPrefix(cleanPath, "/")
+	filePath := filepath.Join(distDir, filepath.FromSlash(relPath))
+
+	absDist, err := filepath.Abs(distDir)
+	if err != nil {
+		return "", false
+	}
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", false
+	}
+	relToDist, err := filepath.Rel(absDist, absFile)
+	if err != nil || relToDist == ".." || strings.HasPrefix(relToDist, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+
+	return absFile, true
+}
+
+func sendFrontendFile(c *fiber.Ctx, filePath string) error {
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fiber.ErrNotFound
+		}
+		return err
+	}
+
+	if contentType := mime.TypeByExtension(filepath.Ext(filePath)); contentType != "" {
+		c.Set(fiber.HeaderContentType, contentType)
+	}
+	return c.Send(body)
 }

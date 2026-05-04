@@ -110,6 +110,7 @@ func bindEnvAliases(v *viper.Viper) error {
 	aliases := map[string][]string{
 		"server.port":              {"PORT"},
 		"database.path":            {"DB_PATH"},
+		"storage.type":             {"STORAGE_TYPE"},
 		"storage.local_path":       {"STORAGE_PATH"},
 		"storage.s3.endpoint":      {"DEFAULT_S3_ENDPOINT"},
 		"storage.s3.access_key":    {"DEFAULT_S3_ACCESS_KEY"},

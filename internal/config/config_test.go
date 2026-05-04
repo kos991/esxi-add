@@ -31,6 +31,8 @@ func TestLoadSupportsDeploymentEnvAliases(t *testing.T) {
 	t.Setenv("DB_PATH", "/data/custom.db")
 	t.Setenv("CACHE_DIR", "/cache/builds")
 	t.Setenv("REDIS_URL", "redis://:secret@redis.internal:6380/2")
+	t.Setenv("STORAGE_TYPE", "local")
+	t.Setenv("STORAGE_PATH", "/data/storage")
 	t.Setenv("DEFAULT_S3_ENDPOINT", "minio:9000")
 	t.Setenv("DEFAULT_S3_ACCESS_KEY", "minioadmin")
 	t.Setenv("DEFAULT_S3_SECRET_KEY", "miniosecret")
@@ -55,6 +57,9 @@ func TestLoadSupportsDeploymentEnvAliases(t *testing.T) {
 	}
 	if cfg.Redis.Addr != "redis.internal:6380" || cfg.Redis.Password != "secret" || cfg.Redis.DB != 2 {
 		t.Fatalf("expected REDIS_URL to populate redis settings, got addr=%q password=%q db=%d", cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
+	}
+	if cfg.Storage.Type != "local" || cfg.Storage.LocalPath != "/data/storage" {
+		t.Fatalf("expected storage aliases, got type=%q local_path=%q", cfg.Storage.Type, cfg.Storage.LocalPath)
 	}
 	if cfg.Storage.S3.Endpoint != "minio:9000" ||
 		cfg.Storage.S3.AccessKey != "minioadmin" ||

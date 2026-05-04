@@ -1,4 +1,4 @@
-.PHONY: build run test clean deps docker-build docker-up docker-down docker-logs docker-dev
+.PHONY: build run test clean deps docker-build docker-up docker-down docker-logs
 
 build:
 	go build -o bin/server ./cmd/server
@@ -28,6 +28,3 @@ docker-down:
 
 docker-logs:
 	docker-compose logs -f
-
-docker-dev:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
