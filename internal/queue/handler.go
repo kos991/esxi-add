@@ -24,22 +24,41 @@ import (
 )
 
 type BuildTaskHandler struct {
-	db           *gorm.DB
-	executor     *builder.PowerShellExecutor
-	cacheManager *storage.CacheManager
-	s3Client     *storage.S3Client
-	workDir      string
-	wsManager    *ws.Manager
+	db        *gorm.DB
+	executor  *builder.PowerShellExecutor
+	workDir   string
+	wsManager *ws.Manager
 }
 
-func NewBuildTaskHandler(db *gorm.DB, executor *builder.PowerShellExecutor, cacheManager *storage.CacheManager, s3Client *storage.S3Client, workDir string, wsManager *ws.Manager) *BuildTaskHandler {
+var newBuildS3Client = storage.NewS3Client
+
+type fileResolver interface {
+	EnsureFile(ctx context.Context, objectPath string) (string, error)
+}
+
+type objectUploader interface {
+	Upload(ctx context.Context, objectPath string, reader io.Reader, size int64, contentType string) error
+}
+
+type buildStorage struct {
+	resolver fileResolver
+	uploader objectUploader
+}
+
+func (s buildStorage) EnsureFile(ctx context.Context, objectPath string) (string, error) {
+	return s.resolver.EnsureFile(ctx, objectPath)
+}
+
+func (s buildStorage) Upload(ctx context.Context, objectPath string, reader io.Reader, size int64, contentType string) error {
+	return s.uploader.Upload(ctx, objectPath, reader, size, contentType)
+}
+
+func NewBuildTaskHandler(db *gorm.DB, executor *builder.PowerShellExecutor, _ *storage.CacheManager, _ *storage.S3Client, workDir string, wsManager *ws.Manager) *BuildTaskHandler {
 	return &BuildTaskHandler{
-		db:           db,
-		executor:     executor,
-		cacheManager: cacheManager,
-		s3Client:     s3Client,
-		workDir:      workDir,
-		wsManager:    wsManager,
+		db:        db,
+		executor:  executor,
+		workDir:   workDir,
+		wsManager: wsManager,
 	}
 }
 
@@ -70,13 +89,13 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		return fmt.Errorf("create task work directory: %w", err)
 	}
 
-	client, cacheManager, err := h.resolveStorage(ctx, payload.BucketID)
+	buildStore, err := h.resolveStorage(ctx, payload.BucketID)
 	if err != nil {
 		_ = h.updateError(payload.TaskID, err.Error())
 		return err
 	}
 
-	depotLocal, err := cacheManager.EnsureFile(ctx, payload.DepotPath)
+	depotLocal, err := buildStore.EnsureFile(ctx, payload.DepotPath)
 	if err != nil {
 		_ = h.updateError(payload.TaskID, err.Error())
 		return fmt.Errorf("cache depot: %w", err)
@@ -84,7 +103,7 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 
 	driverLocals := make([]string, 0, len(payload.DriverPaths))
 	for _, driverPath := range payload.DriverPaths {
-		localPath, err := cacheManager.EnsureFile(ctx, driverPath)
+		localPath, err := buildStore.EnsureFile(ctx, driverPath)
 		if err != nil {
 			_ = h.updateError(payload.TaskID, err.Error())
 			return fmt.Errorf("cache driver %s: %w", driverPath, err)
@@ -129,34 +148,19 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		return err
 	}
 
-	outputFile, err := os.Open(outputLocalPath)
+	outputObjectPath, shaValue, outputSize, err := storeBuildOutput(ctx, buildStore, outputLocalPath, outputFileName)
 	if err != nil {
 		_ = h.updateError(payload.TaskID, err.Error())
-		return fmt.Errorf("open output iso: %w", err)
-	}
-	defer outputFile.Close()
-
-	outputInfo, err := outputFile.Stat()
-	if err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
-		return fmt.Errorf("stat output iso: %w", err)
-	}
-
-	outputS3Path := path.Join("output", outputFileName)
-	hasher := sha256.New()
-	if err := client.Upload(ctx, outputS3Path, io.TeeReader(outputFile, hasher), outputInfo.Size(), "application/x-iso9660-image"); err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
-		return fmt.Errorf("upload output iso: %w", err)
+		return err
 	}
 
 	completedAt := time.Now()
-	shaValue := hex.EncodeToString(hasher.Sum(nil))
 	updates := map[string]any{
 		"status":            models.BuildTaskStatusCompleted,
 		"progress":          100,
-		"output_iso":        outputS3Path,
+		"output_iso":        outputObjectPath,
 		"output_iso_sha256": shaValue,
-		"output_iso_size":   outputInfo.Size(),
+		"output_iso_size":   outputSize,
 		"completed_at":      completedAt,
 		"build_duration":    int(completedAt.Sub(startedAt).Seconds()),
 		"error_message":     "",
@@ -165,9 +169,9 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		return fmt.Errorf("finalize build task: %w", err)
 	}
 
-	_ = h.appendLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputS3Path))
+	_ = h.appendLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 	if h.wsManager != nil {
-		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputS3Path))
+		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 		h.wsManager.BroadcastProgress(payload.TaskID, 100)
 	}
 
@@ -197,17 +201,20 @@ func (h *BuildTaskHandler) updateError(taskID, errMsg string) error {
 		}).Error
 }
 
-func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (*storage.S3Client, *storage.CacheManager, error) {
-	if h.s3Client != nil && h.cacheManager != nil {
-		return h.s3Client, h.cacheManager, nil
-	}
-
+func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (buildStorage, error) {
 	var bucket models.StorageBucket
 	if err := h.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {
-		return nil, nil, fmt.Errorf("find storage bucket: %w", err)
+		return buildStorage{}, fmt.Errorf("find storage bucket: %w", err)
 	}
 
-	client, err := storage.NewS3Client(&storage.S3Config{
+	if bucket.Type == models.StorageTypeLocal {
+		return newLocalBuildStorage(bucket.LocalPath)
+	}
+	if bucket.Type != "" && bucket.Type != models.StorageTypeS3 {
+		return buildStorage{}, fmt.Errorf("unsupported storage bucket type: %s", bucket.Type)
+	}
+
+	client, err := newBuildS3Client(&storage.S3Config{
 		Endpoint:        bucket.Endpoint,
 		AccessKeyID:     bucket.AccessKey,
 		SecretAccessKey: bucket.SecretKey,
@@ -217,15 +224,11 @@ func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (*
 		PublicDomain:    bucket.PublicDomain,
 	})
 	if err != nil {
-		return nil, nil, err
+		return buildStorage{}, err
 	}
 
-	cacheManager := h.cacheManager
-	if cacheManager == nil {
-		cacheManager = storage.NewCacheManager(filepath.Join(h.workDir, "cache"), client)
-	}
-
-	return client, cacheManager, nil
+	cacheManager := storage.NewCacheManager(filepath.Join(h.workDir, "cache", fmt.Sprintf("bucket-%d", bucket.ID)), client)
+	return buildStorage{resolver: cacheManager, uploader: client}, nil
 }
 
 func buildOutputFileName(customISOName, esxiVersion string) string {
@@ -238,4 +241,33 @@ func buildOutputFileName(customISOName, esxiVersion string) string {
 	}
 
 	return fmt.Sprintf("ESXi-%s-custom-%s.iso", esxiVersion, time.Now().Format("20060102-150405"))
+}
+
+func newLocalBuildStorage(localPath string) (buildStorage, error) {
+	store, err := storage.NewLocalStore(localPath)
+	if err != nil {
+		return buildStorage{}, err
+	}
+	return buildStorage{resolver: store, uploader: store}, nil
+}
+
+func storeBuildOutput(ctx context.Context, store buildStorage, outputLocalPath, outputFileName string) (string, string, int64, error) {
+	outputFile, err := os.Open(outputLocalPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open output iso: %w", err)
+	}
+	defer outputFile.Close()
+
+	outputInfo, err := outputFile.Stat()
+	if err != nil {
+		return "", "", 0, fmt.Errorf("stat output iso: %w", err)
+	}
+
+	outputObjectPath := path.Join("output", outputFileName)
+	hasher := sha256.New()
+	if err := store.Upload(ctx, outputObjectPath, io.TeeReader(outputFile, hasher), outputInfo.Size(), "application/x-iso9660-image"); err != nil {
+		return "", "", 0, fmt.Errorf("upload output iso: %w", err)
+	}
+
+	return outputObjectPath, hex.EncodeToString(hasher.Sum(nil)), outputInfo.Size(), nil
 }

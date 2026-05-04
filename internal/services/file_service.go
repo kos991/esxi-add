@@ -1,276 +1,373 @@
 package services
 
 import (
-    "context"
-    "crypto/sha256"
-    "encoding/hex"
-    "fmt"
-    "io"
-    "path"
-    "path/filepath"
-    "strings"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"path"
+	"path/filepath"
+	"strings"
 
-    "github.com/minio/minio-go/v7"
-    "gorm.io/gorm"
-    "gorm.io/gorm/clause"
+	"github.com/minio/minio-go/v7"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
-    "github.com/esxi-builder/esxi-iso-builder/internal/models"
-    "github.com/esxi-builder/esxi-iso-builder/internal/storage"
+	"github.com/esxi-builder/esxi-iso-builder/internal/models"
+	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 )
 
 type FileService struct {
-    db       *gorm.DB
-    s3Client *storage.S3Client
+	db       *gorm.DB
+	s3Client *storage.S3Client
 }
 
 func NewFileService(db *gorm.DB, s3 *storage.S3Client) *FileService {
-    return &FileService{db: db, s3Client: s3}
+	return &FileService{db: db, s3Client: s3}
 }
 
 func (s *FileService) ListDepots(ctx context.Context, bucketID uint) ([]models.FileMetadata, error) {
-    var files []models.FileMetadata
-    err := s.db.WithContext(ctx).
-        Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDepot).
-        Order("path ASC").
-        Find(&files).Error
-    return files, err
+	var files []models.FileMetadata
+	err := s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDepot).
+		Order("path ASC").
+		Find(&files).Error
+	return files, err
 }
 
 func (s *FileService) ListDrivers(ctx context.Context, bucketID uint, esxiVersion, category string) ([]models.FileMetadata, error) {
-    query := s.db.WithContext(ctx).
-        Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDriver)
+	query := s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDriver)
 
-    if esxiVersion != "" {
-        query = query.Where("esxi_version = ?", esxiVersion)
-    }
-    if category != "" {
-        query = query.Where("driver_category = ?", category)
-    }
+	if esxiVersion != "" {
+		query = query.Where("esxi_version = ?", esxiVersion)
+	}
+	if category != "" {
+		query = query.Where("driver_category = ?", category)
+	}
 
-    var files []models.FileMetadata
-    err := query.Order("path ASC").Find(&files).Error
-    return files, err
+	var files []models.FileMetadata
+	err := query.Order("path ASC").Find(&files).Error
+	return files, err
 }
 
 func (s *FileService) ListISOs(ctx context.Context, bucketID uint) ([]models.FileMetadata, error) {
-    var files []models.FileMetadata
-    err := s.db.WithContext(ctx).
-        Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeISO).
-        Order("path ASC").
-        Find(&files).Error
-    return files, err
+	var files []models.FileMetadata
+	err := s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeISO).
+		Order("path ASC").
+		Find(&files).Error
+	return files, err
 }
 
 func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, esxiVersion, driverCategory string, filename string, reader io.Reader, size int64) (*models.FileMetadata, error) {
-    client, bucket, err := s.getClientForBucket(ctx, bucketID)
-    if err != nil {
-        return nil, err
-    }
+	bucket, err := s.getBucket(ctx, bucketID)
+	if err != nil {
+		return nil, err
+	}
 
-    objectPath, err := buildObjectPath(fileType, esxiVersion, driverCategory, filename)
-    if err != nil {
-        return nil, err
-    }
+	objectPath, err := buildObjectPath(fileType, esxiVersion, driverCategory, filename)
+	if err != nil {
+		return nil, err
+	}
 
-    hasher := sha256.New()
-    if err := client.Upload(ctx, objectPath, io.TeeReader(reader, hasher), size, detectContentType(filename)); err != nil {
-        return nil, err
-    }
+	hasher := sha256.New()
+	var objectInfo minio.ObjectInfo
+	var infoErr error
+	switch normalizeStorageType(bucket.Type) {
+	case models.StorageTypeLocal:
+		store, err := storage.NewLocalStore(bucket.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := store.Upload(ctx, objectPath, io.TeeReader(reader, hasher), size, detectContentType(filename)); err != nil {
+			return nil, err
+		}
+		objectInfo, infoErr = store.GetObjectInfo(ctx, objectPath)
+	case models.StorageTypeS3:
+		client, err := s.newS3ClientForBucket(bucket)
+		if err != nil {
+			return nil, err
+		}
+		if err := client.Upload(ctx, objectPath, io.TeeReader(reader, hasher), size, detectContentType(filename)); err != nil {
+			return nil, err
+		}
+		objectInfo, infoErr = client.GetObjectInfo(ctx, objectPath)
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", bucket.Type)
+	}
 
-    sha256Value := hex.EncodeToString(hasher.Sum(nil))
-    objectInfo, infoErr := client.GetObjectInfo(ctx, objectPath)
+	metadata := &models.FileMetadata{
+		StorageBucketID: bucket.ID,
+		Path:            objectPath,
+		Type:            normalizeFileType(fileType),
+		ESXiVersion:     esxiVersion,
+		DriverCategory:  driverCategory,
+		DriverType:      strings.TrimPrefix(strings.ToLower(filepath.Ext(filename)), "."),
+		DriverName:      path.Base(filename),
+		SHA256:          hex.EncodeToString(hasher.Sum(nil)),
+		Size:            size,
+	}
 
-    metadata := &models.FileMetadata{
-        StorageBucketID:   bucket.ID,
-        Path:              objectPath,
-        Type:              normalizeFileType(fileType),
-        ESXiVersion:       esxiVersion,
-        DriverCategory:    driverCategory,
-        DriverType:        strings.TrimPrefix(strings.ToLower(filepath.Ext(filename)), "."),
-        DriverName:        path.Base(filename),
-        SHA256:            sha256Value,
-        Size:              size,
-    }
+	if infoErr == nil {
+		metadata.ETag = objectInfo.ETag
+		metadata.Size = objectInfo.Size
+		lastModified := objectInfo.LastModified
+		metadata.LastModified = &lastModified
+	}
 
-    if infoErr == nil {
-        metadata.ETag = objectInfo.ETag
-        metadata.Size = objectInfo.Size
-        lastModified := objectInfo.LastModified
-        metadata.LastModified = &lastModified
-    }
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"deleted_at",
+			"type",
+			"esxi_version",
+			"driver_category",
+			"driver_type",
+			"driver_name",
+			"driver_description",
+			"driver_version",
+			"is_latest",
+			"conflicts_with",
+			"depends_on",
+			"sha256",
+			"size",
+			"etag",
+			"last_modified",
+			"updated_at",
+		}),
+	}).Create(metadata).Error; err != nil {
+		return nil, fmt.Errorf("upsert file metadata: %w", err)
+	}
 
-    if err := s.db.WithContext(ctx).Create(metadata).Error; err != nil {
-        return nil, fmt.Errorf("create file metadata: %w", err)
-    }
+	if err := s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND path = ?", bucket.ID, objectPath).
+		First(metadata).Error; err != nil {
+		return nil, fmt.Errorf("find file metadata: %w", err)
+	}
 
-    return metadata, nil
+	return metadata, nil
 }
 
 func (s *FileService) DeleteFile(ctx context.Context, id uint) error {
-    var file models.FileMetadata
-    if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
-        return err
-    }
+	var file models.FileMetadata
+	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
+		return err
+	}
 
-    client, _, err := s.getClientForBucket(ctx, file.StorageBucketID)
-    if err != nil {
-        return err
-    }
+	bucket, err := s.getBucket(ctx, file.StorageBucketID)
+	if err != nil {
+		return err
+	}
 
-    if err := client.DeleteObject(ctx, file.Path); err != nil {
-        return err
-    }
+	switch normalizeStorageType(bucket.Type) {
+	case models.StorageTypeLocal:
+		store, err := storage.NewLocalStore(bucket.LocalPath)
+		if err != nil {
+			return err
+		}
+		if err := store.DeleteObject(ctx, file.Path); err != nil {
+			return err
+		}
+	case models.StorageTypeS3:
+		client, err := s.newS3ClientForBucket(bucket)
+		if err != nil {
+			return err
+		}
+		if err := client.DeleteObject(ctx, file.Path); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported storage type: %s", bucket.Type)
+	}
 
-    if err := s.db.WithContext(ctx).Delete(&file).Error; err != nil {
-        return fmt.Errorf("delete file metadata: %w", err)
-    }
+	if err := s.db.WithContext(ctx).Delete(&file).Error; err != nil {
+		return fmt.Errorf("delete file metadata: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
-    client, _, err := s.getClientForBucket(ctx, bucketID)
-    if err != nil {
-        return err
-    }
+	bucket, err := s.getBucket(ctx, bucketID)
+	if err != nil {
+		return err
+	}
 
-    prefixes := []string{"depots/", "drivers/", "output/"}
-    for _, prefix := range prefixes {
-        objects, err := client.ListObjects(ctx, prefix)
-        if err != nil {
-            return err
-        }
+	prefixes := []string{"depots/", "drivers/", "output/"}
+	for _, prefix := range prefixes {
+		objects, err := s.listObjects(ctx, bucket, prefix)
+		if err != nil {
+			return err
+		}
 
-        for _, objectInfo := range objects {
-            metadata := objectInfoToMetadata(bucketID, objectInfo)
-            if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-                Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
-                DoUpdates: clause.AssignmentColumns([]string{
-                    "type",
-                    "esxi_version",
-                    "driver_category",
-                    "driver_type",
-                    "driver_name",
-                    "size",
-                    "etag",
-                    "last_modified",
-                    "updated_at",
-                }),
-            }).Create(&metadata).Error; err != nil {
-                return fmt.Errorf("upsert metadata for %s: %w", objectInfo.Key, err)
-            }
-        }
-    }
+		for _, objectInfo := range objects {
+			metadata := objectInfoToMetadata(bucketID, objectInfo)
+			if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"type",
+					"esxi_version",
+					"driver_category",
+					"driver_type",
+					"driver_name",
+					"size",
+					"etag",
+					"last_modified",
+					"updated_at",
+				}),
+			}).Create(&metadata).Error; err != nil {
+				return fmt.Errorf("upsert metadata for %s: %w", objectInfo.Key, err)
+			}
+		}
+	}
 
-    return nil
+	return nil
 }
 
-func (s *FileService) getClientForBucket(ctx context.Context, bucketID uint) (*storage.S3Client, *models.StorageBucket, error) {
-    if bucketID == 0 {
-        return nil, nil, fmt.Errorf("bucket id is required")
-    }
+func (s *FileService) getBucket(ctx context.Context, bucketID uint) (*models.StorageBucket, error) {
+	if bucketID == 0 {
+		return nil, fmt.Errorf("bucket id is required")
+	}
 
-    var bucket models.StorageBucket
-    if err := s.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {
-        return nil, nil, fmt.Errorf("find storage bucket: %w", err)
-    }
+	var bucket models.StorageBucket
+	if err := s.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {
+		return nil, fmt.Errorf("find storage bucket: %w", err)
+	}
+	if bucket.Type == "" {
+		bucket.Type = models.StorageTypeS3
+	}
+	return &bucket, nil
+}
 
-    client, err := storage.NewS3Client(&storage.S3Config{
-        Endpoint:        bucket.Endpoint,
-        AccessKeyID:     bucket.AccessKey,
-        SecretAccessKey: bucket.SecretKey,
-        BucketName:      bucket.BucketName,
-        Region:          bucket.Region,
-        UseSSL:          bucket.UseSSL,
-        PublicDomain:    bucket.PublicDomain,
-    })
-    if err != nil {
-        return nil, nil, err
-    }
+func (s *FileService) newS3ClientForBucket(bucket *models.StorageBucket) (*storage.S3Client, error) {
+	client, err := storage.NewS3Client(&storage.S3Config{
+		Endpoint:        bucket.Endpoint,
+		AccessKeyID:     bucket.AccessKey,
+		SecretAccessKey: bucket.SecretKey,
+		BucketName:      bucket.BucketName,
+		Region:          bucket.Region,
+		UseSSL:          bucket.UseSSL,
+		PublicDomain:    bucket.PublicDomain,
+	})
+	if err != nil {
+		return nil, err
+	}
 
-    return client, &bucket, nil
+	return client, nil
+}
+
+func (s *FileService) listObjects(ctx context.Context, bucket *models.StorageBucket, prefix string) ([]minio.ObjectInfo, error) {
+	switch normalizeStorageType(bucket.Type) {
+	case models.StorageTypeLocal:
+		store, err := storage.NewLocalStore(bucket.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		return store.ListObjects(ctx, prefix)
+	case models.StorageTypeS3:
+		client, err := s.newS3ClientForBucket(bucket)
+		if err != nil {
+			return nil, err
+		}
+		return client.ListObjects(ctx, prefix)
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", bucket.Type)
+	}
 }
 
 func buildObjectPath(fileType, esxiVersion, driverCategory, filename string) (string, error) {
-    cleanName := path.Base(filename)
-    if cleanName == "." || cleanName == "/" || cleanName == "" {
-        return "", fmt.Errorf("filename is required")
-    }
+	cleanName := path.Base(filename)
+	if cleanName == "." || cleanName == "/" || cleanName == "" {
+		return "", fmt.Errorf("filename is required")
+	}
 
-    switch normalizeFileType(fileType) {
-    case models.FileTypeDepot:
-        return path.Join("depots", cleanName), nil
-    case models.FileTypeDriver:
-        if esxiVersion == "" {
-            return "", fmt.Errorf("esxi version is required for driver uploads")
-        }
-        if driverCategory == "" {
-            return "", fmt.Errorf("driver category is required for driver uploads")
-        }
-        return path.Join("drivers", esxiVersion, driverCategory, cleanName), nil
-    case models.FileTypeISO:
-        return path.Join("output", cleanName), nil
-    default:
-        return "", fmt.Errorf("unsupported file type: %s", fileType)
-    }
+	switch normalizeFileType(fileType) {
+	case models.FileTypeDepot:
+		return path.Join("depots", cleanName), nil
+	case models.FileTypeDriver:
+		if esxiVersion == "" {
+			return "", fmt.Errorf("esxi version is required for driver uploads")
+		}
+		if driverCategory == "" {
+			return "", fmt.Errorf("driver category is required for driver uploads")
+		}
+		return path.Join("drivers", esxiVersion, driverCategory, cleanName), nil
+	case models.FileTypeISO:
+		return path.Join("output", cleanName), nil
+	default:
+		return "", fmt.Errorf("unsupported file type: %s", fileType)
+	}
 }
 
 func normalizeFileType(fileType string) string {
-    switch strings.ToLower(fileType) {
-    case models.FileTypeDepot:
-        return models.FileTypeDepot
-    case models.FileTypeDriver:
-        return models.FileTypeDriver
-    case models.FileTypeISO:
-        return models.FileTypeISO
-    default:
-        return strings.ToLower(fileType)
-    }
+	switch strings.ToLower(fileType) {
+	case models.FileTypeDepot:
+		return models.FileTypeDepot
+	case models.FileTypeDriver:
+		return models.FileTypeDriver
+	case models.FileTypeISO:
+		return models.FileTypeISO
+	default:
+		return strings.ToLower(fileType)
+	}
+}
+
+func normalizeStorageType(storageType string) string {
+	switch strings.ToLower(strings.TrimSpace(storageType)) {
+	case "", models.StorageTypeS3:
+		return models.StorageTypeS3
+	case models.StorageTypeLocal:
+		return models.StorageTypeLocal
+	default:
+		return strings.ToLower(strings.TrimSpace(storageType))
+	}
 }
 
 func detectContentType(filename string) string {
-    switch strings.ToLower(filepath.Ext(filename)) {
-    case ".iso":
-        return "application/x-iso9660-image"
-    case ".zip":
-        return "application/zip"
-    case ".gz", ".tgz":
-        return "application/gzip"
-    case ".vib":
-        return "application/octet-stream"
-    default:
-        return "application/octet-stream"
-    }
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".iso":
+		return "application/x-iso9660-image"
+	case ".zip":
+		return "application/zip"
+	case ".gz", ".tgz":
+		return "application/gzip"
+	case ".vib":
+		return "application/octet-stream"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.FileMetadata {
-    metadata := models.FileMetadata{
-        StorageBucketID: bucketID,
-        Path:            objectInfo.Key,
-        Size:            objectInfo.Size,
-        ETag:            objectInfo.ETag,
-        DriverName:      path.Base(objectInfo.Key),
-    }
+	metadata := models.FileMetadata{
+		StorageBucketID: bucketID,
+		Path:            objectInfo.Key,
+		Size:            objectInfo.Size,
+		ETag:            objectInfo.ETag,
+		DriverName:      path.Base(objectInfo.Key),
+	}
 
-    if !objectInfo.LastModified.IsZero() {
-        lastModified := objectInfo.LastModified
-        metadata.LastModified = &lastModified
-    }
+	if !objectInfo.LastModified.IsZero() {
+		lastModified := objectInfo.LastModified
+		metadata.LastModified = &lastModified
+	}
 
-    switch {
-    case strings.HasPrefix(objectInfo.Key, "depots/"):
-        metadata.Type = models.FileTypeDepot
-    case strings.HasPrefix(objectInfo.Key, "drivers/"):
-        metadata.Type = models.FileTypeDriver
-        parts := strings.Split(objectInfo.Key, "/")
-        if len(parts) >= 4 {
-            metadata.ESXiVersion = parts[1]
-            metadata.DriverCategory = parts[2]
-        }
-        metadata.DriverType = strings.TrimPrefix(strings.ToLower(filepath.Ext(objectInfo.Key)), ".")
-    case strings.HasPrefix(objectInfo.Key, "output/"):
-        metadata.Type = models.FileTypeISO
-    }
+	switch {
+	case strings.HasPrefix(objectInfo.Key, "depots/"):
+		metadata.Type = models.FileTypeDepot
+	case strings.HasPrefix(objectInfo.Key, "drivers/"):
+		metadata.Type = models.FileTypeDriver
+		parts := strings.Split(objectInfo.Key, "/")
+		if len(parts) >= 4 {
+			metadata.ESXiVersion = parts[1]
+			metadata.DriverCategory = parts[2]
+		}
+		metadata.DriverType = strings.TrimPrefix(strings.ToLower(filepath.Ext(objectInfo.Key)), ".")
+	case strings.HasPrefix(objectInfo.Key, "output/"):
+		metadata.Type = models.FileTypeISO
+	}
 
-    return metadata
+	return metadata
 }
