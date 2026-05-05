@@ -89,6 +89,30 @@ func (s *LocalStore) DeleteObject(ctx context.Context, objectName string) error 
 	return nil
 }
 
+func (s *LocalStore) RenameObject(ctx context.Context, oldObjectName, newObjectName string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	oldPath, err := s.safePath(oldObjectName)
+	if err != nil {
+		return err
+	}
+	newPath, err := s.safePath(newObjectName)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		return fmt.Errorf("create renamed object directory: %w", err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return fmt.Errorf("rename local object %s to %s: %w", oldObjectName, newObjectName, err)
+	}
+	return nil
+}
+
 func (s *LocalStore) GetObjectInfo(ctx context.Context, objectName string) (minio.ObjectInfo, error) {
 	select {
 	case <-ctx.Done():

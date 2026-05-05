@@ -1,18 +1,40 @@
 import * as Tabs from '@radix-ui/react-tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Check, Copy, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { listBuckets } from '../api/buckets'
-import { deleteFile, listDepots, listDrivers, listISOs, refreshFiles, uploadFile } from '../api/files'
+import { deleteFile, listDepots, listDrivers, listISOs, refreshFiles, renameFile, uploadFile } from '../api/files'
 import type { FileMetadata } from '../types'
-import { formatBytes, formatDate } from '../utils'
+import { cn, formatBytes, formatDate } from '../utils'
 
-const primaryButton = 'rounded border border-[#0051c3] bg-[#0051c3] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#0043a5] disabled:cursor-not-allowed disabled:opacity-60'
-const secondaryButton = 'rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+type UploadType = 'depot' | 'driver' | 'iso'
+
+const versions = ['6.5', '6.7', '7.0', '8.0', '9.0']
+const categories = [
+  { value: 'network', label: 'Network' },
+  { value: 'storage', label: 'Storage' },
+  { value: 'raid', label: 'RAID' },
+  { value: 'other', label: 'Other' },
+]
+
+const primaryButton = 'inline-flex items-center gap-2 rounded border border-[#0051c3] bg-[#0051c3] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#0043a5] disabled:cursor-not-allowed disabled:opacity-60'
+const secondaryButton = 'inline-flex items-center gap-2 rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+const dangerButton = 'inline-flex items-center gap-2 rounded border border-red-200 bg-white px-3 py-1.5 text-[13px] font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60'
+const iconButton = 'inline-flex h-8 w-8 items-center justify-center rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
 const selectClass = 'rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] outline-none focus:border-blue-600'
+const inputClass = 'rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] outline-none focus:border-blue-600'
 const tabClass = 'border-b-2 border-transparent px-5 py-3 text-[13px] font-semibold text-gray-500 data-[state=active]:border-blue-600 data-[state=active]:bg-white data-[state=active]:text-blue-700'
 
 function fileName(file: FileMetadata) {
   return file.path.split('/').pop() || file.path
+}
+
+function displayName(file: FileMetadata) {
+  return file.driver_name || fileName(file)
+}
+
+function versionTag(file: FileMetadata) {
+  return file.driver_version || file.esxi_version || '-'
 }
 
 function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
@@ -26,8 +48,13 @@ function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
 export default function FilesPage() {
   const queryClient = useQueryClient()
   const [bucketId, setBucketId] = useState<number | ''>('')
-  const [version, setVersion] = useState('8.x')
+  const [version, setVersion] = useState('8.0')
   const [category, setCategory] = useState('network')
+  const [uploadType, setUploadType] = useState<UploadType>('depot')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [fileInputKey, setFileInputKey] = useState(0)
+  const [renamingId, setRenamingId] = useState<number | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const [message, setMessage] = useState<string | null>(null)
 
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
@@ -57,16 +84,30 @@ export default function FilesPage() {
     enabled: Boolean(selectedBucketId),
   })
 
+  const invalidateFiles = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['depots', selectedBucketId] }),
+      queryClient.invalidateQueries({ queryKey: ['drivers', selectedBucketId] }),
+      queryClient.invalidateQueries({ queryKey: ['isos', selectedBucketId] }),
+      queryClient.invalidateQueries({ queryKey: ['build-depots', selectedBucketId] }),
+      queryClient.invalidateQueries({ queryKey: ['build-drivers', selectedBucketId] }),
+    ])
+  }
+
   const uploadMutation = useMutation({
-    mutationFn: ({ type, file, esxiVersion, driverCategory }: { type: 'depot' | 'driver' | 'iso'; file: File; esxiVersion?: string; driverCategory?: string }) =>
-      uploadFile(selectedBucketId as number, type, file, esxiVersion, driverCategory),
+    mutationFn: ({ type, file }: { type: UploadType; file: File }) =>
+      uploadFile(
+        selectedBucketId as number,
+        type,
+        file,
+        type === 'iso' ? undefined : version,
+        type === 'driver' ? category : undefined
+      ),
     onSuccess: async () => {
       setMessage('文件已上传')
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['depots', selectedBucketId] }),
-        queryClient.invalidateQueries({ queryKey: ['drivers', selectedBucketId] }),
-        queryClient.invalidateQueries({ queryKey: ['isos', selectedBucketId] }),
-      ])
+      setSelectedFile(null)
+      setFileInputKey((current) => current + 1)
+      await invalidateFiles()
     },
     onError: (error) => setMessage(String(error)),
   })
@@ -75,11 +116,18 @@ export default function FilesPage() {
     mutationFn: deleteFile,
     onSuccess: async () => {
       setMessage('文件已删除')
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['depots', selectedBucketId] }),
-        queryClient.invalidateQueries({ queryKey: ['drivers', selectedBucketId] }),
-        queryClient.invalidateQueries({ queryKey: ['isos', selectedBucketId] }),
-      ])
+      await invalidateFiles()
+    },
+    onError: (error) => setMessage(String(error)),
+  })
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => renameFile(id, name),
+    onSuccess: async () => {
+      setMessage('文件已重命名')
+      setRenamingId(null)
+      setRenameValue('')
+      await invalidateFiles()
     },
     onError: (error) => setMessage(String(error)),
   })
@@ -88,19 +136,32 @@ export default function FilesPage() {
     mutationFn: () => refreshFiles(selectedBucketId as number),
     onSuccess: async () => {
       setMessage('元数据已从存储刷新')
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['depots', selectedBucketId] }),
-        queryClient.invalidateQueries({ queryKey: ['drivers', selectedBucketId] }),
-        queryClient.invalidateQueries({ queryKey: ['isos', selectedBucketId] }),
-      ])
+      await invalidateFiles()
     },
     onError: (error) => setMessage(String(error)),
   })
 
-  const handleUpload = (type: 'depot' | 'driver' | 'iso', file?: File | null) => {
-    if (!file || !selectedBucketId) return
+  const submitUpload = () => {
+    if (!selectedBucketId || !selectedFile) return
     setMessage(null)
-    uploadMutation.mutate({ type, file, esxiVersion: type === 'driver' ? version : undefined, driverCategory: type === 'driver' ? category : undefined })
+    uploadMutation.mutate({ type: uploadType, file: selectedFile })
+  }
+
+  const startRename = (file: FileMetadata) => {
+    setRenamingId(file.id)
+    setRenameValue(displayName(file))
+  }
+
+  const submitRename = (file: FileMetadata) => {
+    const name = renameValue.trim()
+    if (!name) return
+    renameMutation.mutate({ id: file.id, name })
+  }
+
+  const removeFile = (file: FileMetadata) => {
+    if (window.confirm(`删除 ${displayName(file)}？`)) {
+      deleteMutation.mutate(file.id)
+    }
   }
 
   const copyIsoLink = async (file: FileMetadata) => {
@@ -127,7 +188,7 @@ export default function FilesPage() {
             账户 / <span className="font-bold text-gray-900">文件库</span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-950">文件库</h1>
-          <p className="text-sm text-gray-500">管理 Depot、驱动和构建产物 ISO，文件仍通过真实后端 API 读写。</p>
+          <p className="text-sm text-gray-500">管理 Depot、驱动和构建产物 ISO，文件通过后端 API 读写。</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <select className={selectClass} value={selectedBucketId ?? ''} onChange={(e) => setBucketId(e.target.value ? Number(e.target.value) : '')}>
@@ -137,57 +198,58 @@ export default function FilesPage() {
             ))}
           </select>
           <button className={secondaryButton} onClick={() => refreshMutation.mutate()} disabled={!selectedBucketId || refreshMutation.isPending}>
+            <RefreshCw className="h-4 w-4" />
             {refreshMutation.isPending ? '刷新中...' : '刷新元数据'}
           </button>
         </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-4">
-        <div className="rounded border border-gray-200 bg-white p-4">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">当前存储</p>
-          <p className="mt-2 truncate text-sm font-semibold text-blue-700">{selectedBucket?.name ?? '未选择'}</p>
-        </div>
-        <div className="rounded border border-gray-200 bg-white p-4">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Depots</p>
-          <p className="mt-2 text-2xl font-bold">{depotCount}</p>
-        </div>
-        <div className="rounded border border-gray-200 bg-white p-4">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Drivers</p>
-          <p className="mt-2 text-2xl font-bold">{driverCount}</p>
-        </div>
-        <div className="rounded border border-gray-200 bg-white p-4">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">ISOs</p>
-          <p className="mt-2 text-2xl font-bold">{isoCount}</p>
-        </div>
+        <Metric label="当前存储" value={selectedBucket?.name ?? '未选择'} emphasis />
+        <Metric label="Depots" value={String(depotCount)} />
+        <Metric label="Drivers" value={String(driverCount)} />
+        <Metric label="ISOs" value={String(isoCount)} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 rounded border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">上传</span>
-        <label className={`${secondaryButton} inline-flex cursor-pointer`}>
-          Depot
-          <input className="hidden" type="file" disabled={!selectedBucketId || uploadMutation.isPending} onChange={(e) => handleUpload('depot', e.target.files?.[0])} />
-        </label>
-        <select className={selectClass} value={version} onChange={(e) => setVersion(e.target.value)}>
-          <option value="6.x">ESXi 6.x</option>
-          <option value="7.x">ESXi 7.x</option>
-          <option value="8.x">ESXi 8.x</option>
-          <option value="9.x">ESXi 9.x</option>
-        </select>
-        <select className={selectClass} value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option value="network">Network</option>
-          <option value="storage">Storage</option>
-          <option value="raid">RAID</option>
-          <option value="backup">Backup</option>
-        </select>
-        <label className={`${secondaryButton} inline-flex cursor-pointer`}>
-          Driver
-          <input className="hidden" type="file" disabled={!selectedBucketId || uploadMutation.isPending} onChange={(e) => handleUpload('driver', e.target.files?.[0])} />
-        </label>
-        <label className={`${primaryButton} inline-flex cursor-pointer`}>
-          ISO
-          <input className="hidden" type="file" disabled={!selectedBucketId || uploadMutation.isPending} onChange={(e) => handleUpload('iso', e.target.files?.[0])} />
-        </label>
-        {uploadMutation.isPending && <span className="text-sm text-gray-500">上传中...</span>}
+      <div className="rounded border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400">上传类型</label>
+            <select className={selectClass} value={uploadType} onChange={(e) => setUploadType(e.target.value as UploadType)}>
+              <option value="depot">Depot</option>
+              <option value="driver">Driver</option>
+              <option value="iso">ISO</option>
+            </select>
+          </div>
+          {uploadType !== 'iso' && (
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400">ESXi 版本</label>
+              <select className={selectClass} value={version} onChange={(e) => setVersion(e.target.value)}>
+                {versions.map((item) => (
+                  <option key={item} value={item}>ESXi {item}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {uploadType === 'driver' && (
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400">驱动分类</label>
+              <select className={selectClass} value={category} onChange={(e) => setCategory(e.target.value)}>
+                {categories.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="min-w-[260px] flex-1 space-y-1">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400">文件</label>
+            <input key={fileInputKey} className={inputClass} type="file" disabled={!selectedBucketId || uploadMutation.isPending} onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)} />
+          </div>
+          <button className={primaryButton} onClick={submitUpload} disabled={!selectedBucketId || !selectedFile || uploadMutation.isPending}>
+            <Upload className="h-4 w-4" />
+            {uploadMutation.isPending ? '上传中...' : '上传'}
+          </button>
+        </div>
       </div>
 
       {message && <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">{message}</div>}
@@ -205,89 +267,185 @@ export default function FilesPage() {
         </Tabs.List>
 
         <Tabs.Content value="depots">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 bg-[#f9f9fb] text-[11px] font-bold uppercase tracking-wider text-gray-600">
-              <tr>
-                <th className="px-4 py-3">文件名</th>
-                <th className="px-4 py-3">大小</th>
-                <th className="px-4 py-3">路径</th>
-                <th className="px-4 py-3">更新时间</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {depotsQuery.isLoading && <EmptyRow colSpan={4} label="正在加载 Depot 文件..." />}
-              {!depotsQuery.isLoading && depotCount === 0 && <EmptyRow colSpan={4} label="暂无 Depot 文件" />}
-              {(depotsQuery.data ?? []).map((file) => (
-                <tr key={file.id} className="text-[13px] hover:bg-[#f9f9fb]">
-                  <td className="px-4 py-3 font-semibold text-blue-700">{fileName(file)}</td>
-                  <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
-                  <td className="px-4 py-3 font-mono text-[12px] text-gray-500">{file.path}</td>
-                  <td className="px-4 py-3 text-gray-500">{formatDate(file.last_modified)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <FileTable
+            files={depotsQuery.data ?? []}
+            loading={depotsQuery.isLoading}
+            emptyLabel="暂无 Depot 文件"
+            onStartRename={startRename}
+            onSubmitRename={submitRename}
+            onCancelRename={() => setRenamingId(null)}
+            onDelete={removeFile}
+            renamingId={renamingId}
+            renameValue={renameValue}
+            setRenameValue={setRenameValue}
+            busy={deleteMutation.isPending || renameMutation.isPending}
+          />
         </Tabs.Content>
 
         <Tabs.Content value="drivers">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 bg-[#f9f9fb] text-[11px] font-bold uppercase tracking-wider text-gray-600">
-              <tr>
-                <th className="px-4 py-3">驱动名称</th>
-                <th className="px-4 py-3">版本</th>
-                <th className="px-4 py-3">分类</th>
-                <th className="px-4 py-3">说明</th>
-                <th className="px-4 py-3">大小</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {driversQuery.isLoading && <EmptyRow colSpan={5} label="正在加载驱动文件..." />}
-              {!driversQuery.isLoading && driverCount === 0 && <EmptyRow colSpan={5} label="暂无匹配驱动" />}
-              {(driversQuery.data ?? []).map((file) => (
-                <tr key={file.id} className="text-[13px] hover:bg-[#f9f9fb]">
-                  <td className="px-4 py-3 font-semibold text-blue-700">{file.driver_name || fileName(file)}</td>
-                  <td className="px-4 py-3 text-gray-600">{file.driver_version || file.esxi_version || '-'}</td>
-                  <td className="px-4 py-3"><span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{file.driver_category || category}</span></td>
-                  <td className="px-4 py-3 text-gray-500">{file.driver_description || file.path}</td>
-                  <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="border-b bg-gray-50/40 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">筛选</span>
+              <select className={selectClass} value={version} onChange={(e) => setVersion(e.target.value)}>
+                {versions.map((item) => (
+                  <option key={item} value={item}>ESXi {item}</option>
+                ))}
+              </select>
+              <select className={selectClass} value={category} onChange={(e) => setCategory(e.target.value)}>
+                {categories.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <FileTable
+            files={driversQuery.data ?? []}
+            loading={driversQuery.isLoading}
+            emptyLabel="暂无匹配驱动"
+            showCategory
+            onStartRename={startRename}
+            onSubmitRename={submitRename}
+            onCancelRename={() => setRenamingId(null)}
+            onDelete={removeFile}
+            renamingId={renamingId}
+            renameValue={renameValue}
+            setRenameValue={setRenameValue}
+            busy={deleteMutation.isPending || renameMutation.isPending}
+          />
         </Tabs.Content>
 
         <Tabs.Content value="isos">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 bg-[#f9f9fb] text-[11px] font-bold uppercase tracking-wider text-gray-600">
-              <tr>
-                <th className="px-4 py-3">文件名</th>
-                <th className="px-4 py-3">大小</th>
-                <th className="px-4 py-3">更新时间</th>
-                <th className="px-4 py-3">路径</th>
-                <th className="px-4 py-3 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {isoQuery.isLoading && <EmptyRow colSpan={5} label="正在加载 ISO 文件..." />}
-              {!isoQuery.isLoading && isoCount === 0 && <EmptyRow colSpan={5} label="暂无 ISO 文件" />}
-              {(isoQuery.data ?? []).map((file) => (
-                <tr key={file.id} className="text-[13px] hover:bg-[#f9f9fb]">
-                  <td className="px-4 py-3 font-semibold text-blue-700">{fileName(file)}</td>
-                  <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
-                  <td className="px-4 py-3 text-gray-500">{formatDate(file.last_modified)}</td>
-                  <td className="px-4 py-3 font-mono text-[12px] text-gray-500">{file.path}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <button className={secondaryButton} onClick={() => copyIsoLink(file)}>复制</button>
-                      <button className="rounded border border-red-200 bg-white px-3 py-1.5 text-[13px] font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" onClick={() => deleteMutation.mutate(file.id)} disabled={deleteMutation.isPending}>删除</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <FileTable
+            files={isoQuery.data ?? []}
+            loading={isoQuery.isLoading}
+            emptyLabel="暂无 ISO 文件"
+            onCopy={copyIsoLink}
+            onStartRename={startRename}
+            onSubmitRename={submitRename}
+            onCancelRename={() => setRenamingId(null)}
+            onDelete={removeFile}
+            renamingId={renamingId}
+            renameValue={renameValue}
+            setRenameValue={setRenameValue}
+            busy={deleteMutation.isPending || renameMutation.isPending}
+          />
         </Tabs.Content>
       </Tabs.Root>
+    </div>
+  )
+}
+
+function Metric({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
+  return (
+    <div className="rounded border border-gray-200 bg-white p-4">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{label}</p>
+      <p className={cn('mt-2 truncate font-bold', emphasis ? 'text-sm text-blue-700' : 'text-2xl text-gray-950')}>{value}</p>
+    </div>
+  )
+}
+
+function FileTable({
+  files,
+  loading,
+  emptyLabel,
+  showCategory,
+  onCopy,
+  onStartRename,
+  onSubmitRename,
+  onCancelRename,
+  onDelete,
+  renamingId,
+  renameValue,
+  setRenameValue,
+  busy,
+}: {
+  files: FileMetadata[]
+  loading: boolean
+  emptyLabel: string
+  showCategory?: boolean
+  onCopy?: (file: FileMetadata) => void
+  onStartRename: (file: FileMetadata) => void
+  onSubmitRename: (file: FileMetadata) => void
+  onCancelRename: () => void
+  onDelete: (file: FileMetadata) => void
+  renamingId: number | null
+  renameValue: string
+  setRenameValue: (value: string) => void
+  busy: boolean
+}) {
+  const colSpan = showCategory ? 7 : 6
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="border-b border-gray-200 bg-[#f9f9fb] text-[11px] font-bold uppercase tracking-wider text-gray-600">
+          <tr>
+            <th className="px-4 py-3">文件名</th>
+            <th className="px-4 py-3">版本 tag</th>
+            {showCategory && <th className="px-4 py-3">分类</th>}
+            <th className="px-4 py-3">说明</th>
+            <th className="px-4 py-3">大小</th>
+            <th className="px-4 py-3">更新时间</th>
+            <th className="px-4 py-3 text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {loading && <EmptyRow colSpan={colSpan} label="正在加载文件..." />}
+          {!loading && files.length === 0 && <EmptyRow colSpan={colSpan} label={emptyLabel} />}
+          {files.map((file) => (
+            <tr key={file.id} className="text-[13px] hover:bg-[#f9f9fb]">
+              <td className="px-4 py-3">
+                {renamingId === file.id ? (
+                  <input className={inputClass} value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
+                ) : (
+                  <>
+                    <div className="font-semibold text-blue-700">{displayName(file)}</div>
+                    <div className="mt-1 break-all font-mono text-[11px] text-gray-500">{file.path}</div>
+                  </>
+                )}
+              </td>
+              <td className="px-4 py-3 text-gray-600">{versionTag(file)}</td>
+              {showCategory && (
+                <td className="px-4 py-3">
+                  <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{file.driver_category || 'other'}</span>
+                </td>
+              )}
+              <td className="px-4 py-3 text-gray-500">{file.driver_description || file.path}</td>
+              <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
+              <td className="px-4 py-3 text-gray-500">{formatDate(file.last_modified)}</td>
+              <td className="px-4 py-3">
+                <div className="flex justify-end gap-2">
+                  {renamingId === file.id ? (
+                    <>
+                      <button className={iconButton} title="确认重命名" onClick={() => onSubmitRename(file)} disabled={busy}>
+                        <Check className="h-4 w-4" />
+                      </button>
+                      <button className={iconButton} title="取消重命名" onClick={onCancelRename} disabled={busy}>
+                        <X className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {onCopy && (
+                        <button className={iconButton} title="复制链接" onClick={() => onCopy(file)} disabled={busy}>
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button className={iconButton} title="重命名" onClick={() => onStartRename(file)} disabled={busy}>
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button className={dangerButton} title="删除" onClick={() => onDelete(file)} disabled={busy}>
+                        <Trash2 className="h-4 w-4" />
+                        删除
+                      </button>
+                    </>
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

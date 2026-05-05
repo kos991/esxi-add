@@ -37,6 +37,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	api.Get("/files/drivers", fileHandler.ListDrivers)
 	api.Get("/files/isos", fileHandler.ListISOs)
 	api.Post("/files/upload", fileHandler.UploadFile)
+	api.Put("/files/:id/rename", fileHandler.RenameFile)
 	api.Delete("/files/:id", fileHandler.DeleteFile)
 	api.Post("/files/refresh", fileHandler.RefreshCache)
 

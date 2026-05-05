@@ -113,6 +113,20 @@ func (s *S3Client) DeleteObject(ctx context.Context, objectName string) error {
 	return nil
 }
 
+func (s *S3Client) RenameObject(ctx context.Context, oldObjectName, newObjectName string) error {
+	_, err := s.client.CopyObject(ctx,
+		minio.CopyDestOptions{Bucket: s.bucketName, Object: newObjectName},
+		minio.CopySrcOptions{Bucket: s.bucketName, Object: oldObjectName},
+	)
+	if err != nil {
+		return fmt.Errorf("copy object %s to %s: %w", oldObjectName, newObjectName, err)
+	}
+	if err := s.DeleteObject(ctx, oldObjectName); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *S3Client) GetPublicURL(objectName string) string {
 	if s.publicDomain == "" {
 		return ""

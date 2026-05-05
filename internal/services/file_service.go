@@ -27,10 +27,16 @@ func NewFileService(db *gorm.DB, s3 *storage.S3Client) *FileService {
 	return &FileService{db: db, s3Client: s3}
 }
 
-func (s *FileService) ListDepots(ctx context.Context, bucketID uint) ([]models.FileMetadata, error) {
+func (s *FileService) ListDepots(ctx context.Context, bucketID uint, esxiVersion ...string) ([]models.FileMetadata, error) {
+	query := s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDepot)
+
+	if len(esxiVersion) > 0 && strings.TrimSpace(esxiVersion[0]) != "" {
+		query = query.Where("esxi_version IN ?", esxiVersionAliases(esxiVersion[0]))
+	}
+
 	var files []models.FileMetadata
-	err := s.db.WithContext(ctx).
-		Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDepot).
+	err := query.
 		Order("path ASC").
 		Find(&files).Error
 	return files, err
@@ -99,18 +105,29 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 	}
 
 	metadata := &models.FileMetadata{
-		StorageBucketID: bucket.ID,
-		Path:            objectPath,
-		Type:            normalizeFileType(fileType),
-		ESXiVersion:     esxiVersion,
-		DriverCategory:  driverCategory,
-		DriverType:      strings.TrimPrefix(strings.ToLower(filepath.Ext(filename)), "."),
-		DriverName:      path.Base(filename),
-		SHA256:          hex.EncodeToString(hasher.Sum(nil)),
-		Size:            size,
+		StorageBucketID:   bucket.ID,
+		Path:              objectPath,
+		Type:              normalizeFileType(fileType),
+		ESXiVersion:       esxiVersion,
+		DriverCategory:    driverCategory,
+		DriverType:        strings.TrimPrefix(strings.ToLower(filepath.Ext(filename)), "."),
+		DriverName:        displayNameFromFilename(filename),
+		DriverVersion:     versionTagFromFilename(filename),
+		DriverDescription: fileDescription(objectPath, normalizeFileType(fileType)),
+		SHA256:            hex.EncodeToString(hasher.Sum(nil)),
+		Size:              size,
 	}
 
 	if infoErr == nil {
+		indexed := objectInfoToMetadata(bucket.ID, objectInfo)
+		metadata.Path = indexed.Path
+		metadata.Type = indexed.Type
+		metadata.ESXiVersion = indexed.ESXiVersion
+		metadata.DriverCategory = indexed.DriverCategory
+		metadata.DriverType = indexed.DriverType
+		metadata.DriverName = indexed.DriverName
+		metadata.DriverDescription = indexed.DriverDescription
+		metadata.DriverVersion = indexed.DriverVersion
 		metadata.ETag = objectInfo.ETag
 		metadata.Size = objectInfo.Size
 		lastModified := objectInfo.LastModified
@@ -189,6 +206,90 @@ func (s *FileService) DeleteFile(ctx context.Context, id uint) error {
 	return nil
 }
 
+func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (*models.FileMetadata, error) {
+	var file models.FileMetadata
+	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
+		return nil, err
+	}
+
+	cleanName, err := cleanRenameFilename(newName, file.Path)
+	if err != nil {
+		return nil, err
+	}
+	newPath := path.Join(path.Dir(file.Path), cleanName)
+	if newPath == file.Path {
+		return &file, nil
+	}
+
+	var existingCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.FileMetadata{}).
+		Where("storage_bucket_id = ? AND path = ? AND id <> ?", file.StorageBucketID, newPath, file.ID).
+		Count(&existingCount).Error; err != nil {
+		return nil, fmt.Errorf("check target metadata: %w", err)
+	}
+	if existingCount > 0 {
+		return nil, fmt.Errorf("target path already exists: %s", newPath)
+	}
+
+	bucket, err := s.getBucket(ctx, file.StorageBucketID)
+	if err != nil {
+		return nil, err
+	}
+
+	var objectInfo minio.ObjectInfo
+	switch normalizeStorageType(bucket.Type) {
+	case models.StorageTypeLocal:
+		store, err := storage.NewLocalStore(bucket.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := store.RenameObject(ctx, file.Path, newPath); err != nil {
+			return nil, err
+		}
+		objectInfo, err = store.GetObjectInfo(ctx, newPath)
+		if err != nil {
+			return nil, err
+		}
+	case models.StorageTypeS3:
+		client, err := s.newS3ClientForBucket(bucket)
+		if err != nil {
+			return nil, err
+		}
+		if err := client.RenameObject(ctx, file.Path, newPath); err != nil {
+			return nil, err
+		}
+		objectInfo, err = client.GetObjectInfo(ctx, newPath)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", bucket.Type)
+	}
+
+	indexed := objectInfoToMetadata(file.StorageBucketID, objectInfo)
+	updates := map[string]any{
+		"path":               indexed.Path,
+		"type":               indexed.Type,
+		"esxi_version":       indexed.ESXiVersion,
+		"driver_category":    indexed.DriverCategory,
+		"driver_type":        indexed.DriverType,
+		"driver_name":        indexed.DriverName,
+		"driver_description": indexed.DriverDescription,
+		"driver_version":     indexed.DriverVersion,
+		"size":               indexed.Size,
+		"etag":               indexed.ETag,
+		"last_modified":      indexed.LastModified,
+	}
+	if err := s.db.WithContext(ctx).Model(&file).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("update renamed metadata: %w", err)
+	}
+	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
+		return nil, fmt.Errorf("find renamed metadata: %w", err)
+	}
+	return &file, nil
+}
+
 func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
 	bucket, err := s.getBucket(ctx, bucketID)
 	if err != nil {
@@ -224,6 +325,8 @@ func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
 					"driver_category",
 					"driver_type",
 					"driver_name",
+					"driver_description",
+					"driver_version",
 					"size",
 					"etag",
 					"last_modified",
@@ -297,6 +400,9 @@ func buildObjectPath(fileType, esxiVersion, driverCategory, filename string) (st
 
 	switch normalizeFileType(fileType) {
 	case models.FileTypeDepot:
+		if strings.TrimSpace(esxiVersion) != "" {
+			return path.Join("depots", strings.TrimSpace(esxiVersion), cleanName), nil
+		}
 		return path.Join("depots", cleanName), nil
 	case models.FileTypeDriver:
 		if esxiVersion == "" {
@@ -355,11 +461,13 @@ func detectContentType(filename string) string {
 func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.FileMetadata {
 	cleanPath := strings.TrimLeft(path.Clean(objectInfo.Key), "/")
 	metadata := models.FileMetadata{
-		StorageBucketID: bucketID,
-		Path:            cleanPath,
-		Size:            objectInfo.Size,
-		ETag:            objectInfo.ETag,
-		DriverName:      path.Base(cleanPath),
+		StorageBucketID:   bucketID,
+		Path:              cleanPath,
+		Size:              objectInfo.Size,
+		ETag:              objectInfo.ETag,
+		DriverName:        displayNameFromFilename(cleanPath),
+		DriverVersion:     versionTagFromFilename(cleanPath),
+		DriverDescription: fileDescription(cleanPath, ""),
 	}
 
 	if !objectInfo.LastModified.IsZero() {
@@ -372,9 +480,14 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 	case isDepotPrefix(prefix):
 		metadata.Type = models.FileTypeDepot
 		metadata.ESXiVersion = version
+		if inferred := inferESXiVersionFromDepotName(metadata.DriverName); inferred != "" {
+			metadata.ESXiVersion = inferred
+		}
+		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeDepot)
 	case isDriverPrefix(prefix) && strings.EqualFold(filepath.Ext(cleanPath), ".iso"):
 		metadata.Type = models.FileTypeISO
 		metadata.ESXiVersion = version
+		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeISO)
 	case isDriverPrefix(prefix):
 		metadata.Type = models.FileTypeDriver
 		metadata.ESXiVersion = version
@@ -383,11 +496,13 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 			metadata.DriverCategory = inferDriverCategory(metadata.DriverName)
 		}
 		metadata.DriverType = strings.TrimPrefix(strings.ToLower(filepath.Ext(cleanPath)), ".")
+		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeDriver)
 	case isISOPrefix(prefix):
 		metadata.Type = models.FileTypeISO
 		if prefix != "output" {
 			metadata.ESXiVersion = version
 		}
+		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeISO)
 	}
 
 	return metadata
@@ -399,13 +514,75 @@ func splitStoragePath(objectPath string) (prefix, version, category string) {
 		return "", "", ""
 	}
 	prefix = strings.ToLower(parts[0])
-	if len(parts) >= 2 {
+	if len(parts) >= 3 {
 		version = parts[1]
 	}
 	if len(parts) >= 4 {
 		category = parts[2]
 	}
 	return prefix, version, category
+}
+
+func cleanRenameFilename(newName, oldPath string) (string, error) {
+	cleanName := path.Base(strings.ReplaceAll(strings.TrimSpace(newName), "\\", "/"))
+	if cleanName == "" || cleanName == "." || cleanName == "/" {
+		return "", fmt.Errorf("filename is required")
+	}
+	if path.Ext(cleanName) == "" {
+		cleanName += path.Ext(oldPath)
+	}
+	return cleanName, nil
+}
+
+func displayNameFromFilename(filename string) string {
+	base := path.Base(strings.ReplaceAll(filename, "\\", "/"))
+	ext := path.Ext(base)
+	if ext == "" {
+		return base
+	}
+	return strings.TrimSuffix(base, ext)
+}
+
+func versionTagFromFilename(filename string) string {
+	name := displayNameFromFilename(filename)
+	lower := strings.ToLower(name)
+	for _, suffix := range []string{"-offline_bundle", "_offline_bundle", "-offline-bundle", "_offline-bundle"} {
+		if strings.HasSuffix(lower, suffix) {
+			return name[:len(name)-len(suffix)]
+		}
+	}
+	return name
+}
+
+func fileDescription(objectPath, fileType string) string {
+	switch fileType {
+	case models.FileTypeDepot:
+		return "Depot bundle: " + objectPath
+	case models.FileTypeDriver:
+		return "Driver package: " + objectPath
+	case models.FileTypeISO:
+		return "ISO image: " + objectPath
+	default:
+		return objectPath
+	}
+}
+
+func inferESXiVersionFromDepotName(name string) string {
+	upper := strings.ToUpper(name)
+	switch {
+	case strings.Contains(upper, "ESXI650"):
+		return "6.5"
+	case strings.Contains(upper, "ESXI670"):
+		return "6.7"
+	case strings.Contains(upper, "ESXI700"):
+		return "7.0"
+	case strings.Contains(upper, "ESXI800"):
+		return "8.0"
+	case strings.Contains(upper, "ESXI900"):
+		return "9.0"
+	default:
+		return ""
+	}
 }
 
 func shouldIndexStorageObject(objectPath string) bool {
@@ -426,7 +603,7 @@ func inferDriverCategory(filename string) string {
 	case strings.Contains(name, "raid"):
 		return "raid"
 	default:
-		return ""
+		return "other"
 	}
 }
 

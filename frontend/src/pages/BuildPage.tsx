@@ -5,11 +5,20 @@ import { useNavigate } from 'react-router-dom'
 import { listBuckets } from '../api/buckets'
 import { createBuild } from '../api/builds'
 import { listDepots, listDrivers } from '../api/files'
+import type { FileMetadata } from '../types'
 import { cn } from '../utils'
 
 const esxiVersions = ['6.5', '6.7', '7.0', '8.0', '9.0']
-
 const stepLabels = ['源文件', '注入驱动', '确认启动']
+
+function displayName(file?: FileMetadata) {
+  if (!file) return '-'
+  return file.driver_name || file.path.split('/').pop() || file.path
+}
+
+function versionTag(file?: FileMetadata) {
+  return file?.driver_version || file?.esxi_version || ''
+}
 
 export default function BuildPage() {
   const navigate = useNavigate()
@@ -24,12 +33,12 @@ export default function BuildPage() {
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
   const selectedBucketId = useMemo(() => {
     if (typeof bucketId === 'number') return bucketId
-    return bucketsQuery.data?.[0]?.id
+    return bucketsQuery.data?.find((bucket) => bucket.is_default)?.id ?? bucketsQuery.data?.[0]?.id
   }, [bucketId, bucketsQuery.data])
 
   const depotsQuery = useQuery({
-    queryKey: ['build-depots', selectedBucketId],
-    queryFn: () => listDepots(selectedBucketId as number),
+    queryKey: ['build-depots', selectedBucketId, version],
+    queryFn: () => listDepots(selectedBucketId as number, version),
     enabled: Boolean(selectedBucketId),
   })
   const driversQuery = useQuery({
@@ -42,9 +51,13 @@ export default function BuildPage() {
     () => bucketsQuery.data?.find((bucket) => bucket.id === selectedBucketId),
     [bucketsQuery.data, selectedBucketId]
   )
+  const selectedDepot = useMemo(
+    () => depotsQuery.data?.find((file) => file.path === depotPath),
+    [depotsQuery.data, depotPath]
+  )
 
   const groupedDrivers = useMemo(() => {
-    const groups: Record<string, NonNullable<typeof driversQuery.data>> = {}
+    const groups: Record<string, FileMetadata[]> = {}
     for (const driver of driversQuery.data ?? []) {
       const key = driver.driver_category || 'other'
       groups[key] = [...(groups[key] ?? []), driver]
@@ -58,15 +71,27 @@ export default function BuildPage() {
     onError: (error) => setMessage(String(error)),
   })
 
+  const changeBucket = (value: string) => {
+    setBucketId(value ? Number(value) : '')
+    setDepotPath('')
+    setDriverPaths([])
+    setStep(1)
+  }
+
+  const changeVersion = (value: string) => {
+    setVersion(value)
+    setDepotPath('')
+    setDriverPaths([])
+    setStep(1)
+  }
+
   const toggleDriver = (value: string) => {
     setDriverPaths((prev) => (prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]))
   }
 
-  const canAdvanceSource = Boolean(selectedBucketId && depotPath)
-
   const nextStep = () => {
-    if (step === 1 && !canAdvanceSource) {
-      setMessage('请选择存储节点和 Depot 文件')
+    if (step === 1 && !depotPath) {
+      setMessage('请选择与 ESXi 基础版本匹配的 Depot 文件')
       return
     }
     setMessage(null)
@@ -108,13 +133,15 @@ export default function BuildPage() {
         <div className="flex border-b bg-gray-50/70 text-[13px]">
           {stepLabels.map((label, index) => {
             const number = index + 1
+            const disabled = number > step
             return (
               <button
                 key={label}
                 type="button"
-                onClick={() => setStep(number)}
+                disabled={disabled}
+                onClick={() => !disabled && setStep(number)}
                 className={cn(
-                  'flex items-center gap-2 border-b-2 px-5 py-3 font-medium transition-colors',
+                  'flex items-center gap-2 border-b-2 px-5 py-3 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                   step === number ? 'border-blue-700 bg-white text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-900'
                 )}
               >
@@ -134,7 +161,7 @@ export default function BuildPage() {
                   <select
                     className="w-full rounded border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-600"
                     value={selectedBucketId ?? ''}
-                    onChange={(e) => setBucketId(Number(e.target.value))}
+                    onChange={(e) => changeBucket(e.target.value)}
                   >
                     {(bucketsQuery.data ?? []).map((bucket) => (
                       <option key={bucket.id} value={bucket.id}>
@@ -151,7 +178,7 @@ export default function BuildPage() {
                       <button
                         key={item}
                         type="button"
-                        onClick={() => setVersion(item)}
+                        onClick={() => changeVersion(item)}
                         className={cn(
                           'rounded border px-3 py-2 text-[12px] font-bold transition-colors',
                           version === item ? 'border-blue-700 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-700 hover:border-gray-400'
@@ -170,13 +197,16 @@ export default function BuildPage() {
                     value={depotPath}
                     onChange={(e) => setDepotPath(e.target.value)}
                   >
-                    <option value="">选择 Depot 文件</option>
+                    <option value="">选择 ESXi {version} Depot 文件</option>
                     {(depotsQuery.data ?? []).map((file) => (
                       <option key={file.id} value={file.path}>
-                        {file.path}
+                        {displayName(file)} {versionTag(file) ? `(${versionTag(file)})` : ''}
                       </option>
                     ))}
                   </select>
+                  {!depotsQuery.isLoading && (depotsQuery.data ?? []).length === 0 && (
+                    <div className="text-[12px] text-red-600">当前存储节点没有 ESXi {version} 对应的 Depot 文件。</div>
+                  )}
                 </div>
               </div>
 
@@ -197,7 +227,8 @@ export default function BuildPage() {
                   </div>
                   <div>
                     <div className="font-bold uppercase tracking-wider text-gray-400">Depot</div>
-                    <div className="mt-1 break-all font-mono text-gray-700">{depotPath || '-'}</div>
+                    <div className="mt-1 break-all font-mono text-gray-700">{displayName(selectedDepot)}</div>
+                    {selectedDepot && <div className="mt-1 break-all font-mono text-gray-500">{selectedDepot.path}</div>}
                   </div>
                 </div>
               </div>
@@ -235,9 +266,9 @@ export default function BuildPage() {
                         />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-2">
-                            <span className="truncate text-sm font-bold text-gray-950">{driver.driver_name || driver.path.split('/').pop()}</span>
+                            <span className="truncate text-sm font-bold text-gray-950">{displayName(driver)}</span>
                             <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
-                              {driver.driver_version || version}
+                              {versionTag(driver) || version}
                             </span>
                           </span>
                           <span className="mt-1 block break-all text-[12px] text-gray-500">{driver.driver_description || driver.path}</span>
@@ -270,7 +301,7 @@ export default function BuildPage() {
                   <div className="space-y-3 text-sm">
                     <SummaryRow label="存储节点" value={selectedBucket?.name ?? '-'} />
                     <SummaryRow label="基础版本" value={`ESXi ${version}`} />
-                    <SummaryRow label="Depot" value={depotPath || '-'} mono />
+                    <SummaryRow label="Depot" value={selectedDepot ? `${displayName(selectedDepot)} (${versionTag(selectedDepot)})` : '-'} mono />
                     <SummaryRow label="注入驱动" value={`已选择 ${driverPaths.length} 个`} />
                     <SummaryRow label="ISO 名称" value={customISOName || '使用后端默认名称'} mono />
                   </div>

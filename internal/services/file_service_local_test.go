@@ -98,6 +98,27 @@ func TestFileServiceUploadLocalFileUpdatesExistingMetadata(t *testing.T) {
 	}
 }
 
+func TestFileServiceUploadDepotUsesSelectedESXiVersionPath(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+	service := NewFileService(db, nil)
+
+	metadata, err := service.UploadFile(context.Background(), bucketID, models.FileTypeDepot, "6.5", "", "ESXi650-202210001.zip", strings.NewReader("depot"), int64(len("depot")))
+	if err != nil {
+		t.Fatalf("upload versioned depot: %v", err)
+	}
+
+	if metadata.Path != "depots/6.5/ESXi650-202210001.zip" {
+		t.Fatalf("expected versioned depot path, got %s", metadata.Path)
+	}
+	if metadata.ESXiVersion != "6.5" || metadata.DriverName != "ESXi650-202210001" || metadata.DriverVersion != "ESXi650-202210001" {
+		t.Fatalf("unexpected depot metadata: %+v", metadata)
+	}
+	if _, err := os.Stat(filepath.Join(root, "depots", "6.5", "ESXi650-202210001.zip")); err != nil {
+		t.Fatalf("uploaded versioned depot missing: %v", err)
+	}
+}
+
 func TestFileServiceRefreshCacheIndexesLocalFiles(t *testing.T) {
 	root := t.TempDir()
 	db, bucketID := newLocalFileServiceTestDB(t, root)
@@ -119,6 +140,106 @@ func TestFileServiceRefreshCacheIndexesLocalFiles(t *testing.T) {
 	}
 	if file.Type != models.FileTypeDriver || file.ESXiVersion != "8.0" || file.DriverCategory != "network" {
 		t.Fatalf("unexpected indexed metadata: %+v", file)
+	}
+}
+
+func TestFileServiceRefreshCacheExtractsDepotAndDriverDisplayMetadata(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+
+	files := map[string]string{
+		filepath.Join("depot", "6x", "ESXi650-202210001.zip"):                   "depot-65",
+		filepath.Join("depot", "6x", "ESXi670-202210001.zip"):                   "depot-67",
+		filepath.Join("driver", "6x", "net-igb-5.3.2-99-offline_bundle.zip"):    "driver",
+		filepath.Join("driver", "6x", "scsi-megaraid-sas-6.714.07.00-1OEM.vib"): "storage-driver",
+		filepath.Join("driver", "6x", "raid-example-1.2.3-offline_bundle.zip"):  "raid-driver",
+		filepath.Join("driver", "6x", "misc-tool-1.0.0-offline_bundle.zip"):     "other-driver",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	service := NewFileService(db, nil)
+	if err := service.RefreshCache(context.Background(), bucketID); err != nil {
+		t.Fatalf("refresh local cache: %v", err)
+	}
+
+	var depot65 models.FileMetadata
+	if err := db.Where("storage_bucket_id = ? AND path = ?", bucketID, "depot/6x/ESXi650-202210001.zip").First(&depot65).Error; err != nil {
+		t.Fatalf("find depot 6.5: %v", err)
+	}
+	if depot65.ESXiVersion != "6.5" || depot65.DriverName != "ESXi650-202210001" || depot65.DriverVersion != "ESXi650-202210001" {
+		t.Fatalf("unexpected depot 6.5 metadata: %+v", depot65)
+	}
+
+	var driver models.FileMetadata
+	if err := db.Where("storage_bucket_id = ? AND path = ?", bucketID, "driver/6x/net-igb-5.3.2-99-offline_bundle.zip").First(&driver).Error; err != nil {
+		t.Fatalf("find network driver: %v", err)
+	}
+	if driver.DriverCategory != "network" || driver.DriverName != "net-igb-5.3.2-99-offline_bundle" || driver.DriverVersion != "net-igb-5.3.2-99" || driver.DriverDescription == "" {
+		t.Fatalf("unexpected driver metadata: %+v", driver)
+	}
+
+	depots65, err := service.ListDepots(context.Background(), bucketID, "6.5")
+	if err != nil {
+		t.Fatalf("list depots 6.5: %v", err)
+	}
+	if len(depots65) != 1 || depots65[0].Path != "depot/6x/ESXi650-202210001.zip" {
+		t.Fatalf("expected only 6.5 depot, got %+v", depots65)
+	}
+
+	depots67, err := service.ListDepots(context.Background(), bucketID, "6.7")
+	if err != nil {
+		t.Fatalf("list depots 6.7: %v", err)
+	}
+	if len(depots67) != 1 || depots67[0].Path != "depot/6x/ESXi670-202210001.zip" {
+		t.Fatalf("expected only 6.7 depot, got %+v", depots67)
+	}
+
+	for objectPath, category := range map[string]string{
+		"driver/6x/scsi-megaraid-sas-6.714.07.00-1OEM.vib": "storage",
+		"driver/6x/raid-example-1.2.3-offline_bundle.zip":  "raid",
+		"driver/6x/misc-tool-1.0.0-offline_bundle.zip":     "other",
+	} {
+		var file models.FileMetadata
+		if err := db.Where("storage_bucket_id = ? AND path = ?", bucketID, objectPath).First(&file).Error; err != nil {
+			t.Fatalf("find driver %s: %v", objectPath, err)
+		}
+		if file.DriverCategory != category {
+			t.Fatalf("expected category %s for %s, got %+v", category, objectPath, file)
+		}
+	}
+}
+
+func TestFileServiceRenameLocalFileUpdatesObjectAndMetadata(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+	service := NewFileService(db, nil)
+
+	metadata, err := service.UploadFile(context.Background(), bucketID, models.FileTypeDriver, "8.0", "network", "net-r8125-9.011.00.vib", strings.NewReader("driver"), int64(len("driver")))
+	if err != nil {
+		t.Fatalf("upload driver: %v", err)
+	}
+
+	renamed, err := service.RenameFile(context.Background(), metadata.ID, "net-r8125-9.012.00.vib")
+	if err != nil {
+		t.Fatalf("rename local file: %v", err)
+	}
+
+	if renamed.Path != "drivers/8.0/network/net-r8125-9.012.00.vib" || renamed.DriverName != "net-r8125-9.012.00" || renamed.DriverVersion != "net-r8125-9.012.00" {
+		t.Fatalf("unexpected renamed metadata: %+v", renamed)
+	}
+	if _, err := os.Stat(filepath.Join(root, "drivers", "8.0", "network", "net-r8125-9.011.00.vib")); !os.IsNotExist(err) {
+		t.Fatalf("expected old local object removed, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "drivers", "8.0", "network", "net-r8125-9.012.00.vib")); err != nil {
+		t.Fatalf("expected renamed local object: %v", err)
 	}
 }
 

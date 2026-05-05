@@ -1,8 +1,8 @@
 import api from './client'
 import type { FileMetadata } from '../types'
 
-export async function listDepots(bucketId: number): Promise<FileMetadata[]> {
-  const response = await api.get('/files/depots', { params: { bucket_id: bucketId } })
+export async function listDepots(bucketId: number, esxiVersion?: string): Promise<FileMetadata[]> {
+  const response = await api.get('/files/depots', { params: { bucket_id: bucketId, esxi_version: esxiVersion } })
   return response.data
 }
 
@@ -40,6 +40,11 @@ export async function uploadFile(
 
 export async function deleteFile(id: number): Promise<{ deleted: boolean }> {
   const response = await api.delete(`/files/${id}`)
+  return response.data
+}
+
+export async function renameFile(id: number, name: string): Promise<FileMetadata> {
+  const response = await api.put(`/files/${id}/rename`, { name })
   return response.data
 }
 
