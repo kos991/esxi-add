@@ -1,6 +1,7 @@
 export interface StorageBucket {
   id: number
   name: string
+  type?: 's3' | 'local'
   endpoint: string
   access_key: string
   secret_key?: string
@@ -8,6 +9,7 @@ export interface StorageBucket {
   region: string
   use_ssl: boolean
   public_domain: string
+  local_path?: string
   is_default: boolean
   created_at: string
   updated_at?: string
@@ -27,6 +29,7 @@ export interface FileMetadata {
   is_latest?: boolean
   conflicts_with?: string
   depends_on?: string
+  md5?: string
   sha256?: string
   size?: number
   etag?: string

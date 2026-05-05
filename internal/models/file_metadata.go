@@ -23,6 +23,7 @@ type FileMetadata struct {
 	IsLatest          bool           `gorm:"default:false;index" json:"is_latest"`
 	ConflictsWith     string         `gorm:"type:text" json:"conflicts_with"`
 	DependsOn         string         `gorm:"type:text" json:"depends_on"`
+	MD5               string         `gorm:"column:md5" json:"md5"`
 	SHA256            string         `json:"sha256"`
 	Size              int64          `json:"size"`
 	ETag              string         `gorm:"column:etag" json:"etag"`

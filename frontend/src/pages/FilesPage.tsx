@@ -33,8 +33,12 @@ function displayName(file: FileMetadata) {
   return file.driver_name || fileName(file)
 }
 
-function versionTag(file: FileMetadata) {
-  return file.driver_version || file.esxi_version || '-'
+function displayWithDescription(file: FileMetadata) {
+  return file.driver_description ? `${displayName(file)}(${file.driver_description})` : displayName(file)
+}
+
+function checksumText(file: FileMetadata) {
+  return `MD5: ${file.md5 || '暂无'}`
 }
 
 function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
@@ -373,7 +377,7 @@ function FileTable({
   setRenameValue: (value: string) => void
   busy: boolean
 }) {
-  const colSpan = showCategory ? 7 : 6
+  const colSpan = showCategory ? 6 : 5
 
   return (
     <div className="overflow-x-auto">
@@ -381,9 +385,8 @@ function FileTable({
         <thead className="border-b border-gray-200 bg-[#f9f9fb] text-[11px] font-bold uppercase tracking-wider text-gray-600">
           <tr>
             <th className="px-4 py-3">文件名</th>
-            <th className="px-4 py-3">版本 tag</th>
+            <th className="px-4 py-3">校验</th>
             {showCategory && <th className="px-4 py-3">分类</th>}
-            <th className="px-4 py-3">说明</th>
             <th className="px-4 py-3">大小</th>
             <th className="px-4 py-3">更新时间</th>
             <th className="px-4 py-3 text-right">操作</th>
@@ -399,18 +402,17 @@ function FileTable({
                   <input className={inputClass} value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
                 ) : (
                   <>
-                    <div className="font-semibold text-blue-700">{displayName(file)}</div>
+                    <div className="font-semibold text-blue-700">{displayWithDescription(file)}</div>
                     <div className="mt-1 break-all font-mono text-[11px] text-gray-500">{file.path}</div>
                   </>
                 )}
               </td>
-              <td className="px-4 py-3 text-gray-600">{versionTag(file)}</td>
+              <td className="px-4 py-3 break-all font-mono text-[12px] text-gray-600">{checksumText(file)}</td>
               {showCategory && (
                 <td className="px-4 py-3">
                   <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{file.driver_category || 'other'}</span>
                 </td>
               )}
-              <td className="px-4 py-3 text-gray-500">{file.driver_description || file.path}</td>
               <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
               <td className="px-4 py-3 text-gray-500">{formatDate(file.last_modified)}</td>
               <td className="px-4 py-3">

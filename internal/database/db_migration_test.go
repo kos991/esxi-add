@@ -80,6 +80,9 @@ CREATE TABLE file_metadata (
 		t.Logf("rows: %+v", rows)
 		t.Fatalf("legacy columns were not migrated: %+v", metadata)
 	}
+	if !db.Migrator().HasColumn(&models.FileMetadata{}, "md5") {
+		t.Fatalf("md5 column was not migrated")
+	}
 }
 
 func TestNormalizeSQLiteDDLHandlesReferencedTables(t *testing.T) {

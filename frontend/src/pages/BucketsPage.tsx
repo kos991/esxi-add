@@ -1,10 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useMemo, useState } from 'react'
-import { createBucket, deleteBucket, listBuckets, setDefaultBucket, testBucketConnection, type BucketPayload } from '../api/buckets'
+import { createBucket, deleteBucket, listBuckets, setDefaultBucket, testBucketConnection, updateBucket, type BucketPayload } from '../api/buckets'
+import type { StorageBucket } from '../types'
 
 const initialForm: BucketPayload = {
   name: '',
+  type: 's3',
   endpoint: '',
   access_key: '',
   secret_key: '',
@@ -12,6 +14,7 @@ const initialForm: BucketPayload = {
   region: '',
   use_ssl: true,
   public_domain: '',
+  local_path: '',
   is_default: false,
 }
 
@@ -19,6 +22,19 @@ const inputClass = 'w-full rounded border border-gray-200 px-3 py-2 text-sm outl
 const labelClass = 'space-y-1.5 text-[11px] font-bold uppercase tracking-wide text-gray-500'
 const primaryButton = 'rounded border border-[#0051c3] bg-[#0051c3] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#0043a5] disabled:cursor-not-allowed disabled:opacity-60'
 const secondaryButton = 'rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+const dangerButton = 'rounded border border-red-200 bg-white px-3 py-1.5 text-[13px] font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60'
+
+function bucketType(bucket: StorageBucket) {
+  return bucket.type === 'local' ? 'local' : 's3'
+}
+
+function bucketLocation(bucket: StorageBucket) {
+  return bucketType(bucket) === 'local' ? bucket.local_path || '-' : bucket.endpoint || '-'
+}
+
+function bucketSubLocation(bucket: StorageBucket) {
+  return bucketType(bucket) === 'local' ? '本地挂载点' : bucket.bucket_name || '-'
+}
 
 export default function BucketsPage() {
   const queryClient = useQueryClient()
@@ -26,16 +42,35 @@ export default function BucketsPage() {
   const [storageType, setStorageType] = useState<'s3' | 'local'>('s3')
   const [localPath, setLocalPath] = useState('')
   const [form, setForm] = useState<BucketPayload>(initialForm)
+  const [editingBucket, setEditingBucket] = useState<StorageBucket | null>(null)
+  const [editLocalPath, setEditLocalPath] = useState('')
   const [message, setMessage] = useState<string | null>(null)
 
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
+
+  const resetCreateForm = () => {
+    setForm(initialForm)
+    setStorageType('s3')
+    setLocalPath('')
+  }
 
   const createMutation = useMutation({
     mutationFn: createBucket,
     onSuccess: async () => {
       setMessage('存储节点已创建')
-      setForm(initialForm)
+      resetCreateForm()
       setOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['buckets'] })
+    },
+    onError: (error) => setMessage(String(error)),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: BucketPayload }) => updateBucket(id, data),
+    onSuccess: async () => {
+      setMessage('挂载点已更新')
+      setEditingBucket(null)
+      setEditLocalPath('')
       await queryClient.invalidateQueries({ queryKey: ['buckets'] })
     },
     onError: (error) => setMessage(String(error)),
@@ -75,11 +110,52 @@ export default function BucketsPage() {
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setMessage(null)
+
     if (storageType === 'local') {
-      setMessage('本地节点设置已填写。当前后端构建流程仍使用 S3/MinIO 节点，启用本地节点需要后端存储适配。')
+      createMutation.mutate({
+        name: form.name.trim(),
+        type: 'local',
+        local_path: localPath.trim(),
+        is_default: form.is_default,
+      })
       return
     }
-    createMutation.mutate(form)
+
+    createMutation.mutate({
+      ...form,
+      name: form.name.trim(),
+      type: 's3',
+      local_path: '',
+      use_ssl: form.use_ssl ?? true,
+    })
+  }
+
+  const startEditMount = (bucket: StorageBucket) => {
+    setEditingBucket(bucket)
+    setEditLocalPath(bucket.local_path || '')
+    setMessage(null)
+  }
+
+  const submitMountEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editingBucket) return
+
+    updateMutation.mutate({
+      id: editingBucket.id,
+      data: {
+        name: editingBucket.name,
+        type: 'local',
+        endpoint: '',
+        access_key: '',
+        secret_key: '',
+        bucket_name: '',
+        region: '',
+        use_ssl: true,
+        public_domain: '',
+        local_path: editLocalPath.trim(),
+        is_default: editingBucket.is_default,
+      },
+    })
   }
 
   return (
@@ -90,9 +166,15 @@ export default function BucketsPage() {
             账户 / <span className="font-bold text-gray-900">存储与挂载</span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-950">存储与挂载</h1>
-          <p className="text-sm text-gray-500">管理构建流程使用的 S3 / MinIO 节点，并预留本地目录节点配置。</p>
+          <p className="text-sm text-gray-500">管理构建流程使用的 S3、R2、MinIO 或本地目录节点。</p>
         </div>
-        <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Root
+          open={open}
+          onOpenChange={(nextOpen) => {
+            setOpen(nextOpen)
+            if (!nextOpen) resetCreateForm()
+          }}
+        >
           <Dialog.Trigger asChild>
             <button className={primaryButton}>添加存储节点</button>
           </Dialog.Trigger>
@@ -112,65 +194,66 @@ export default function BucketsPage() {
                     <select
                       className={`${inputClass} mt-1.5 bg-white`}
                       value={storageType}
-                      onChange={(e) => setStorageType(e.target.value as 's3' | 'local')}
+                      onChange={(e) => {
+                        const nextType = e.target.value as 's3' | 'local'
+                        setStorageType(nextType)
+                        setForm((prev) => ({ ...prev, type: nextType }))
+                      }}
                     >
                       <option value="s3">S3 兼容存储 (MinIO, AWS S3, R2)</option>
-                      <option value="local">本地目录节点 (Local Path)</option>
+                      <option value="local">本地目录节点</option>
                     </select>
                   </label>
                   <label>
                     <span className={labelClass}>节点显示名称</span>
-                    <input className={`${inputClass} mt-1.5`} value={form.name} placeholder="例如: Production-MinIO" onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
+                    <input className={`${inputClass} mt-1.5`} value={form.name} placeholder="例如: R2-esxi-build" onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
                   </label>
                   {storageType === 's3' ? (
                     <>
                       <label>
                         <span className={labelClass}>Endpoint 地址</span>
-                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.endpoint} placeholder="s3.example.com" onChange={(e) => setForm((prev) => ({ ...prev, endpoint: e.target.value }))} />
+                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.endpoint ?? ''} placeholder="https://account.r2.cloudflarestorage.com" onChange={(e) => setForm((prev) => ({ ...prev, endpoint: e.target.value }))} />
                       </label>
                       <label>
                         <span className={labelClass}>Bucket 名称</span>
-                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.bucket_name} onChange={(e) => setForm((prev) => ({ ...prev, bucket_name: e.target.value }))} />
+                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.bucket_name ?? ''} onChange={(e) => setForm((prev) => ({ ...prev, bucket_name: e.target.value }))} />
                       </label>
                       <label>
                         <span className={labelClass}>Region</span>
-                        <input className={`${inputClass} mt-1.5`} value={form.region} placeholder="可选" onChange={(e) => setForm((prev) => ({ ...prev, region: e.target.value }))} />
+                        <input className={`${inputClass} mt-1.5`} value={form.region ?? ''} placeholder="可选" onChange={(e) => setForm((prev) => ({ ...prev, region: e.target.value }))} />
                       </label>
                       <label>
                         <span className={labelClass}>Access Key</span>
-                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.access_key} onChange={(e) => setForm((prev) => ({ ...prev, access_key: e.target.value }))} />
+                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.access_key ?? ''} onChange={(e) => setForm((prev) => ({ ...prev, access_key: e.target.value }))} />
                       </label>
                       <label>
                         <span className={labelClass}>Secret Key</span>
-                        <input className={`${inputClass} mt-1.5 font-mono`} type="password" value={form.secret_key} onChange={(e) => setForm((prev) => ({ ...prev, secret_key: e.target.value }))} />
+                        <input className={`${inputClass} mt-1.5 font-mono`} type="password" value={form.secret_key ?? ''} onChange={(e) => setForm((prev) => ({ ...prev, secret_key: e.target.value }))} />
                       </label>
                       <label className="md:col-span-2">
                         <span className={labelClass}>公开访问域名</span>
-                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.public_domain} placeholder="用于复制 ISO 下载链接，可选" onChange={(e) => setForm((prev) => ({ ...prev, public_domain: e.target.value }))} />
+                        <input className={`${inputClass} mt-1.5 font-mono`} value={form.public_domain ?? ''} placeholder="用于复制 ISO 下载链接，可选" onChange={(e) => setForm((prev) => ({ ...prev, public_domain: e.target.value }))} />
                       </label>
                     </>
                   ) : (
-                    <div className="md:col-span-2 space-y-3 rounded border border-orange-200 bg-orange-50 p-4">
-                      <label className="block">
-                        <span className={labelClass}>本地挂载路径</span>
-                        <input
-                          className={`${inputClass} mt-1.5 font-mono`}
-                          value={localPath}
-                          placeholder="例如: D:\\esxi-data\\storage 或 /data/esxi-builder/storage"
-                          onChange={(e) => setLocalPath(e.target.value)}
-                        />
-                      </label>
-                      <p className="text-[12px] leading-5 text-orange-700">
-                        本地节点用于记录 Worker 可读写的目录路径。当前 API 仍以 S3/MinIO 节点为可执行构建源，本地节点需要后端文件服务和构建队列增加本地存储适配后才能启用。
-                      </p>
-                    </div>
+                    <label className="md:col-span-2">
+                      <span className={labelClass}>本地挂载路径</span>
+                      <input
+                        className={`${inputClass} mt-1.5 font-mono`}
+                        value={localPath}
+                        placeholder="/data/esxi-builder/storage"
+                        onChange={(e) => setLocalPath(e.target.value)}
+                      />
+                    </label>
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-5 border-t pt-4 text-sm text-gray-700">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={form.use_ssl} onChange={(e) => setForm((prev) => ({ ...prev, use_ssl: e.target.checked }))} />
-                    使用 SSL
-                  </label>
+                  {storageType === 's3' && (
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={Boolean(form.use_ssl)} onChange={(e) => setForm((prev) => ({ ...prev, use_ssl: e.target.checked }))} />
+                      使用 SSL
+                    </label>
+                  )}
                   <label className="flex items-center gap-2">
                     <input type="checkbox" checked={Boolean(form.is_default)} onChange={(e) => setForm((prev) => ({ ...prev, is_default: e.target.checked }))} />
                     设为默认存储
@@ -180,7 +263,7 @@ export default function BucketsPage() {
                       <button type="button" className={secondaryButton}>取消</button>
                     </Dialog.Close>
                     <button type="submit" className={primaryButton} disabled={createMutation.isPending}>
-                      {storageType === 'local' ? '记录本地设置' : createMutation.isPending ? '保存中...' : '测试并保存'}
+                      {createMutation.isPending ? '保存中...' : '保存节点'}
                     </button>
                   </div>
                 </div>
@@ -197,7 +280,9 @@ export default function BucketsPage() {
         </div>
         <div className="rounded border border-gray-200 bg-white p-4 md:col-span-2">
           <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">默认挂载</p>
-          <p className="mt-2 truncate text-sm font-semibold text-blue-700">{defaultBucket ? `${defaultBucket.name} / ${defaultBucket.bucket_name}` : '尚未设置'}</p>
+          <p className="mt-2 truncate text-sm font-semibold text-blue-700">
+            {defaultBucket ? `${defaultBucket.name} / ${bucketLocation(defaultBucket)}` : '尚未设置'}
+          </p>
         </div>
       </div>
 
@@ -210,7 +295,7 @@ export default function BucketsPage() {
             <tr>
               <th className="px-4 py-3">名称</th>
               <th className="px-4 py-3">类型</th>
-              <th className="px-4 py-3">地址 / Bucket</th>
+              <th className="px-4 py-3">地址 / 挂载点</th>
               <th className="px-4 py-3">区域 / SSL</th>
               <th className="px-4 py-3">状态</th>
               <th className="px-4 py-3 text-right">操作</th>
@@ -227,34 +312,82 @@ export default function BucketsPage() {
                 <td className="px-4 py-8 text-center text-sm text-gray-500" colSpan={6}>暂无存储节点</td>
               </tr>
             )}
-            {sortedBuckets.map((bucket) => (
-              <tr key={bucket.id} className="text-[13px] hover:bg-[#f9f9fb]">
-                <td className="px-4 py-3 font-semibold text-blue-700">{bucket.name}</td>
-                <td className="px-4 py-3"><span className="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">S3</span></td>
-                <td className="px-4 py-3">
-                  <div className="font-mono text-[12px] text-gray-700">{bucket.endpoint}</div>
-                  <div className="font-mono text-[11px] text-gray-400">{bucket.bucket_name}</div>
-                </td>
-                <td className="px-4 py-3 text-gray-600">{bucket.region || '-'} / {bucket.use_ssl ? 'SSL' : 'Plain'}</td>
-                <td className="px-4 py-3">
-                  {bucket.is_default ? (
-                    <span className="rounded border border-green-200 bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">默认</span>
-                  ) : (
-                    <span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">可用</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex justify-end gap-2">
-                    <button className={secondaryButton} onClick={() => testMutation.mutate(bucket.id)} disabled={testMutation.isPending}>测试</button>
-                    {!bucket.is_default && <button className={secondaryButton} onClick={() => defaultMutation.mutate(bucket.id)} disabled={defaultMutation.isPending}>默认</button>}
-                    <button className="rounded border border-red-200 bg-white px-3 py-1.5 text-[13px] font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" onClick={() => deleteMutation.mutate(bucket.id)} disabled={deleteMutation.isPending}>删除</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {sortedBuckets.map((bucket) => {
+              const type = bucketType(bucket)
+              return (
+                <tr key={bucket.id} className="text-[13px] hover:bg-[#f9f9fb]">
+                  <td className="px-4 py-3 font-semibold text-blue-700">{bucket.name}</td>
+                  <td className="px-4 py-3">
+                    <span className="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600">{type}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="break-all font-mono text-[12px] text-gray-700">{bucketLocation(bucket)}</div>
+                    <div className="break-all font-mono text-[11px] text-gray-400">{bucketSubLocation(bucket)}</div>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">{type === 'local' ? '-' : `${bucket.region || '-'} / ${bucket.use_ssl ? 'SSL' : 'Plain'}`}</td>
+                  <td className="px-4 py-3">
+                    {bucket.is_default ? (
+                      <span className="rounded border border-green-200 bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">默认</span>
+                    ) : (
+                      <span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">可用</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button className={secondaryButton} onClick={() => testMutation.mutate(bucket.id)} disabled={testMutation.isPending}>测试</button>
+                      {type === 'local' && (
+                        <button className={secondaryButton} onClick={() => startEditMount(bucket)} disabled={updateMutation.isPending}>编辑挂载点</button>
+                      )}
+                      {!bucket.is_default && <button className={secondaryButton} onClick={() => defaultMutation.mutate(bucket.id)} disabled={defaultMutation.isPending}>默认</button>}
+                      <button
+                        className={dangerButton}
+                        onClick={() => {
+                          if (window.confirm(`删除 ${bucket.name}？`)) deleteMutation.mutate(bucket.id)
+                        }}
+                        disabled={deleteMutation.isPending}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
+
+      <Dialog.Root open={Boolean(editingBucket)} onOpenChange={(nextOpen) => !nextOpen && setEditingBucket(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b bg-gray-50 px-6 py-4">
+              <Dialog.Title className="font-bold text-gray-950">编辑挂载点</Dialog.Title>
+              <Dialog.Close className="text-xl leading-none text-gray-500 hover:text-gray-900" aria-label="关闭">
+                &times;
+              </Dialog.Close>
+            </div>
+            <form className="space-y-5 p-6" onSubmit={submitMountEdit}>
+              <div className="space-y-1.5">
+                <div className="text-sm font-semibold text-gray-950">{editingBucket?.name}</div>
+                <div className="text-[12px] text-gray-500">本地目录节点</div>
+              </div>
+              <label className="block">
+                <span className={labelClass}>本地挂载路径</span>
+                <input className={`${inputClass} mt-1.5 font-mono`} value={editLocalPath} onChange={(e) => setEditLocalPath(e.target.value)} />
+              </label>
+              <div className="flex justify-end gap-3 border-t pt-4">
+                <Dialog.Close asChild>
+                  <button type="button" className={secondaryButton}>取消</button>
+                </Dialog.Close>
+                <button type="submit" className={primaryButton} disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? '保存中...' : '保存挂载点'}
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }

@@ -20,6 +20,15 @@ function versionTag(file?: FileMetadata) {
   return file?.driver_version || file?.esxi_version || ''
 }
 
+function displayWithDescription(file?: FileMetadata) {
+  const name = displayName(file)
+  return file?.driver_description ? `${name}(${file.driver_description})` : name
+}
+
+function checksumText(file?: FileMetadata) {
+  return `MD5: ${file?.md5 || '暂无'}`
+}
+
 export default function BuildPage() {
   const navigate = useNavigate()
   const [bucketId, setBucketId] = useState<number | ''>('')
@@ -265,13 +274,9 @@ export default function BuildPage() {
                           onChange={() => toggleDriver(driver.path)}
                         />
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2">
-                            <span className="truncate text-sm font-bold text-gray-950">{displayName(driver)}</span>
-                            <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
-                              {versionTag(driver) || version}
-                            </span>
-                          </span>
-                          <span className="mt-1 block break-all text-[12px] text-gray-500">{driver.driver_description || driver.path}</span>
+                          <span className="block truncate text-sm font-bold text-gray-950">{displayWithDescription(driver)}</span>
+                          <span className="mt-1 block break-all font-mono text-[12px] text-gray-600">{checksumText(driver)}</span>
+                          <span className="mt-1 block break-all font-mono text-[11px] text-gray-400">{driver.path}</span>
                         </span>
                       </label>
                     ))}

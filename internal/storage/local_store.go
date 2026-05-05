@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -257,7 +257,7 @@ func localETag(localPath string) string {
 		return ""
 	}
 	defer file.Close()
-	hasher := sha256.New()
+	hasher := md5.New()
 	if _, err := io.Copy(hasher, file); err != nil {
 		return ""
 	}

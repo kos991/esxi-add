@@ -3,13 +3,15 @@ import type { StorageBucket } from '../types'
 
 export interface BucketPayload {
   name: string
-  endpoint: string
-  access_key: string
-  secret_key: string
-  bucket_name: string
-  region: string
-  use_ssl: boolean
-  public_domain: string
+  type?: 's3' | 'local'
+  endpoint?: string
+  access_key?: string
+  secret_key?: string
+  bucket_name?: string
+  region?: string
+  use_ssl?: boolean
+  public_domain?: string
+  local_path?: string
   is_default?: boolean
 }
 

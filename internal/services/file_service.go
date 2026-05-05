@@ -2,12 +2,14 @@ package services
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -78,7 +80,9 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		return nil, err
 	}
 
-	hasher := sha256.New()
+	shaHasher := sha256.New()
+	md5Hasher := md5.New()
+	hashingReader := io.TeeReader(reader, io.MultiWriter(shaHasher, md5Hasher))
 	var objectInfo minio.ObjectInfo
 	var infoErr error
 	switch normalizeStorageType(bucket.Type) {
@@ -87,7 +91,7 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		if err != nil {
 			return nil, err
 		}
-		if err := store.Upload(ctx, objectPath, io.TeeReader(reader, hasher), size, detectContentType(filename)); err != nil {
+		if err := store.Upload(ctx, objectPath, hashingReader, size, detectContentType(filename)); err != nil {
 			return nil, err
 		}
 		objectInfo, infoErr = store.GetObjectInfo(ctx, objectPath)
@@ -96,7 +100,7 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		if err != nil {
 			return nil, err
 		}
-		if err := client.Upload(ctx, objectPath, io.TeeReader(reader, hasher), size, detectContentType(filename)); err != nil {
+		if err := client.Upload(ctx, objectPath, hashingReader, size, detectContentType(filename)); err != nil {
 			return nil, err
 		}
 		objectInfo, infoErr = client.GetObjectInfo(ctx, objectPath)
@@ -114,7 +118,8 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		DriverName:        displayNameFromFilename(filename),
 		DriverVersion:     versionTagFromFilename(filename),
 		DriverDescription: fileDescription(objectPath, normalizeFileType(fileType)),
-		SHA256:            hex.EncodeToString(hasher.Sum(nil)),
+		MD5:               hex.EncodeToString(md5Hasher.Sum(nil)),
+		SHA256:            hex.EncodeToString(shaHasher.Sum(nil)),
 		Size:              size,
 	}
 
@@ -148,6 +153,7 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 			"is_latest",
 			"conflicts_with",
 			"depends_on",
+			"md5",
 			"sha256",
 			"size",
 			"etag",
@@ -277,6 +283,7 @@ func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (
 		"driver_name":        indexed.DriverName,
 		"driver_description": indexed.DriverDescription,
 		"driver_version":     indexed.DriverVersion,
+		"md5":                indexed.MD5,
 		"size":               indexed.Size,
 		"etag":               indexed.ETag,
 		"last_modified":      indexed.LastModified,
@@ -327,6 +334,7 @@ func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
 					"driver_name",
 					"driver_description",
 					"driver_version",
+					"md5",
 					"size",
 					"etag",
 					"last_modified",
@@ -468,6 +476,7 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		DriverName:        displayNameFromFilename(cleanPath),
 		DriverVersion:     versionTagFromFilename(cleanPath),
 		DriverDescription: fileDescription(cleanPath, ""),
+		MD5:               md5FromETag(objectInfo.ETag),
 	}
 
 	if !objectInfo.LastModified.IsZero() {
@@ -555,16 +564,38 @@ func versionTagFromFilename(filename string) string {
 }
 
 func fileDescription(objectPath, fileType string) string {
+	name := strings.ToLower(displayNameFromFilename(objectPath))
 	switch fileType {
 	case models.FileTypeDepot:
-		return "Depot bundle: " + objectPath
+		return "ESXi Depot升级包"
 	case models.FileTypeDriver:
-		return "Driver package: " + objectPath
+		switch {
+		case strings.Contains(name, "vmkusb") || strings.Contains(name, "usb-nic") || strings.Contains(name, "usb_nic"):
+			return "USB网卡驱动"
+		case strings.HasPrefix(name, "net-") || strings.HasPrefix(name, "net_") || strings.Contains(name, "-nic") || strings.Contains(name, "_nic"):
+			return "网卡驱动"
+		case strings.Contains(name, "raid"):
+			return "RAID驱动"
+		case strings.HasPrefix(name, "scsi-") || strings.HasPrefix(name, "sata-") || strings.HasPrefix(name, "nvme-"):
+			return "存储驱动"
+		default:
+			return "驱动包"
+		}
 	case models.FileTypeISO:
-		return "ISO image: " + objectPath
+		return "ISO镜像"
 	default:
 		return objectPath
 	}
+}
+
+var md5ETagPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
+func md5FromETag(etag string) string {
+	clean := strings.ToLower(strings.Trim(strings.TrimSpace(etag), `"`))
+	if md5ETagPattern.MatchString(clean) {
+		return clean
+	}
+	return ""
 }
 
 func inferESXiVersionFromDepotName(name string) string {
@@ -596,7 +627,7 @@ func shouldIndexStorageObject(objectPath string) bool {
 func inferDriverCategory(filename string) string {
 	name := strings.ToLower(path.Base(filename))
 	switch {
-	case strings.HasPrefix(name, "net-") || strings.HasPrefix(name, "net_") || strings.Contains(name, "usb-nic") || strings.Contains(name, "-nic"):
+	case strings.HasPrefix(name, "net-") || strings.HasPrefix(name, "net_") || strings.Contains(name, "vmkusb") || strings.Contains(name, "usb-nic") || strings.Contains(name, "-nic"):
 		return "network"
 	case strings.HasPrefix(name, "scsi-") || strings.HasPrefix(name, "sata-") || strings.HasPrefix(name, "nvme-"):
 		return "storage"

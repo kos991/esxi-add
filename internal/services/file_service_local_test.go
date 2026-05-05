@@ -182,7 +182,7 @@ func TestFileServiceRefreshCacheExtractsDepotAndDriverDisplayMetadata(t *testing
 	if err := db.Where("storage_bucket_id = ? AND path = ?", bucketID, "driver/6x/net-igb-5.3.2-99-offline_bundle.zip").First(&driver).Error; err != nil {
 		t.Fatalf("find network driver: %v", err)
 	}
-	if driver.DriverCategory != "network" || driver.DriverName != "net-igb-5.3.2-99-offline_bundle" || driver.DriverVersion != "net-igb-5.3.2-99" || driver.DriverDescription == "" {
+	if driver.DriverCategory != "network" || driver.DriverName != "net-igb-5.3.2-99-offline_bundle" || driver.DriverVersion != "net-igb-5.3.2-99" || driver.DriverDescription != "网卡驱动" || driver.MD5 == "" {
 		t.Fatalf("unexpected driver metadata: %+v", driver)
 	}
 
@@ -217,6 +217,34 @@ func TestFileServiceRefreshCacheExtractsDepotAndDriverDisplayMetadata(t *testing
 	}
 }
 
+func TestFileServiceRefreshCacheDescribesUSBNetworkDriver(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+	driverPath := filepath.Join(root, "driver", "6x", "ESXi650-VMKUSB-NIC-FLING-39176435-16775917.zip")
+	if err := os.MkdirAll(filepath.Dir(driverPath), 0o755); err != nil {
+		t.Fatalf("mkdir driver: %v", err)
+	}
+	if err := os.WriteFile(driverPath, []byte("usb-driver"), 0o644); err != nil {
+		t.Fatalf("write driver: %v", err)
+	}
+
+	service := NewFileService(db, nil)
+	if err := service.RefreshCache(context.Background(), bucketID); err != nil {
+		t.Fatalf("refresh local cache: %v", err)
+	}
+
+	var driver models.FileMetadata
+	if err := db.Where("storage_bucket_id = ? AND path = ?", bucketID, "driver/6x/ESXi650-VMKUSB-NIC-FLING-39176435-16775917.zip").First(&driver).Error; err != nil {
+		t.Fatalf("find usb network driver: %v", err)
+	}
+	if driver.DriverName != "ESXi650-VMKUSB-NIC-FLING-39176435-16775917" ||
+		driver.DriverDescription != "USB网卡驱动" ||
+		driver.DriverCategory != "network" ||
+		driver.MD5 == "" {
+		t.Fatalf("unexpected usb network driver metadata: %+v", driver)
+	}
+}
+
 func TestFileServiceRenameLocalFileUpdatesObjectAndMetadata(t *testing.T) {
 	root := t.TempDir()
 	db, bucketID := newLocalFileServiceTestDB(t, root)
@@ -232,7 +260,7 @@ func TestFileServiceRenameLocalFileUpdatesObjectAndMetadata(t *testing.T) {
 		t.Fatalf("rename local file: %v", err)
 	}
 
-	if renamed.Path != "drivers/8.0/network/net-r8125-9.012.00.vib" || renamed.DriverName != "net-r8125-9.012.00" || renamed.DriverVersion != "net-r8125-9.012.00" {
+	if renamed.Path != "drivers/8.0/network/net-r8125-9.012.00.vib" || renamed.DriverName != "net-r8125-9.012.00" || renamed.DriverVersion != "net-r8125-9.012.00" || renamed.MD5 == "" {
 		t.Fatalf("unexpected renamed metadata: %+v", renamed)
 	}
 	if _, err := os.Stat(filepath.Join(root, "drivers", "8.0", "network", "net-r8125-9.011.00.vib")); !os.IsNotExist(err) {
