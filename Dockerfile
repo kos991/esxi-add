@@ -30,7 +30,6 @@ WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server
 COPY --from=frontend-builder /frontend/dist/ /app/frontend/dist/
 COPY configs/ ./configs/
-COPY scripts/ ./scripts/
 COPY docker/all-in-one-entrypoint.sh /usr/local/bin/all-in-one-entrypoint
 RUN chmod +x /usr/local/bin/all-in-one-entrypoint \
     && mkdir -p /data/db /data/storage /data/builds /data/minio /data/redis
