@@ -195,7 +195,7 @@ func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
 		return err
 	}
 
-	prefixes := []string{"depots/", "drivers/", "output/"}
+	prefixes := []string{"depot/", "depots/", "driver/", "drivers/", "iso/", "isos/", "output/"}
 	for _, prefix := range prefixes {
 		objects, err := s.listObjects(ctx, bucket, prefix)
 		if err != nil {
@@ -341,12 +341,13 @@ func detectContentType(filename string) string {
 }
 
 func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.FileMetadata {
+	cleanPath := strings.TrimLeft(path.Clean(objectInfo.Key), "/")
 	metadata := models.FileMetadata{
 		StorageBucketID: bucketID,
-		Path:            objectInfo.Key,
+		Path:            cleanPath,
 		Size:            objectInfo.Size,
 		ETag:            objectInfo.ETag,
-		DriverName:      path.Base(objectInfo.Key),
+		DriverName:      path.Base(cleanPath),
 	}
 
 	if !objectInfo.LastModified.IsZero() {
@@ -354,20 +355,52 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		metadata.LastModified = &lastModified
 	}
 
+	prefix, version, category := splitStoragePath(cleanPath)
 	switch {
-	case strings.HasPrefix(objectInfo.Key, "depots/"):
+	case isDepotPrefix(prefix):
 		metadata.Type = models.FileTypeDepot
-	case strings.HasPrefix(objectInfo.Key, "drivers/"):
-		metadata.Type = models.FileTypeDriver
-		parts := strings.Split(objectInfo.Key, "/")
-		if len(parts) >= 4 {
-			metadata.ESXiVersion = parts[1]
-			metadata.DriverCategory = parts[2]
-		}
-		metadata.DriverType = strings.TrimPrefix(strings.ToLower(filepath.Ext(objectInfo.Key)), ".")
-	case strings.HasPrefix(objectInfo.Key, "output/"):
+		metadata.ESXiVersion = version
+	case isDriverPrefix(prefix) && strings.EqualFold(filepath.Ext(cleanPath), ".iso"):
 		metadata.Type = models.FileTypeISO
+		metadata.ESXiVersion = version
+	case isDriverPrefix(prefix):
+		metadata.Type = models.FileTypeDriver
+		metadata.ESXiVersion = version
+		metadata.DriverCategory = category
+		metadata.DriverType = strings.TrimPrefix(strings.ToLower(filepath.Ext(cleanPath)), ".")
+	case isISOPrefix(prefix):
+		metadata.Type = models.FileTypeISO
+		if prefix != "output" {
+			metadata.ESXiVersion = version
+		}
 	}
 
 	return metadata
+}
+
+func splitStoragePath(objectPath string) (prefix, version, category string) {
+	parts := strings.Split(strings.Trim(objectPath, "/"), "/")
+	if len(parts) == 0 {
+		return "", "", ""
+	}
+	prefix = strings.ToLower(parts[0])
+	if len(parts) >= 2 {
+		version = parts[1]
+	}
+	if len(parts) >= 3 {
+		category = parts[2]
+	}
+	return prefix, version, category
+}
+
+func isDepotPrefix(prefix string) bool {
+	return prefix == "depot" || prefix == "depots"
+}
+
+func isDriverPrefix(prefix string) bool {
+	return prefix == "driver" || prefix == "drivers"
+}
+
+func isISOPrefix(prefix string) bool {
+	return prefix == "iso" || prefix == "isos" || prefix == "output"
 }

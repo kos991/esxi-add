@@ -122,6 +122,45 @@ func TestFileServiceRefreshCacheIndexesLocalFiles(t *testing.T) {
 	}
 }
 
+func TestFileServiceRefreshCacheIndexesDepotAndDriverDirectoryAliases(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+
+	files := map[string]string{
+		filepath.Join("depot", "8.0", "ESXi-8.0.zip"):                  "depot-8",
+		filepath.Join("depots", "7.0", "ESXi-7.0.zip"):                 "depot-7",
+		filepath.Join("driver", "8.0", "network", "net.vib"):           "driver-8",
+		filepath.Join("drivers", "7.0", "storage", "storage.vib"):      "driver-7",
+		filepath.Join("driver", "8.0", "images", "custom-esxi.iso"):    "iso-from-driver",
+		filepath.Join("iso", "8.0", "installer.iso"):                   "iso-dir",
+		filepath.Join("isos", "7.0", "legacy-installer.iso"):           "isos-dir",
+		filepath.Join("output", "builds", "generated-custom-esxi.iso"): "output-dir",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	service := NewFileService(db, nil)
+	if err := service.RefreshCache(context.Background(), bucketID); err != nil {
+		t.Fatalf("refresh local cache: %v", err)
+	}
+
+	assertFileMetadata(t, db, bucketID, "depot/8.0/ESXi-8.0.zip", models.FileTypeDepot, "8.0", "")
+	assertFileMetadata(t, db, bucketID, "depots/7.0/ESXi-7.0.zip", models.FileTypeDepot, "7.0", "")
+	assertFileMetadata(t, db, bucketID, "driver/8.0/network/net.vib", models.FileTypeDriver, "8.0", "network")
+	assertFileMetadata(t, db, bucketID, "drivers/7.0/storage/storage.vib", models.FileTypeDriver, "7.0", "storage")
+	assertFileMetadata(t, db, bucketID, "driver/8.0/images/custom-esxi.iso", models.FileTypeISO, "8.0", "")
+	assertFileMetadata(t, db, bucketID, "iso/8.0/installer.iso", models.FileTypeISO, "8.0", "")
+	assertFileMetadata(t, db, bucketID, "isos/7.0/legacy-installer.iso", models.FileTypeISO, "7.0", "")
+	assertFileMetadata(t, db, bucketID, "output/builds/generated-custom-esxi.iso", models.FileTypeISO, "", "")
+}
+
 func TestFileServiceListDriversFiltersByESXiVersion(t *testing.T) {
 	root := t.TempDir()
 	db, bucketID := newLocalFileServiceTestDB(t, root)
@@ -140,5 +179,17 @@ func TestFileServiceListDriversFiltersByESXiVersion(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ESXiVersion != "8.0" || got[0].Path != "drivers/8.0/network/net.vib" {
 		t.Fatalf("unexpected filtered drivers: %+v", got)
+	}
+}
+
+func assertFileMetadata(t *testing.T, db *gorm.DB, bucketID uint, objectPath, fileType, esxiVersion, driverCategory string) {
+	t.Helper()
+
+	var file models.FileMetadata
+	if err := db.Where("storage_bucket_id = ? AND path = ?", bucketID, objectPath).First(&file).Error; err != nil {
+		t.Fatalf("find indexed file %s: %v", objectPath, err)
+	}
+	if file.Type != fileType || file.ESXiVersion != esxiVersion || file.DriverCategory != driverCategory {
+		t.Fatalf("unexpected metadata for %s: %+v", objectPath, file)
 	}
 }
