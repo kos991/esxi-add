@@ -41,7 +41,7 @@ func (s *FileService) ListDrivers(ctx context.Context, bucketID uint, esxiVersio
 		Where("storage_bucket_id = ? AND type = ?", bucketID, models.FileTypeDriver)
 
 	if esxiVersion != "" {
-		query = query.Where("esxi_version = ?", esxiVersion)
+		query = query.Where("esxi_version IN ?", esxiVersionAliases(esxiVersion))
 	}
 	if category != "" {
 		query = query.Where("driver_category = ?", category)
@@ -195,6 +195,12 @@ func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
 		return err
 	}
 
+	if err := s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND (path = ? OR path LIKE ?)", bucketID, ".openlist", "%/.openlist").
+		Delete(&models.FileMetadata{}).Error; err != nil {
+		return fmt.Errorf("delete ignored metadata: %w", err)
+	}
+
 	prefixes := []string{"depot/", "depots/", "driver/", "drivers/", "iso/", "isos/", "output/"}
 	for _, prefix := range prefixes {
 		objects, err := s.listObjects(ctx, bucket, prefix)
@@ -203,7 +209,13 @@ func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
 		}
 
 		for _, objectInfo := range objects {
+			if !shouldIndexStorageObject(objectInfo.Key) {
+				continue
+			}
 			metadata := objectInfoToMetadata(bucketID, objectInfo)
+			if metadata.Type == "" {
+				continue
+			}
 			if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
 				DoUpdates: clause.AssignmentColumns([]string{
@@ -367,6 +379,9 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		metadata.Type = models.FileTypeDriver
 		metadata.ESXiVersion = version
 		metadata.DriverCategory = category
+		if metadata.DriverCategory == "" {
+			metadata.DriverCategory = inferDriverCategory(metadata.DriverName)
+		}
 		metadata.DriverType = strings.TrimPrefix(strings.ToLower(filepath.Ext(cleanPath)), ".")
 	case isISOPrefix(prefix):
 		metadata.Type = models.FileTypeISO
@@ -387,10 +402,72 @@ func splitStoragePath(objectPath string) (prefix, version, category string) {
 	if len(parts) >= 2 {
 		version = parts[1]
 	}
-	if len(parts) >= 3 {
+	if len(parts) >= 4 {
 		category = parts[2]
 	}
 	return prefix, version, category
+}
+
+func shouldIndexStorageObject(objectPath string) bool {
+	cleanPath := strings.TrimLeft(path.Clean(objectPath), "/")
+	if cleanPath == "." || strings.HasSuffix(strings.TrimSpace(objectPath), "/") {
+		return false
+	}
+	return path.Base(cleanPath) != ".openlist"
+}
+
+func inferDriverCategory(filename string) string {
+	name := strings.ToLower(path.Base(filename))
+	switch {
+	case strings.HasPrefix(name, "net-") || strings.HasPrefix(name, "net_") || strings.Contains(name, "usb-nic") || strings.Contains(name, "-nic"):
+		return "network"
+	case strings.HasPrefix(name, "scsi-") || strings.HasPrefix(name, "sata-") || strings.HasPrefix(name, "nvme-"):
+		return "storage"
+	case strings.Contains(name, "raid"):
+		return "raid"
+	default:
+		return ""
+	}
+}
+
+func esxiVersionAliases(version string) []string {
+	seen := make(map[string]struct{})
+	aliases := make([]string, 0, 4)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		aliases = append(aliases, value)
+	}
+
+	add(version)
+	normalized := strings.ToLower(strings.TrimSpace(version))
+	add(normalized)
+	isBroadSix := normalized == "6x" || normalized == "6.x"
+
+	major := normalized
+	if before, _, ok := strings.Cut(major, "."); ok {
+		major = before
+	}
+	major = strings.TrimSuffix(major, "x")
+	if major == "" || major == normalized {
+		return aliases
+	}
+
+	add(major + "x")
+	add(major + ".x")
+	if major == "6" && isBroadSix {
+		add("6.5")
+		add("6.7")
+	} else if major != "6" {
+		add(major + ".0")
+	}
+	return aliases
 }
 
 func isDepotPrefix(prefix string) bool {

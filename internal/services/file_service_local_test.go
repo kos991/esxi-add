@@ -161,6 +161,55 @@ func TestFileServiceRefreshCacheIndexesDepotAndDriverDirectoryAliases(t *testing
 	assertFileMetadata(t, db, bucketID, "output/builds/generated-custom-esxi.iso", models.FileTypeISO, "", "")
 }
 
+func TestFileServiceRefreshCacheIndexesFlatVersionDriverDirectories(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+
+	files := map[string]string{
+		filepath.Join("depot", "8x", "VMware-ESXi-8x.zip"):         "depot",
+		filepath.Join("depot", "8x", ".openlist"):                  "marker",
+		filepath.Join("driver", "8x", "net-r8125-9.011.00.vib"):    "network-driver",
+		filepath.Join("driver", "8x", "custom-esxi-installer.iso"): "iso",
+		filepath.Join("driver", "8x", ".openlist"):                 "marker",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	staleMarkers := []models.FileMetadata{
+		{StorageBucketID: bucketID, Path: "depot/8x/.openlist", Type: models.FileTypeDepot, ESXiVersion: "8x"},
+		{StorageBucketID: bucketID, Path: "driver/8x/.openlist", Type: models.FileTypeDriver, ESXiVersion: "8x", DriverCategory: ".openlist"},
+	}
+	if err := db.Create(&staleMarkers).Error; err != nil {
+		t.Fatalf("create stale marker metadata: %v", err)
+	}
+
+	service := NewFileService(db, nil)
+	if err := service.RefreshCache(context.Background(), bucketID); err != nil {
+		t.Fatalf("refresh local cache: %v", err)
+	}
+
+	assertFileMetadata(t, db, bucketID, "depot/8x/VMware-ESXi-8x.zip", models.FileTypeDepot, "8x", "")
+	assertFileMetadata(t, db, bucketID, "driver/8x/net-r8125-9.011.00.vib", models.FileTypeDriver, "8x", "network")
+	assertFileMetadata(t, db, bucketID, "driver/8x/custom-esxi-installer.iso", models.FileTypeISO, "8x", "")
+
+	var markerCount int64
+	if err := db.Model(&models.FileMetadata{}).
+		Where("storage_bucket_id = ? AND path LIKE ?", bucketID, "%.openlist").
+		Count(&markerCount).Error; err != nil {
+		t.Fatalf("count marker metadata: %v", err)
+	}
+	if markerCount != 0 {
+		t.Fatalf("expected .openlist marker files to be ignored, got %d metadata rows", markerCount)
+	}
+}
+
 func TestFileServiceListDriversFiltersByESXiVersion(t *testing.T) {
 	root := t.TempDir()
 	db, bucketID := newLocalFileServiceTestDB(t, root)
@@ -179,6 +228,47 @@ func TestFileServiceListDriversFiltersByESXiVersion(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ESXiVersion != "8.0" || got[0].Path != "drivers/8.0/network/net.vib" {
 		t.Fatalf("unexpected filtered drivers: %+v", got)
+	}
+}
+
+func TestFileServiceListDriversAcceptsESXiVersionAliases(t *testing.T) {
+	root := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+	files := []models.FileMetadata{
+		{StorageBucketID: bucketID, Path: "driver/6x/net-r8168.vib", Type: models.FileTypeDriver, ESXiVersion: "6x", DriverCategory: "network"},
+		{StorageBucketID: bucketID, Path: "drivers/6.5/network/net-e1000.vib", Type: models.FileTypeDriver, ESXiVersion: "6.5", DriverCategory: "network"},
+		{StorageBucketID: bucketID, Path: "driver/8x/net-r8125.vib", Type: models.FileTypeDriver, ESXiVersion: "8x", DriverCategory: "network"},
+		{StorageBucketID: bucketID, Path: "driver/7x/net-r8168.vib", Type: models.FileTypeDriver, ESXiVersion: "7x", DriverCategory: "network"},
+	}
+	if err := db.Create(&files).Error; err != nil {
+		t.Fatalf("create driver metadata: %v", err)
+	}
+
+	service := NewFileService(db, nil)
+	for _, version := range []string{"8.0", "8.x"} {
+		got, err := service.ListDrivers(context.Background(), bucketID, version, "network")
+		if err != nil {
+			t.Fatalf("list filtered drivers for %s: %v", version, err)
+		}
+		if len(got) != 1 || got[0].ESXiVersion != "8x" || got[0].Path != "driver/8x/net-r8125.vib" {
+			t.Fatalf("unexpected filtered drivers for %s: %+v", version, got)
+		}
+	}
+	for version, wantCount := range map[string]int{"6.5": 2, "6.7": 1} {
+		got, err := service.ListDrivers(context.Background(), bucketID, version, "network")
+		if err != nil {
+			t.Fatalf("list filtered drivers for %s: %v", version, err)
+		}
+		if len(got) != wantCount || got[0].ESXiVersion != "6x" || got[0].Path != "driver/6x/net-r8168.vib" {
+			t.Fatalf("unexpected filtered drivers for %s: %+v", version, got)
+		}
+	}
+	got, err := service.ListDrivers(context.Background(), bucketID, "6.x", "network")
+	if err != nil {
+		t.Fatalf("list filtered drivers for 6.x: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 6.x to include 6x and 6.5 drivers, got %+v", got)
 	}
 }
 
