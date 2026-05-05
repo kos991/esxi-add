@@ -20,6 +20,7 @@ import (
 type BuildHandler struct {
 	db         *gorm.DB
 	taskClient *asynq.Client
+	buildMode  string
 }
 
 type createBuildRequest struct {
@@ -30,12 +31,12 @@ type createBuildRequest struct {
 	CustomISOName string   `json:"custom_iso_name"`
 }
 
-func NewBuildHandler(db *gorm.DB, client *asynq.Client) *BuildHandler {
-	return &BuildHandler{db: db, taskClient: client}
+func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
+	return &BuildHandler{db: db, taskClient: client, buildMode: normalizeBuildMode(buildMode)}
 }
 
 func (h *BuildHandler) Create(c *fiber.Ctx) error {
-	if h.taskClient == nil {
+	if h.taskClient == nil && h.buildMode != "external" {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(utils.ErrorResponse("task queue is not configured"))
 	}
 
@@ -67,6 +68,10 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
 
+	if h.buildMode == "external" {
+		return c.Status(fiber.StatusCreated).JSON(utils.SuccessResponse(buildTask))
+	}
+
 	task, err := taskqueue.NewBuildISOTask(&taskqueue.BuildISOPayload{
 		TaskID:        buildTask.TaskID,
 		BucketID:      req.BucketID,
@@ -87,6 +92,15 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(utils.SuccessResponse(buildTask))
+}
+
+func normalizeBuildMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "external":
+		return "external"
+	default:
+		return "local"
+	}
 }
 
 func (h *BuildHandler) List(c *fiber.Ctx) error {

@@ -11,6 +11,8 @@ export DB_PATH="${DB_PATH:-/data/db/esxi-builder.db}"
 export STORAGE_TYPE="${STORAGE_TYPE:-local}"
 export STORAGE_PATH="${STORAGE_PATH:-/data/storage}"
 export CACHE_DIR="${CACHE_DIR:-/data/builds}"
+export BUILD_MODE="${BUILD_MODE:-local}"
+export WORKER_TOKEN="${WORKER_TOKEN:-}"
 export FRONTEND_DIST_DIR="${FRONTEND_DIST_DIR:-/app/frontend/dist}"
 
 export MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}"

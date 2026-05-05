@@ -7,10 +7,12 @@ storage:
   type: local
   local_path: ./data/storage
 build:
+  mode: local
   work_dir: ./data/builds
   powershell_path: pwsh
   script_path: ./scripts/build-esxi-iso.ps1
   max_concurrent: 3
+  worker_token: ""
 queue:
   concurrency: 2
 redis:

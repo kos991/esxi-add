@@ -47,10 +47,12 @@ type S3Config struct {
 }
 
 type BuildConfig struct {
+	Mode           string `mapstructure:"mode"`
 	WorkDir        string `mapstructure:"work_dir"`
 	PowerShellPath string `mapstructure:"powershell_path"`
 	ScriptPath     string `mapstructure:"script_path"`
 	MaxConcurrent  int    `mapstructure:"max_concurrent"`
+	WorkerToken    string `mapstructure:"worker_token"`
 }
 
 type QueueConfig struct {
@@ -96,10 +98,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("storage.local_path", "./data/storage")
 	v.SetDefault("storage.s3.use_ssl", true)
 	v.SetDefault("storage.s3.region", "us-east-1")
+	v.SetDefault("build.mode", "local")
 	v.SetDefault("build.work_dir", "./data/builds")
 	v.SetDefault("build.powershell_path", "pwsh")
 	v.SetDefault("build.script_path", "./scripts/build-esxi-iso.ps1")
 	v.SetDefault("build.max_concurrent", 3)
+	v.SetDefault("build.worker_token", "")
 	v.SetDefault("queue.concurrency", 2)
 	v.SetDefault("redis.addr", "redis:6379")
 	v.SetDefault("redis.password", "")
@@ -119,7 +123,9 @@ func bindEnvAliases(v *viper.Viper) error {
 		"storage.s3.region":        {"DEFAULT_S3_REGION"},
 		"storage.s3.use_ssl":       {"DEFAULT_S3_USE_SSL"},
 		"storage.s3.public_domain": {"DEFAULT_S3_PUBLIC_DOMAIN"},
+		"build.mode":               {"BUILD_MODE"},
 		"build.work_dir":           {"CACHE_DIR"},
+		"build.worker_token":       {"WORKER_TOKEN"},
 	}
 
 	for key, envNames := range aliases {

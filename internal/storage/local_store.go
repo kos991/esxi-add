@@ -139,6 +139,24 @@ func (s *LocalStore) GetObjectInfo(ctx context.Context, objectName string) (mini
 	}, nil
 }
 
+func (s *LocalStore) Download(ctx context.Context, objectName string) (io.ReadCloser, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	localPath, err := s.ResolvePath(objectName)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("open local object %s: %w", objectName, err)
+	}
+	return file, nil
+}
+
 func (s *LocalStore) ListObjects(ctx context.Context, prefix string) ([]minio.ObjectInfo, error) {
 	startPath, err := s.safePath(prefix)
 	if err != nil {

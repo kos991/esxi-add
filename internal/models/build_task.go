@@ -21,9 +21,9 @@ type BuildTask struct {
 	CustomISOName   string         `json:"custom_iso_name"`
 	Progress        int            `gorm:"default:0" json:"progress"`
 	LogOutput       string         `gorm:"type:text" json:"log_output"`
-	OutputISO       string         `json:"output_iso"`
-	OutputISOSize   int64          `json:"output_iso_size"`
-	OutputISOSHA256 string         `json:"output_iso_sha256"`
+	OutputISO       string         `gorm:"column:output_iso" json:"output_iso"`
+	OutputISOSize   int64          `gorm:"column:output_iso_size" json:"output_iso_size"`
+	OutputISOSHA256 string         `gorm:"column:output_iso_sha256" json:"output_iso_sha256"`
 	ErrorMessage    string         `gorm:"type:text" json:"error_message"`
 	BuildDuration   int            `json:"build_duration"`
 	StartedAt       *time.Time     `json:"started_at"`

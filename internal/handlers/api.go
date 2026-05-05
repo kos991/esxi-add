@@ -17,8 +17,8 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	fileService := services.NewFileService(db, nil)
 	fileHandler := NewFileHandler(fileService)
 
-	_ = cfg
-	buildHandler := NewBuildHandler(db, taskClient)
+	buildHandler := NewBuildHandler(db, taskClient, cfg.Build.Mode)
+	workerHandler := NewWorkerHandler(db, cfg.Build.WorkerToken)
 	wsHandler := NewWebSocketHandler(db, wsManager)
 
 	app.Get("/health", healthHandler.Check)
@@ -46,6 +46,11 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	api.Get("/builds/:id", buildHandler.Get)
 	api.Delete("/builds/:id", buildHandler.Delete)
 	api.Get("/builds/:id/logs", buildHandler.GetLogs)
+
+	api.Post("/worker/builds/claim", workerHandler.ClaimBuild)
+	api.Post("/worker/builds/:id/progress", workerHandler.UpdateProgress)
+	api.Post("/worker/builds/:id/artifact", workerHandler.UploadArtifact)
+	api.Get("/worker/files", workerHandler.DownloadFile)
 
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if fiberws.IsWebSocketUpgrade(c) {

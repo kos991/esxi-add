@@ -93,24 +93,28 @@ func main() {
 
 	wsManager := appws.NewManager()
 
-	// Start Asynq worker server
-	asynqSrv := queue.NewServer(queue.Config{
-		RedisAddr:     cfg.Redis.Addr,
-		RedisPassword: cfg.Redis.Password,
-		RedisDB:       cfg.Redis.DB,
-		Concurrency:   cfg.Queue.Concurrency,
-	})
+	if strings.EqualFold(strings.TrimSpace(cfg.Build.Mode), "external") {
+		utils.Logger.Info("external build mode enabled; local PowerShell worker is disabled")
+	} else {
+		// Start Asynq worker server
+		asynqSrv := queue.NewServer(queue.Config{
+			RedisAddr:     cfg.Redis.Addr,
+			RedisPassword: cfg.Redis.Password,
+			RedisDB:       cfg.Redis.DB,
+			Concurrency:   cfg.Queue.Concurrency,
+		})
 
-	buildTaskHandler := queue.NewBuildTaskHandler(db, executor, cacheManager, s3Client, cfg.Build.WorkDir, wsManager)
+		buildTaskHandler := queue.NewBuildTaskHandler(db, executor, cacheManager, s3Client, cfg.Build.WorkDir, wsManager)
 
-	mux := asynq.NewServeMux()
-	mux.HandleFunc(queue.TypeBuildISO, buildTaskHandler.HandleBuildISO)
+		mux := asynq.NewServeMux()
+		mux.HandleFunc(queue.TypeBuildISO, buildTaskHandler.HandleBuildISO)
 
-	go func() {
-		if err := asynqSrv.Run(mux); err != nil {
-			utils.Logger.Error("asynq worker failed", zap.Error(err))
-		}
-	}()
+		go func() {
+			if err := asynqSrv.Run(mux); err != nil {
+				utils.Logger.Error("asynq worker failed", zap.Error(err))
+			}
+		}()
+	}
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: middleware.ErrorHandler,

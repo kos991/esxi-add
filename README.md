@@ -46,6 +46,7 @@ configs/                  YAML config
 - One Docker image containing the Go server, built frontend, Redis, and MinIO
 - SQLite database and runtime data persisted under `/data`
 - The all-in-one image intentionally does not include PowerShell or PowerCLI
+- External build mode keeps PowerShell/PowerCLI on a separate worker machine
 
 ## Local Development
 
@@ -76,6 +77,30 @@ http://localhost:8080
 
 MinIO is available at `http://localhost:9000`, with the console at `http://localhost:9001`.
 
+## External Build Worker
+
+Set the server to external mode so the all-in-one container does not try to run
+PowerShell or PowerCLI:
+
+```env
+BUILD_MODE=external
+WORKER_TOKEN=change-this-worker-token
+```
+
+Run the worker on a separate machine that has PowerShell and VMware PowerCLI
+ImageBuilder available:
+
+```powershell
+pwsh -File .\scripts\external-build-worker.ps1 `
+  -ApiBaseUrl http://192.168.0.142:8080 `
+  -WorkerToken change-this-worker-token `
+  -WorkDir D:\esxi-worker
+```
+
+The worker claims pending build tasks, downloads depot and driver files through
+the API, runs `scripts/build-esxi-iso.ps1`, and uploads the generated ISO back to
+the configured storage bucket. S3/R2 credentials remain on the server.
+
 ## CI
 
 GitHub Actions validates:
@@ -99,4 +124,5 @@ See:
 - Frontend assets are built in the main Dockerfile and served by the Go server
 - Redis, MinIO, SQLite, uploaded files, and build/cache data share the `/data` volume in Docker
 - PowerShell/PowerCLI are not installed in the all-in-one image
+- In `BUILD_MODE=external`, local PowerShell execution is disabled and builds wait for an external worker
 - Bucket-specific S3 clients are supported at runtime
