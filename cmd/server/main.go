@@ -27,6 +27,15 @@ import (
 	appws "github.com/esxi-builder/esxi-iso-builder/internal/websocket"
 )
 
+const maxUploadBodySize = 4 * 1024 * 1024 * 1024
+
+func serverFiberConfig() fiber.Config {
+	return fiber.Config{
+		BodyLimit:    maxUploadBodySize,
+		ErrorHandler: middleware.ErrorHandler,
+	}
+}
+
 func main() {
 	if err := utils.InitLogger(); err != nil {
 		log.Fatalf("failed to initialize logger: %v", err)
@@ -116,9 +125,7 @@ func main() {
 		}()
 	}
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: middleware.ErrorHandler,
-	})
+	app := fiber.New(serverFiberConfig())
 
 	app.Use(middleware.Logger())
 	app.Use(middleware.CORS())
