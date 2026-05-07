@@ -4,11 +4,11 @@ Custom ESXi ISO build platform with:
 
 - Go backend
 - React + Vite frontend
-- Local disk storage and optional S3/MinIO buckets
+- Local disk storage and optional external S3-compatible buckets
 - Asynq async build queue
 - PowerShell/PowerCLI build execution inside the all-in-one container or through an external worker
 - WebSocket log streaming
-- All-in-one Docker Compose deployment
+- Single-image Docker Compose deployment
 
 ## Project Structure
 
@@ -43,7 +43,7 @@ configs/                  YAML config
 - Task list and task detail pages
 
 ### Deployment
-- One Docker image containing the Go server, built frontend, Redis, and MinIO
+- One Docker image containing the Go server, built frontend, Redis, PowerShell, and VMware PowerCLI
 - SQLite database and runtime data persisted under `/data`
 - The all-in-one image includes PowerShell and VMware PowerCLI for local build mode
 - External build mode can still keep PowerShell/PowerCLI on a separate worker machine
@@ -65,7 +65,7 @@ npm run dev
 ## Docker
 
 ```bash
-docker-compose build
+docker-compose pull
 docker-compose up -d
 ```
 
@@ -75,7 +75,11 @@ The app UI and API are served from:
 http://localhost:8080
 ```
 
-MinIO is available at `http://localhost:9000`, with the console at `http://localhost:9001`.
+For local image development, build with the override file:
+
+```bash
+docker-compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 ## External Build Worker
 
@@ -116,7 +120,7 @@ GitHub Actions validates:
 - `go build ./...`
 - frontend dependency install
 - frontend production build
-- all-in-one Docker image build
+- single Docker image build and GHCR publish on `main`
 
 ## Environment
 
@@ -128,7 +132,7 @@ See:
 ## Notes
 
 - Frontend assets are built in the main Dockerfile and served by the Go server
-- Redis, MinIO, SQLite, uploaded files, and build/cache data share the `/data` volume in Docker
+- Redis, SQLite, uploaded files, and build/cache data share the `/data` volume in Docker
 - PowerShell/PowerCLI are installed in the all-in-one image for `BUILD_MODE=local`
 - In `BUILD_MODE=external`, local PowerShell execution is disabled and builds wait for an external worker
 - Bucket-specific S3 clients are supported at runtime

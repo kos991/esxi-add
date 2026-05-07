@@ -15,17 +15,15 @@ COPY . .
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
 
-# All-in-one runtime: Go app + built frontend + Redis + MinIO + PowerCLI build tooling.
+# Single-image runtime: Go app + built frontend + Redis + PowerCLI build tooling.
 FROM mcr.microsoft.com/powershell:7.4-debian-12
-ARG TARGETARCH
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
-    && curl -fsSL "https://dl.min.io/server/minio/release/linux-${TARGETARCH:-amd64}/minio" -o /usr/local/bin/minio \
-    && chmod +x /usr/local/bin/minio \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3 python3-pip redis-server tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -Scope AllUsers; Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -Confirm:`$false | Out-Null"
+RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil pyopenssl six \
+    && pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -Scope AllUsers; Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -Confirm:`$false | Out-Null"
 
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server
@@ -34,9 +32,9 @@ COPY scripts/ ./scripts/
 COPY configs/ ./configs/
 COPY docker/all-in-one-entrypoint.sh /usr/local/bin/all-in-one-entrypoint
 RUN chmod +x /usr/local/bin/all-in-one-entrypoint \
-    && mkdir -p /data/db /data/storage /data/builds /data/minio /data/redis
+    && mkdir -p /data/db /data/storage /data/builds /data/redis
 
-EXPOSE 8080 9000 9001
+EXPOSE 8080
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
