@@ -28,6 +28,19 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 	}
 }
 
+func TestDockerContextIncludesPowerShellScripts(t *testing.T) {
+	dockerignore := readTextFile(t, "../.dockerignore")
+
+	for _, forbidden := range []string{
+		"scripts/*.ps1",
+		"scripts/",
+	} {
+		if strings.Contains(dockerignore, forbidden) {
+			t.Fatalf(".dockerignore must not contain %q because the image needs build-esxi-iso.ps1 at runtime", forbidden)
+		}
+	}
+}
+
 func TestAllInOneImageDoesNotBundleMinIO(t *testing.T) {
 	dockerfile := readTextFile(t, "../Dockerfile")
 	entrypoint := readTextFile(t, "../docker/all-in-one-entrypoint.sh")
