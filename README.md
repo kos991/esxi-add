@@ -6,7 +6,7 @@ Custom ESXi ISO build platform with:
 - React + Vite frontend
 - Local disk storage and optional S3/MinIO buckets
 - Asynq async build queue
-- PowerShell/PowerCLI build execution through an external worker or host tooling
+- PowerShell/PowerCLI build execution inside the all-in-one container or through an external worker
 - WebSocket log streaming
 - All-in-one Docker Compose deployment
 
@@ -45,8 +45,8 @@ configs/                  YAML config
 ### Deployment
 - One Docker image containing the Go server, built frontend, Redis, and MinIO
 - SQLite database and runtime data persisted under `/data`
-- The all-in-one image intentionally does not include PowerShell or PowerCLI
-- External build mode keeps PowerShell/PowerCLI on a separate worker machine
+- The all-in-one image includes PowerShell and VMware PowerCLI for local build mode
+- External build mode can still keep PowerShell/PowerCLI on a separate worker machine
 
 ## Local Development
 
@@ -79,8 +79,14 @@ MinIO is available at `http://localhost:9000`, with the console at `http://local
 
 ## External Build Worker
 
-Set the server to external mode so the all-in-one container does not try to run
-PowerShell or PowerCLI:
+The default Docker deployment runs builds inside the all-in-one container:
+
+```env
+BUILD_MODE=local
+```
+
+Set the server to external mode only when a separate PowerCLI worker should
+claim build tasks through the API:
 
 ```env
 BUILD_MODE=external
@@ -123,6 +129,6 @@ See:
 
 - Frontend assets are built in the main Dockerfile and served by the Go server
 - Redis, MinIO, SQLite, uploaded files, and build/cache data share the `/data` volume in Docker
-- PowerShell/PowerCLI are not installed in the all-in-one image
+- PowerShell/PowerCLI are installed in the all-in-one image for `BUILD_MODE=local`
 - In `BUILD_MODE=external`, local PowerShell execution is disabled and builds wait for an external worker
 - Bucket-specific S3 clients are supported at runtime

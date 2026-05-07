@@ -15,9 +15,8 @@ COPY . .
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
 
-# All-in-one runtime: Go app + built frontend + Redis + MinIO.
-# PowerShell and PowerCLI are intentionally not installed in this image.
-FROM debian:12-slim
+# All-in-one runtime: Go app + built frontend + Redis + MinIO + PowerCLI build tooling.
+FROM mcr.microsoft.com/powershell:7.4-debian-12
 ARG TARGETARCH
 
 RUN apt-get update \
@@ -26,9 +25,12 @@ RUN apt-get update \
     && chmod +x /usr/local/bin/minio \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -Scope AllUsers; Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -Confirm:`$false | Out-Null"
+
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server
 COPY --from=frontend-builder /frontend/dist/ /app/frontend/dist/
+COPY scripts/ ./scripts/
 COPY configs/ ./configs/
 COPY docker/all-in-one-entrypoint.sh /usr/local/bin/all-in-one-entrypoint
 RUN chmod +x /usr/local/bin/all-in-one-entrypoint \
