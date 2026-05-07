@@ -16,7 +16,9 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 	requiredSnippets := []string{
 		"FROM mcr.microsoft.com/powershell:7.4-debian-12",
 		"Set-PSRepository PSGallery -InstallationPolicy Trusted",
+		"Install-Module -Name VMware.ImageBuilder -RequiredVersion 8.0.0.21610262",
 		"Install-Module -Name VMware.PowerCLI",
+		"-RequiredVersion 13.1.0.21624340",
 		"-AcceptLicense",
 		"COPY scripts/ ./scripts/",
 	}
