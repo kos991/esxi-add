@@ -25,8 +25,7 @@ RUN apt-get update \
 RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil pyopenssl six
 
 RUN pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted"
-RUN pwsh -NoLogo -NoProfile -Command "Install-Module -Name VMware.ImageBuilder -RequiredVersion 8.0.0.21610262 -Force -AllowClobber -AcceptLicense -Scope AllUsers"
-RUN pwsh -NoLogo -NoProfile -Command "Install-Module -Name VMware.PowerCLI -RequiredVersion 13.1.0.21624340 -Force -AllowClobber -AcceptLicense -Scope AllUsers"
+RUN pwsh -NoLogo -NoProfile -Command "Install-Module -Name VMware.PowerCLI -Force -AllowClobber -AcceptLicense -Scope AllUsers"
 
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server
