@@ -15,7 +15,10 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 	dockerfile := string(content)
 	requiredSnippets := []string{
 		"FROM mcr.microsoft.com/powershell:7.4-debian-12",
+		"Install-PackageProvider -Name NuGet",
 		"Install-Module -Name VMware.PowerCLI",
+		"-AcceptLicense",
+		"-PythonPath /usr/bin/python3",
 		"COPY scripts/ ./scripts/",
 	}
 

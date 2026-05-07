@@ -22,8 +22,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl python3 python3-pip redis-server tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil pyopenssl six \
-    && pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -Scope AllUsers; Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -Confirm:`$false | Out-Null"
+RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil pyopenssl six
+
+RUN pwsh -NoLogo -NoProfile -Command "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force; Set-PSRepository PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -Force -AllowClobber -AcceptLicense -Scope AllUsers; Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -PythonPath /usr/bin/python3 -Confirm:`$false | Out-Null"
 
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server
