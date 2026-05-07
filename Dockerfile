@@ -26,7 +26,6 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil py
 
 RUN pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted"
 RUN pwsh -NoLogo -NoProfile -Command "Install-Module -Name VMware.PowerCLI -Force -AllowClobber -AcceptLicense -Scope AllUsers"
-RUN pwsh -NoLogo -NoProfile -Command "Import-Module VMware.VimAutomation.Core; Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -PythonPath /usr/bin/python3 -Confirm:`$false | Out-Null"
 
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server

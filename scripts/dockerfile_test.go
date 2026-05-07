@@ -18,7 +18,6 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 		"Set-PSRepository PSGallery -InstallationPolicy Trusted",
 		"Install-Module -Name VMware.PowerCLI",
 		"-AcceptLicense",
-		"-PythonPath /usr/bin/python3",
 		"COPY scripts/ ./scripts/",
 	}
 
