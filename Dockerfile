@@ -24,7 +24,6 @@ RUN apt-get update \
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil pyopenssl six
 
-RUN pwsh -NoLogo -NoProfile -Command "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force"
 RUN pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted"
 RUN pwsh -NoLogo -NoProfile -Command "Install-Module -Name VMware.PowerCLI -Force -AllowClobber -AcceptLicense -Scope AllUsers"
 RUN pwsh -NoLogo -NoProfile -Command "Import-Module VMware.PowerCLI; Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP `$false -InvalidCertificateAction Ignore -PythonPath /usr/bin/python3 -Confirm:`$false | Out-Null"
