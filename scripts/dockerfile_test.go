@@ -48,6 +48,21 @@ func TestDockerContextIncludesPowerShellScripts(t *testing.T) {
 	}
 }
 
+func TestDockerfileSupportsPowerCliRuntimePackageManagers(t *testing.T) {
+	dockerfile := readTextFile(t, "../Dockerfile")
+
+	for _, snippet := range []string{
+		"command -v apt-get",
+		"command -v tdnf",
+		"apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata",
+		"tdnf install -y ca-certificates curl python3-pip redis tzdata",
+	} {
+		if !strings.Contains(dockerfile, snippet) {
+			t.Fatalf("Dockerfile must contain %q so pinned PowerCLI runtime images can install required packages", snippet)
+		}
+	}
+}
+
 func TestDockerfileDoesNotLetLinuxShellExpandPowerShellVariables(t *testing.T) {
 	dockerfile := readTextFile(t, "../Dockerfile")
 

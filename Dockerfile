@@ -18,9 +18,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server
 # Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
 FROM vmware/powerclicore:12.7
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
-    && rm -rf /var/lib/apt/lists/*
+RUN if command -v apt-get >/dev/null 2>&1; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
+        && rm -rf /var/lib/apt/lists/*; \
+    elif command -v tdnf >/dev/null 2>&1; then \
+        tdnf install -y ca-certificates curl python3-pip redis tzdata \
+        && tdnf clean all; \
+    else \
+        echo "unsupported PowerCLI runtime package manager" >&2; \
+        exit 1; \
+    fi
 
 RUN python3 -m pip install --no-cache-dir lxml psutil pyopenssl six
 
