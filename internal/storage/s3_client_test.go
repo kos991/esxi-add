@@ -62,3 +62,16 @@ func TestS3ClientGetPublicURLUsesObjectPathWithoutBucketName(t *testing.T) {
 		t.Fatalf("expected public URL %q, got %q", want, got)
 	}
 }
+
+func TestS3ClientGetPublicURLDefaultsBareDomainToHTTPS(t *testing.T) {
+	client := &S3Client{
+		bucketName:   "esxi-build",
+		publicDomain: "driver.wwa.im",
+	}
+
+	got := client.GetPublicURL("output/65test.iso")
+	want := "https://driver.wwa.im/output/65test.iso"
+	if got != want {
+		t.Fatalf("expected public URL %q, got %q", want, got)
+	}
+}

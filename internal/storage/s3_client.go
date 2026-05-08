@@ -128,10 +128,22 @@ func (s *S3Client) RenameObject(ctx context.Context, oldObjectName, newObjectNam
 }
 
 func (s *S3Client) GetPublicURL(objectName string) string {
-	if s.publicDomain == "" {
+	domain := normalizePublicDomain(s.publicDomain)
+	if domain == "" {
 		return ""
 	}
-	return strings.TrimRight(s.publicDomain, "/") + "/" + strings.TrimLeft(objectName, "/")
+	return domain + "/" + strings.TrimLeft(strings.TrimSpace(objectName), "/")
+}
+
+func normalizePublicDomain(rawDomain string) string {
+	domain := strings.TrimRight(strings.TrimSpace(rawDomain), "/")
+	if domain == "" {
+		return ""
+	}
+	if !strings.Contains(domain, "://") {
+		return "https://" + domain
+	}
+	return domain
 }
 
 func (s *S3Client) TestConnection(ctx context.Context) error {

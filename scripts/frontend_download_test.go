@@ -29,11 +29,14 @@ func TestFrontendPublicObjectURLsDoNotIncludeBucketName(t *testing.T) {
 
 	for _, snippet := range []string{
 		"buildPublicObjectUrl",
-		"publicDomain.replace(/\\/$/, '')",
-		"objectPath.replace(/^\\//, '')",
+		"publicDomain.trim()",
+		"domain.includes('://')",
+		"`https://${domain}`",
+		"normalizedDomain.replace(/\\/$/, '')",
+		"objectPath.trim().replace(/^\\//, '')",
 	} {
 		if !strings.Contains(utils, snippet) {
-			t.Fatalf("utils.ts must contain %q so public file links use public domain plus object path only", snippet)
+			t.Fatalf("utils.ts must contain %q so public file links use absolute URLs with public domain plus object path only", snippet)
 		}
 	}
 

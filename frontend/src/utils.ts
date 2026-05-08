@@ -28,7 +28,9 @@ export function parseDrivers(value?: string) {
 
 export function buildPublicObjectUrl(publicDomain?: string, objectPath?: string) {
   if (!publicDomain || !objectPath) return undefined
-  return `${publicDomain.replace(/\/$/, '')}/${objectPath.replace(/^\//, '')}`
+  const domain = publicDomain.trim()
+  const normalizedDomain = domain.includes('://') ? domain : `https://${domain}`
+  return `${normalizedDomain.replace(/\/$/, '')}/${objectPath.trim().replace(/^\//, '')}`
 }
 
 export function cn(...values: Array<string | false | null | undefined>) {
