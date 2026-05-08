@@ -77,3 +77,33 @@ func TestBuildScriptDetectsPowerCliPythonPath(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildScriptDoesNotDeleteBackendWorkDirBeforeUpload(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	if strings.Contains(script, "Remove-Item -Path $WorkDir -Recurse") {
+		t.Fatalf("build script must not delete $WorkDir because OutputPath is inside it and the backend uploads it after PowerShell exits")
+	}
+}
+
+func TestBuildScriptVerifiesOutputIsoExistsBeforeSuccess(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	requiredSnippets := []string{
+		"Test-Path -LiteralPath $OutputPath",
+		"ISO export did not create output file",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("build script must contain %q so it does not report success when PowerCLI creates no ISO", snippet)
+		}
+	}
+}

@@ -97,8 +97,9 @@ try {
     Write-Host "[PROGRESS] 85 Exporting ISO..."
     Export-EsxImageProfile -ImageProfile $custom.Name -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck
 
-    Write-Host "[PROGRESS] 98 Cleaning up..."
-    Remove-Item -Path $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $OutputPath)) {
+        throw "ISO export did not create output file: $OutputPath"
+    }
 
     Write-Host "[PROGRESS] 100 Done"
     Write-Host "[SUCCESS] ISO created: $OutputPath"
