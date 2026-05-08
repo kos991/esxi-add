@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -18,9 +19,12 @@ import (
 )
 
 type BuildHandler struct {
-	db         *gorm.DB
-	taskClient *asynq.Client
-	buildMode  string
+	db          *gorm.DB
+	taskClient  *asynq.Client
+	buildMode   string
+	workDir     string
+	preflightMu sync.RWMutex
+	preflights  map[string]*BuildPreflight
 }
 
 type createBuildRequest struct {
@@ -32,7 +36,19 @@ type createBuildRequest struct {
 }
 
 func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
-	return &BuildHandler{db: db, taskClient: client, buildMode: normalizeBuildMode(buildMode)}
+	return &BuildHandler{
+		db:         db,
+		taskClient: client,
+		buildMode:  normalizeBuildMode(buildMode),
+		workDir:    "./data/builds",
+		preflights: make(map[string]*BuildPreflight),
+	}
+}
+
+func (h *BuildHandler) SetWorkDir(workDir string) {
+	if strings.TrimSpace(workDir) != "" {
+		h.workDir = workDir
+	}
 }
 
 func (h *BuildHandler) Create(c *fiber.Ctx) error {

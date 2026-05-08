@@ -90,6 +90,60 @@ func TestCacheManagerEnsureFileRefreshesInvalidCachedArchive(t *testing.T) {
 	}
 }
 
+func TestCacheManagerEnsureFileWithProgressReportsDownloadAndCacheHit(t *testing.T) {
+	cacheDir := t.TempDir()
+	objectPath := "driver/8x/net-r8125.zip"
+	content := "PK\x03\x04zip-data"
+
+	manager := NewCacheManager(cacheDir, nil)
+	manager.getObjectInfo = func(ctx context.Context, path string) (minio.ObjectInfo, error) {
+		if path != objectPath {
+			t.Fatalf("unexpected object path: %s", path)
+		}
+		return minio.ObjectInfo{Key: objectPath, ETag: "remote-etag", Size: int64(len(content))}, nil
+	}
+	downloads := 0
+	manager.downloadObject = func(ctx context.Context, path string) (io.ReadCloser, error) {
+		downloads++
+		return io.NopCloser(strings.NewReader(content)), nil
+	}
+
+	var downloadEvents []CacheProgress
+	localPath, err := manager.EnsureFileWithProgress(context.Background(), objectPath, func(progress CacheProgress) {
+		downloadEvents = append(downloadEvents, progress)
+	})
+	if err != nil {
+		t.Fatalf("ensure file with progress: %v", err)
+	}
+	if localPath == "" || downloads != 1 {
+		t.Fatalf("expected one download and local path, got downloads=%d path=%q", downloads, localPath)
+	}
+	if len(downloadEvents) == 0 {
+		t.Fatalf("expected download progress events")
+	}
+	finalDownload := downloadEvents[len(downloadEvents)-1]
+	if finalDownload.Current != int64(len(content)) || finalDownload.Total != int64(len(content)) || finalDownload.Cached {
+		t.Fatalf("unexpected final download progress: %+v", finalDownload)
+	}
+
+	var cachedEvents []CacheProgress
+	if _, err := manager.EnsureFileWithProgress(context.Background(), objectPath, func(progress CacheProgress) {
+		cachedEvents = append(cachedEvents, progress)
+	}); err != nil {
+		t.Fatalf("ensure cached file with progress: %v", err)
+	}
+	if downloads != 1 {
+		t.Fatalf("expected cache hit to avoid another download, got %d downloads", downloads)
+	}
+	if len(cachedEvents) == 0 {
+		t.Fatalf("expected cached progress event")
+	}
+	finalCached := cachedEvents[len(cachedEvents)-1]
+	if finalCached.Current != int64(len(content)) || finalCached.Total != int64(len(content)) || !finalCached.Cached {
+		t.Fatalf("unexpected cached progress: %+v", finalCached)
+	}
+}
+
 func writeCacheFile(t *testing.T, cacheDir, objectPath string, content []byte, etag string) {
 	t.Helper()
 	localPath := filepath.Join(cacheDir, filepath.FromSlash(objectPath))

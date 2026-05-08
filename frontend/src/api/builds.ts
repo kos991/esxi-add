@@ -1,5 +1,5 @@
 import api from './client'
-import type { BuildTask } from '../types'
+import type { BuildPreflight, BuildTask } from '../types'
 
 export interface CreateBuildPayload {
   bucket_id: number
@@ -16,8 +16,24 @@ export interface PaginatedBuilds {
   total: number
 }
 
+export interface StartBuildPreflightPayload {
+  bucket_id: number
+  depot_path: string
+  driver_paths: string[]
+}
+
 export async function createBuild(data: CreateBuildPayload): Promise<BuildTask> {
   const response = await api.post('/builds', data)
+  return response.data
+}
+
+export async function startBuildPreflight(data: StartBuildPreflightPayload): Promise<BuildPreflight> {
+  const response = await api.post('/builds/preflight', data)
+  return response.data
+}
+
+export async function getBuildPreflight(id: string): Promise<BuildPreflight> {
+  const response = await api.get(`/builds/preflight/${id}`)
   return response.data
 }
 

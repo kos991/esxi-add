@@ -19,6 +19,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	fileHandler := NewFileHandler(fileService)
 
 	buildHandler := NewBuildHandler(db, taskClient, cfg.Build.Mode)
+	buildHandler.SetWorkDir(cfg.Build.WorkDir)
 	workerHandler := NewWorkerHandler(db, cfg.Build.WorkerToken)
 	wsHandler := NewWebSocketHandler(db, wsManager)
 
@@ -43,6 +44,8 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	api.Post("/files/refresh", fileHandler.RefreshCache)
 
 	api.Post("/builds", buildHandler.Create)
+	api.Post("/builds/preflight", buildHandler.StartPreflight)
+	api.Get("/builds/preflight/:id", buildHandler.GetPreflight)
 	api.Get("/builds", buildHandler.List)
 	api.Get("/builds/:id", buildHandler.Get)
 	api.Delete("/builds/:id", buildHandler.Delete)

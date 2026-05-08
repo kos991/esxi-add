@@ -28,10 +28,10 @@ func TestValidateBuildInputFileAcceptsZipAndVibMagic(t *testing.T) {
 		t.Fatalf("write vib: %v", err)
 	}
 
-	if err := validateBuildInputFile(zipPath, "driver/driver.zip"); err != nil {
+	if err := ValidateBuildInputFile(zipPath, "driver/driver.zip"); err != nil {
 		t.Fatalf("valid zip rejected: %v", err)
 	}
-	if err := validateBuildInputFile(vibPath, "driver/driver.vib"); err != nil {
+	if err := ValidateBuildInputFile(vibPath, "driver/driver.vib"); err != nil {
 		t.Fatalf("valid vib rejected: %v", err)
 	}
 }
@@ -42,7 +42,7 @@ func TestValidateBuildInputFileRejectsHtmlCachedAsDriver(t *testing.T) {
 		t.Fatalf("write fake driver: %v", err)
 	}
 
-	err := validateBuildInputFile(path, "driver/6x/bad.zip")
+	err := ValidateBuildInputFile(path, "driver/6x/bad.zip")
 	if err == nil {
 		t.Fatal("expected invalid driver file to be rejected")
 	}

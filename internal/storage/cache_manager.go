@@ -26,6 +26,12 @@ type CacheFileStatus struct {
 	Status string `json:"cache_status"`
 }
 
+type CacheProgress struct {
+	Current int64 `json:"current"`
+	Total   int64 `json:"total"`
+	Cached  bool  `json:"cached"`
+}
+
 type CacheManager struct {
 	cacheDir       string
 	s3Client       *S3Client
@@ -38,6 +44,18 @@ func NewCacheManager(cacheDir string, s3 *S3Client) *CacheManager {
 	manager.getObjectInfo = manager.getInfoFromS3
 	manager.downloadObject = manager.downloadFromS3
 	return manager
+}
+
+func NewCacheManagerWithCallbacks(
+	cacheDir string,
+	getObjectInfo func(ctx context.Context, objectPath string) (minio.ObjectInfo, error),
+	downloadObject func(ctx context.Context, objectPath string) (io.ReadCloser, error),
+) *CacheManager {
+	return &CacheManager{
+		cacheDir:       cacheDir,
+		getObjectInfo:  getObjectInfo,
+		downloadObject: downloadObject,
+	}
 }
 
 func (c *CacheManager) Status(objectPath string, objectInfo minio.ObjectInfo) (CacheFileStatus, error) {
@@ -71,6 +89,10 @@ func (c *CacheManager) Status(objectPath string, objectInfo minio.ObjectInfo) (C
 }
 
 func (c *CacheManager) EnsureFile(ctx context.Context, s3Path string) (localPath string, err error) {
+	return c.EnsureFileWithProgress(ctx, s3Path, nil)
+}
+
+func (c *CacheManager) EnsureFileWithProgress(ctx context.Context, s3Path string, onProgress func(CacheProgress)) (localPath string, err error) {
 	if c.getObjectInfo == nil || c.downloadObject == nil {
 		return "", fmt.Errorf("s3 client is not configured")
 	}
@@ -83,13 +105,14 @@ func (c *CacheManager) EnsureFile(ctx context.Context, s3Path string) (localPath
 		return "", err
 	}
 
-	if _, err := os.Stat(localPath); err == nil {
+	if info, err := os.Stat(localPath); err == nil {
 		cachedETag, readErr := os.ReadFile(etagPath)
 		valid, validErr := validCachedArchive(localPath, s3Path)
 		if validErr != nil {
 			return "", validErr
 		}
 		if valid && readErr == nil && strings.TrimSpace(string(cachedETag)) == objectInfo.ETag {
+			reportCacheProgress(onProgress, CacheProgress{Current: info.Size(), Total: objectInfo.Size, Cached: true})
 			return localPath, nil
 		}
 	}
@@ -112,7 +135,11 @@ func (c *CacheManager) EnsureFile(ctx context.Context, s3Path string) (localPath
 
 	copyErr := func() error {
 		defer out.Close()
-		if _, err := io.Copy(out, reader); err != nil {
+		writer := io.Writer(out)
+		if onProgress != nil {
+			writer = &progressWriter{writer: out, total: objectInfo.Size, onProgress: onProgress}
+		}
+		if _, err := io.Copy(writer, reader); err != nil {
 			return fmt.Errorf("write cache file: %w", err)
 		}
 		return nil
@@ -136,7 +163,33 @@ func (c *CacheManager) EnsureFile(ctx context.Context, s3Path string) (localPath
 		return "", fmt.Errorf("write etag sidecar: %w", err)
 	}
 
+	if info, statErr := os.Stat(localPath); statErr == nil {
+		reportCacheProgress(onProgress, CacheProgress{Current: info.Size(), Total: objectInfo.Size})
+	}
+
 	return localPath, nil
+}
+
+type progressWriter struct {
+	writer     io.Writer
+	current    int64
+	total      int64
+	onProgress func(CacheProgress)
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if n > 0 {
+		w.current += int64(n)
+		reportCacheProgress(w.onProgress, CacheProgress{Current: w.current, Total: w.total})
+	}
+	return n, err
+}
+
+func reportCacheProgress(onProgress func(CacheProgress), progress CacheProgress) {
+	if onProgress != nil {
+		onProgress(progress)
+	}
 }
 
 func (c *CacheManager) getInfoFromS3(ctx context.Context, objectPath string) (minio.ObjectInfo, error) {

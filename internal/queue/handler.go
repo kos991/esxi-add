@@ -101,7 +101,7 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		_ = h.updateError(payload.TaskID, err.Error())
 		return fmt.Errorf("cache depot: %w", err)
 	}
-	if err := validateBuildInputFile(depotLocal, payload.DepotPath); err != nil {
+	if err := ValidateBuildInputFile(depotLocal, payload.DepotPath); err != nil {
 		_ = h.updateError(payload.TaskID, err.Error())
 		return err
 	}
@@ -113,7 +113,7 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 			_ = h.updateError(payload.TaskID, err.Error())
 			return fmt.Errorf("cache driver %s: %w", driverPath, err)
 		}
-		if err := validateBuildInputFile(localPath, driverPath); err != nil {
+		if err := ValidateBuildInputFile(localPath, driverPath); err != nil {
 			_ = h.updateError(payload.TaskID, err.Error())
 			return err
 		}
@@ -260,7 +260,7 @@ func newLocalBuildStorage(localPath string) (buildStorage, error) {
 	return buildStorage{resolver: store, uploader: store}, nil
 }
 
-func validateBuildInputFile(localPath, objectPath string) error {
+func ValidateBuildInputFile(localPath, objectPath string) error {
 	ext := strings.ToLower(filepath.Ext(objectPath))
 	if ext != ".zip" && ext != ".vib" {
 		return nil

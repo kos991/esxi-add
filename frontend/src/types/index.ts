@@ -60,6 +60,29 @@ export interface BuildTask {
   completed_at?: string
 }
 
+export type BuildPreflightStatus = 'running' | 'ready' | 'invalid' | 'failed'
+export type BuildPreflightFileStatus = 'pending' | 'downloading' | 'validating' | 'ready' | 'invalid' | 'failed'
+
+export interface BuildPreflightFile {
+  kind: 'depot' | 'driver'
+  path: string
+  status: BuildPreflightFileStatus
+  progress: number
+  cached: boolean
+  size?: number
+  message?: string
+}
+
+export interface BuildPreflight {
+  id: string
+  status: BuildPreflightStatus
+  progress: number
+  message?: string
+  files: BuildPreflightFile[]
+  created_at: string
+  updated_at: string
+}
+
 export interface ApiResponse<T> {
   success: boolean
   data?: T

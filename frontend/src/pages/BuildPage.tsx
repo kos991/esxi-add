@@ -1,15 +1,15 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Check, ChevronRight, FileArchive, HardDrive, PackagePlus } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertTriangle, Check, ChevronRight, FileArchive, HardDrive, PackagePlus, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listBuckets } from '../api/buckets'
-import { createBuild } from '../api/builds'
+import { createBuild, getBuildPreflight, startBuildPreflight } from '../api/builds'
 import { listDepots, listDrivers } from '../api/files'
-import type { FileMetadata } from '../types'
+import type { BuildPreflightFile, FileMetadata } from '../types'
 import { cn } from '../utils'
 
 const esxiVersions = ['6.5', '6.7', '7.0', '8.0', '9.0']
-const stepLabels = ['源文件', '注入驱动', '确认启动']
+const stepLabels = ['源文件', '注入驱动', '下载校验', '确认启动']
 
 function displayName(file?: FileMetadata) {
   if (!file) return '-'
@@ -49,6 +49,42 @@ function CacheTag({ file }: { file?: FileMetadata }) {
   return <span className={cn('inline-flex rounded border px-1.5 py-0.5 text-[10px] font-bold', badge.className)}>{badge.label}</span>
 }
 
+function preflightStatusText(file: BuildPreflightFile) {
+  switch (file.status) {
+    case 'pending':
+      return '等待处理'
+    case 'downloading':
+      return file.cached ? '本地缓存命中' : '正在下载'
+    case 'validating':
+      return '正在校验'
+    case 'ready':
+      return '校验通过'
+    case 'invalid':
+      return '假包或格式无效'
+    case 'failed':
+      return '处理失败'
+    default:
+      return file.status
+  }
+}
+
+function progressColor(status?: string) {
+  if (status === 'ready') return 'bg-green-600'
+  if (status === 'invalid' || status === 'failed') return 'bg-red-600'
+  return 'bg-blue-700'
+}
+
+function buildPendingPreflightFiles(depotPath: string, driverPaths: string[]): BuildPreflightFile[] {
+  const files: BuildPreflightFile[] = []
+  if (depotPath) {
+    files.push({ kind: 'depot', path: depotPath, status: 'pending', progress: 0, cached: false })
+  }
+  for (const path of driverPaths) {
+    files.push({ kind: 'driver', path, status: 'pending', progress: 0, cached: false })
+  }
+  return files
+}
+
 export default function BuildPage() {
   const navigate = useNavigate()
   const [bucketId, setBucketId] = useState<number | ''>('')
@@ -58,6 +94,8 @@ export default function BuildPage() {
   const [customISOName, setCustomISOName] = useState('')
   const [step, setStep] = useState(1)
   const [message, setMessage] = useState<string | null>(null)
+  const [preflightId, setPreflightId] = useState<string | null>(null)
+  const [preflightKey, setPreflightKey] = useState('')
 
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
   const selectedBucketId = useMemo(() => {
@@ -84,6 +122,14 @@ export default function BuildPage() {
     () => depotsQuery.data?.find((file) => file.path === depotPath),
     [depotsQuery.data, depotPath]
   )
+  const selectedDrivers = useMemo(
+    () => (driversQuery.data ?? []).filter((file) => driverPaths.includes(file.path)),
+    [driversQuery.data, driverPaths]
+  )
+  const selectionKey = useMemo(
+    () => JSON.stringify({ bucket_id: selectedBucketId || 0, depot_path: depotPath, driver_paths: [...driverPaths].sort() }),
+    [selectedBucketId, depotPath, driverPaths]
+  )
 
   const groupedDrivers = useMemo(() => {
     const groups: Record<string, FileMetadata[]> = {}
@@ -99,11 +145,46 @@ export default function BuildPage() {
     onSuccess: (task) => navigate(`/tasks/${task.task_id}`),
     onError: (error) => setMessage(String(error)),
   })
+  const startPreflightMutation = useMutation({
+    mutationFn: startBuildPreflight,
+    onSuccess: (preflight) => {
+      setPreflightId(preflight.id)
+      setMessage(null)
+    },
+    onError: (error) => setMessage(String(error)),
+  })
+  const preflightQuery = useQuery({
+    queryKey: ['build-preflight', preflightId],
+    queryFn: () => getBuildPreflight(preflightId as string),
+    enabled: Boolean(preflightId),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1000 : false),
+  })
+  const preflight = preflightQuery.data
+  const preflightReady = preflight?.status === 'ready' && preflightKey === selectionKey
+
+  useEffect(() => {
+    if (step !== 3 || !selectedBucketId || !depotPath || preflightKey === selectionKey || startPreflightMutation.isPending) {
+      return
+    }
+    setPreflightId(null)
+    setPreflightKey(selectionKey)
+    startPreflightMutation.mutate({
+      bucket_id: selectedBucketId,
+      depot_path: depotPath,
+      driver_paths: driverPaths,
+    })
+  }, [depotPath, driverPaths, preflightKey, selectedBucketId, selectionKey, startPreflightMutation, step])
+
+  const resetPreflight = () => {
+    setPreflightId(null)
+    setPreflightKey('')
+  }
 
   const changeBucket = (value: string) => {
     setBucketId(value ? Number(value) : '')
     setDepotPath('')
     setDriverPaths([])
+    resetPreflight()
     setStep(1)
   }
 
@@ -111,10 +192,12 @@ export default function BuildPage() {
     setVersion(value)
     setDepotPath('')
     setDriverPaths([])
+    resetPreflight()
     setStep(1)
   }
 
   const toggleDriver = (value: string) => {
+    resetPreflight()
     setDriverPaths((prev) => (prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]))
   }
 
@@ -123,14 +206,23 @@ export default function BuildPage() {
       setMessage('请选择与 ESXi 基础版本匹配的 Depot 文件')
       return
     }
+    if (step === 3 && !preflightReady) {
+      setMessage(preflight?.status === 'invalid' ? '下载校验未通过，请重新上传或刷新存储节点文件。' : '请等待下载校验完成后再确认启动。')
+      return
+    }
     setMessage(null)
-    setStep((current) => Math.min(3, current + 1))
+    setStep((current) => Math.min(4, current + 1))
   }
 
   const submit = () => {
     if (!selectedBucketId || !depotPath) {
       setMessage('请选择存储节点和 Depot 文件')
       setStep(1)
+      return
+    }
+    if (!preflightReady) {
+      setMessage('请先完成下载校验。')
+      setStep(3)
       return
     }
 
@@ -224,7 +316,10 @@ export default function BuildPage() {
                   <select
                     className="w-full rounded border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-600"
                     value={depotPath}
-                    onChange={(e) => setDepotPath(e.target.value)}
+                    onChange={(e) => {
+                      setDepotPath(e.target.value)
+                      resetPreflight()
+                    }}
                   >
                     <option value="">选择 ESXi {version} Depot 文件</option>
                     {(depotsQuery.data ?? []).map((file) => (
@@ -313,6 +408,86 @@ export default function BuildPage() {
           )}
 
           {step === 3 && (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-bold text-gray-950">下载校验</h2>
+                  <p className="text-[12px] text-gray-500">从存储节点拉取 Depot 和驱动到本地缓存，并校验 ZIP/VIB 文件头。</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetPreflight()
+                    if (selectedBucketId && depotPath) {
+                      setPreflightKey(selectionKey)
+                      startPreflightMutation.mutate({
+                        bucket_id: selectedBucketId,
+                        depot_path: depotPath,
+                        driver_paths: driverPaths,
+                      })
+                    }
+                  }}
+                  disabled={startPreflightMutation.isPending || preflight?.status === 'running'}
+                  className="inline-flex items-center gap-2 rounded border bg-white px-3 py-2 text-[12px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw className={cn('h-4 w-4', (startPreflightMutation.isPending || preflight?.status === 'running') && 'animate-spin')} />
+                  重新校验
+                </button>
+              </div>
+
+              <div className="rounded border bg-gray-50 p-5">
+                <div className="mb-3 flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2 font-bold text-gray-950">
+                    {preflight?.status === 'ready' ? <ShieldCheck className="h-4 w-4 text-green-700" /> : <RefreshCw className={cn('h-4 w-4 text-blue-700', preflight?.status === 'running' && 'animate-spin')} />}
+                    总进度
+                  </div>
+                  <span className="font-mono text-[12px] text-gray-600">{preflight?.progress ?? 0}%</span>
+                </div>
+                <ProgressBar value={preflight?.progress ?? 0} className={progressColor(preflight?.status)} />
+                {preflight?.status === 'invalid' && (
+                  <div className="mt-3 flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                    <span>发现假包或格式无效文件，请重新上传真实 ZIP/VIB 文件，或刷新存储节点后重试。</span>
+                  </div>
+                )}
+                {preflight?.status === 'failed' && (
+                  <div className="mt-3 flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                    <span>{preflight.message || '下载校验失败'}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {(preflight?.files ?? buildPendingPreflightFiles(depotPath, driverPaths)).map((file) => (
+                  <div key={`${file.kind}-${file.path}`} className="rounded border bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-gray-600">
+                            {file.kind === 'depot' ? 'Depot' : 'Driver'}
+                          </span>
+                          <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-bold', file.status === 'ready' && 'border-green-200 bg-green-50 text-green-700', (file.status === 'invalid' || file.status === 'failed') && 'border-red-200 bg-red-50 text-red-700', !['ready', 'invalid', 'failed'].includes(file.status) && 'border-blue-200 bg-blue-50 text-blue-700')}>
+                            {preflightStatusText(file)}
+                          </span>
+                        </div>
+                        <div className="mt-2 break-all font-mono text-[12px] text-gray-700">{file.path}</div>
+                        {(file.status === 'invalid' || file.status === 'failed') && file.message && (
+                          <div className="mt-2 break-all text-[12px] text-red-700">{file.message}</div>
+                        )}
+                      </div>
+                      <span className="font-mono text-[12px] text-gray-500">{file.progress}%</span>
+                    </div>
+                    <div className="mt-3">
+                      <ProgressBar value={file.progress} className={progressColor(file.status)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
             <div className="grid gap-6 lg:grid-cols-[minmax(0,520px)_1fr]">
               <div className="space-y-6">
                 <div className="space-y-2">
@@ -334,9 +509,25 @@ export default function BuildPage() {
                     <SummaryRow label="基础版本" value={`ESXi ${version}`} />
                     <SummaryRow label="Depot" value={selectedDepot ? `${displayName(selectedDepot)} (${versionTag(selectedDepot)})` : '-'} mono />
                     <SummaryRow label="注入驱动" value={`已选择 ${driverPaths.length} 个`} />
+                    <SummaryRow label="下载校验" value={preflightReady ? '已通过' : '未通过'} />
                     <SummaryRow label="ISO 名称" value={customISOName || '使用后端默认名称'} mono />
                   </div>
                 </div>
+              </div>
+              <div className="rounded border bg-gray-50 p-5">
+                <div className="mb-4 text-sm font-bold text-gray-950">已选驱动</div>
+                {selectedDrivers.length === 0 ? (
+                  <div className="text-[12px] text-gray-500">未选择驱动，仅使用 Depot 构建。</div>
+                ) : (
+                  <div className="space-y-3">
+                    {selectedDrivers.map((driver) => (
+                      <div key={driver.id} className="rounded border bg-white px-3 py-2">
+                        <div className="break-all text-sm font-semibold text-gray-900">{displayWithDescription(driver)}</div>
+                        <div className="mt-1 break-all font-mono text-[11px] text-gray-500">{driver.path}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -348,9 +539,9 @@ export default function BuildPage() {
               上一步
             </button>
           )}
-          {step < 3 ? (
+          {step < 4 ? (
             <button type="button" onClick={nextStep} className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
-              下一步
+              {step === 3 ? '确认启动' : '下一步'}
               <ChevronRight className="h-4 w-4" />
             </button>
           ) : (
@@ -358,7 +549,7 @@ export default function BuildPage() {
               type="button"
               className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={submit}
-              disabled={createMutation.isPending}
+              disabled={createMutation.isPending || !preflightReady}
             >
               <Check className="h-4 w-4" />
               {createMutation.isPending ? '提交中...' : '启动 ISO 构建任务'}
@@ -375,6 +566,15 @@ function SummaryRow({ label, value, mono }: { label: string; value: string; mono
     <div className="flex items-start justify-between gap-4">
       <span className="text-gray-500">{label}</span>
       <span className={cn('max-w-[70%] break-all text-right font-semibold text-gray-950', mono && 'font-mono text-[12px]')}>{value}</span>
+    </div>
+  )
+}
+
+function ProgressBar({ value, className }: { value: number; className?: string }) {
+  const width = Math.max(0, Math.min(100, value))
+  return (
+    <div className="h-2 overflow-hidden rounded bg-gray-200">
+      <div className={cn('h-full transition-all', className)} style={{ width: `${width}%` }} />
     </div>
   )
 }
