@@ -14,7 +14,7 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 
 	dockerfile := string(content)
 	requiredSnippets := []string{
-		"FROM vmware/powerclicore:12.7",
+		"FROM vmware/powerclicore:latest",
 		"python3 -m pip install --no-cache-dir lxml psutil pyopenssl six",
 		"COPY scripts/ ./scripts/",
 	}
@@ -26,7 +26,7 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
-		"FROM vmware/powerclicore:latest",
+		"FROM vmware/powerclicore:12.7",
 		"Install-Module -Name VMware.PowerCLI",
 	} {
 		if strings.Contains(dockerfile, forbidden) {

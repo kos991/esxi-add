@@ -16,7 +16,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
 
 # Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
-FROM vmware/powerclicore:12.7
+FROM vmware/powerclicore:latest
 
 RUN if command -v apt-get >/dev/null 2>&1; then \
         apt-get update \
