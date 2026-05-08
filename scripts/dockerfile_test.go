@@ -14,9 +14,7 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 
 	dockerfile := string(content)
 	requiredSnippets := []string{
-		"FROM mcr.microsoft.com/powershell:",
-		"ARG POWERCLI_VERSION=12.7.0.20091289",
-		"Install-Module -Name VMware.PowerCLI -RequiredVersion $env:POWERCLI_VERSION",
+		"FROM vmware/powerclicore:12.7",
 		"python3 -m pip install --no-cache-dir lxml psutil pyopenssl six",
 		"COPY scripts/ ./scripts/",
 	}
@@ -29,7 +27,7 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 
 	for _, forbidden := range []string{
 		"FROM vmware/powerclicore:latest",
-		"Install-Module -Name VMware.PowerCLI -Scope CurrentUser",
+		"Install-Module -Name VMware.PowerCLI",
 	} {
 		if strings.Contains(dockerfile, forbidden) {
 			t.Fatalf("Dockerfile must not contain %q because ESXi 6.7 needs a pinned Linux PowerCLI runtime", forbidden)
@@ -56,8 +54,8 @@ func TestDockerfileDoesNotLetLinuxShellExpandPowerShellVariables(t *testing.T) {
 	if strings.Contains(dockerfile, `-Command "$ErrorActionPreference`) {
 		t.Fatalf("Dockerfile must single-quote pwsh -Command so Linux shell does not expand PowerShell variables")
 	}
-	if !strings.Contains(dockerfile, `-Command '$ErrorActionPreference = "Stop";`) {
-		t.Fatalf("Dockerfile must pass PowerShell variables through a single-quoted pwsh -Command")
+	if strings.Contains(dockerfile, "$env:POWERCLI_VERSION") {
+		t.Fatalf("Dockerfile must not install PowerCLI from Gallery during image build")
 	}
 }
 
