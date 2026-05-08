@@ -83,3 +83,42 @@ func TestCreateBuildExternalModeDoesNotRequireQueue(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", response)
 	}
 }
+
+func TestDeleteBuildAcceptsNumericID(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.BuildTask{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	task := models.BuildTask{
+		TaskID:      "task-123",
+		Status:      models.BuildTaskStatusFailed,
+		ESXiVersion: "6.7",
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	app := fiber.New()
+	app.Delete("/builds/:id", NewBuildHandler(db, nil, "external").Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/builds/1", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var count int64
+	if err := db.Model(&models.BuildTask{}).Count(&count).Error; err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected build task to be deleted, got %d", count)
+	}
+}

@@ -1,7 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
-import { Clock3, ExternalLink } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Clock3, ExternalLink, Trash2 } from 'lucide-react'
+import { type MouseEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listBuilds } from '../api/builds'
+import { deleteBuild, listBuilds } from '../api/builds'
+import type { BuildTask } from '../types'
 import { cn, formatDate } from '../utils'
 
 const statusClasses = {
@@ -13,6 +15,8 @@ const statusClasses = {
 
 export default function TasksPage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [message, setMessage] = useState<string | null>(null)
   const tasksQuery = useQuery({
     queryKey: ['builds', 1, 20],
     queryFn: () => listBuilds(1, 20),
@@ -23,6 +27,24 @@ export default function TasksPage() {
   })
 
   const tasks = tasksQuery.data?.items ?? []
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteBuild,
+    onSuccess: async () => {
+      setMessage('任务历史已删除')
+      await queryClient.invalidateQueries({ queryKey: ['builds'] })
+      await queryClient.invalidateQueries({ queryKey: ['overview-builds'] })
+    },
+    onError: (error) => setMessage(String(error)),
+  })
+
+  const removeTask = (event: MouseEvent<HTMLButtonElement>, task: BuildTask) => {
+    event.stopPropagation()
+    setMessage(null)
+    if (window.confirm(`删除任务 ${task.task_id}？`)) {
+      deleteMutation.mutate(task.task_id)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -38,6 +60,7 @@ export default function TasksPage() {
       </div>
 
       {tasksQuery.isError && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{String(tasksQuery.error)}</div>}
+      {message && <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">{message}</div>}
 
       <div className="overflow-hidden rounded border bg-white shadow-sm">
         <table className="w-full border-collapse text-left text-sm">
@@ -71,10 +94,21 @@ export default function TasksPage() {
                 </td>
                 <td className="px-4 py-3 text-[12px] text-gray-500">{formatDate(task.created_at)}</td>
                 <td className="px-4 py-3 text-right">
-                  <span className="inline-flex items-center gap-1 text-[12px] font-bold text-blue-700">
-                    Details
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </span>
+                  <div className="inline-flex items-center justify-end gap-3">
+                    <span className="inline-flex items-center gap-1 text-[12px] font-bold text-blue-700">
+                      Details
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </span>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="删除任务历史"
+                      onClick={(event) => removeTask(event, task)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

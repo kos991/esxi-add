@@ -43,6 +43,8 @@ export default function BucketsPage() {
   const [localPath, setLocalPath] = useState('')
   const [form, setForm] = useState<BucketPayload>(initialForm)
   const [editingBucket, setEditingBucket] = useState<StorageBucket | null>(null)
+  const [editStorageType, setEditStorageType] = useState<'s3' | 'local'>('s3')
+  const [editForm, setEditForm] = useState<BucketPayload>(initialForm)
   const [editLocalPath, setEditLocalPath] = useState('')
   const [message, setMessage] = useState<string | null>(null)
 
@@ -68,8 +70,10 @@ export default function BucketsPage() {
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: BucketPayload }) => updateBucket(id, data),
     onSuccess: async () => {
-      setMessage('挂载点已更新')
+      setMessage('存储节点已更新')
       setEditingBucket(null)
+      setEditStorageType('s3')
+      setEditForm(initialForm)
       setEditLocalPath('')
       await queryClient.invalidateQueries({ queryKey: ['buckets'] })
     },
@@ -131,7 +135,22 @@ export default function BucketsPage() {
   }
 
   const startEditMount = (bucket: StorageBucket) => {
+    const type = bucketType(bucket)
     setEditingBucket(bucket)
+    setEditStorageType(type)
+    setEditForm({
+      name: bucket.name,
+      type,
+      endpoint: bucket.endpoint || '',
+      access_key: bucket.access_key || '',
+      secret_key: bucket.secret_key || '',
+      bucket_name: bucket.bucket_name || '',
+      region: bucket.region || '',
+      use_ssl: bucket.use_ssl,
+      public_domain: bucket.public_domain || '',
+      local_path: bucket.local_path || '',
+      is_default: bucket.is_default,
+    })
     setEditLocalPath(bucket.local_path || '')
     setMessage(null)
   }
@@ -140,20 +159,34 @@ export default function BucketsPage() {
     event.preventDefault()
     if (!editingBucket) return
 
+    if (editStorageType === 'local') {
+      updateMutation.mutate({
+        id: editingBucket.id,
+        data: {
+          name: editForm.name.trim(),
+          type: 'local',
+          endpoint: '',
+          access_key: '',
+          secret_key: '',
+          bucket_name: '',
+          region: '',
+          use_ssl: true,
+          public_domain: '',
+          local_path: editLocalPath.trim(),
+          is_default: editForm.is_default,
+        },
+      })
+      return
+    }
+
     updateMutation.mutate({
       id: editingBucket.id,
       data: {
-        name: editingBucket.name,
-        type: 'local',
-        endpoint: '',
-        access_key: '',
-        secret_key: '',
-        bucket_name: '',
-        region: '',
-        use_ssl: true,
-        public_domain: '',
-        local_path: editLocalPath.trim(),
-        is_default: editingBucket.is_default,
+        ...editForm,
+        name: editForm.name.trim(),
+        type: 's3',
+        local_path: '',
+        use_ssl: editForm.use_ssl ?? true,
       },
     })
   }
@@ -166,7 +199,7 @@ export default function BucketsPage() {
             账户 / <span className="font-bold text-gray-900">存储与挂载</span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-950">存储与挂载</h1>
-          <p className="text-sm text-gray-500">管理构建流程使用的 S3、R2、MinIO 或本地目录节点。</p>
+          <p className="text-sm text-gray-500">管理构建流程使用的 S3 兼容对象存储、R2 或本地目录节点。</p>
         </div>
         <Dialog.Root
           open={open}
@@ -200,8 +233,8 @@ export default function BucketsPage() {
                         setForm((prev) => ({ ...prev, type: nextType }))
                       }}
                     >
-                      <option value="s3">S3 兼容存储 (MinIO, AWS S3, R2)</option>
-                      <option value="local">本地目录节点</option>
+                      <option value="s3">S3 兼容对象存储 / R2</option>
+                      <option value="local">容器本地目录</option>
                     </select>
                   </label>
                   <label>
@@ -335,9 +368,7 @@ export default function BucketsPage() {
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap justify-end gap-2">
                       <button className={secondaryButton} onClick={() => testMutation.mutate(bucket.id)} disabled={testMutation.isPending}>测试</button>
-                      {type === 'local' && (
-                        <button className={secondaryButton} onClick={() => startEditMount(bucket)} disabled={updateMutation.isPending}>编辑挂载点</button>
-                      )}
+                      <button className={secondaryButton} onClick={() => startEditMount(bucket)} disabled={updateMutation.isPending}>编辑</button>
                       {!bucket.is_default && <button className={secondaryButton} onClick={() => defaultMutation.mutate(bucket.id)} disabled={defaultMutation.isPending}>默认</button>}
                       <button
                         className={dangerButton}
@@ -357,31 +388,99 @@ export default function BucketsPage() {
         </table>
       </div>
 
-      <Dialog.Root open={Boolean(editingBucket)} onOpenChange={(nextOpen) => !nextOpen && setEditingBucket(null)}>
+      <Dialog.Root
+        open={Boolean(editingBucket)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setEditingBucket(null)
+            setEditStorageType('s3')
+            setEditForm(initialForm)
+            setEditLocalPath('')
+          }
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b bg-gray-50 px-6 py-4">
-              <Dialog.Title className="font-bold text-gray-950">编辑挂载点</Dialog.Title>
+              <Dialog.Title className="font-bold text-gray-950">编辑存储节点</Dialog.Title>
               <Dialog.Close className="text-xl leading-none text-gray-500 hover:text-gray-900" aria-label="关闭">
                 &times;
               </Dialog.Close>
             </div>
             <form className="space-y-5 p-6" onSubmit={submitMountEdit}>
-              <div className="space-y-1.5">
-                <div className="text-sm font-semibold text-gray-950">{editingBucket?.name}</div>
-                <div className="text-[12px] text-gray-500">本地目录节点</div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label>
+                  <span className={labelClass}>节点显示名称</span>
+                  <input className={`${inputClass} mt-1.5`} value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} />
+                </label>
+                <label>
+                  <span className={labelClass}>存储类型</span>
+                  <select
+                    className={`${inputClass} mt-1.5 bg-white`}
+                    value={editStorageType}
+                    onChange={(e) => {
+                      const nextType = e.target.value as 's3' | 'local'
+                      setEditStorageType(nextType)
+                      setEditForm((prev) => ({ ...prev, type: nextType }))
+                    }}
+                  >
+                    <option value="s3">S3 兼容对象存储 / R2</option>
+                    <option value="local">容器本地目录</option>
+                  </select>
+                </label>
+                {editStorageType === 's3' ? (
+                  <>
+                    <label>
+                      <span className={labelClass}>Endpoint 地址</span>
+                      <input className={`${inputClass} mt-1.5 font-mono`} value={editForm.endpoint ?? ''} onChange={(e) => setEditForm((prev) => ({ ...prev, endpoint: e.target.value }))} />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Bucket 名称</span>
+                      <input className={`${inputClass} mt-1.5 font-mono`} value={editForm.bucket_name ?? ''} onChange={(e) => setEditForm((prev) => ({ ...prev, bucket_name: e.target.value }))} />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Region</span>
+                      <input className={`${inputClass} mt-1.5`} value={editForm.region ?? ''} placeholder="可选" onChange={(e) => setEditForm((prev) => ({ ...prev, region: e.target.value }))} />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Access Key</span>
+                      <input className={`${inputClass} mt-1.5 font-mono`} value={editForm.access_key ?? ''} onChange={(e) => setEditForm((prev) => ({ ...prev, access_key: e.target.value }))} />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Secret Key</span>
+                      <input className={`${inputClass} mt-1.5 font-mono`} type="password" value={editForm.secret_key ?? ''} onChange={(e) => setEditForm((prev) => ({ ...prev, secret_key: e.target.value }))} />
+                    </label>
+                    <label className="md:col-span-2">
+                      <span className={labelClass}>公开访问域名</span>
+                      <input className={`${inputClass} mt-1.5 font-mono`} value={editForm.public_domain ?? ''} placeholder="用于 ISO 下载链接，可选" onChange={(e) => setEditForm((prev) => ({ ...prev, public_domain: e.target.value }))} />
+                    </label>
+                  </>
+                ) : (
+                  <label className="md:col-span-2">
+                    <span className={labelClass}>容器内本地路径</span>
+                    <input className={`${inputClass} mt-1.5 font-mono`} value={editLocalPath} onChange={(e) => setEditLocalPath(e.target.value)} />
+                  </label>
+                )}
               </div>
-              <label className="block">
-                <span className={labelClass}>本地挂载路径</span>
-                <input className={`${inputClass} mt-1.5 font-mono`} value={editLocalPath} onChange={(e) => setEditLocalPath(e.target.value)} />
-              </label>
+              <div className="flex flex-wrap items-center gap-5 border-t pt-4 text-sm text-gray-700">
+                {editStorageType === 's3' && (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={Boolean(editForm.use_ssl)} onChange={(e) => setEditForm((prev) => ({ ...prev, use_ssl: e.target.checked }))} />
+                    使用 SSL
+                  </label>
+                )}
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={Boolean(editForm.is_default)} onChange={(e) => setEditForm((prev) => ({ ...prev, is_default: e.target.checked }))} />
+                  设为默认存储
+                </label>
+              </div>
               <div className="flex justify-end gap-3 border-t pt-4">
                 <Dialog.Close asChild>
                   <button type="button" className={secondaryButton}>取消</button>
                 </Dialog.Close>
                 <button type="submit" className={primaryButton} disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? '保存中...' : '保存挂载点'}
+                  {updateMutation.isPending ? '保存中...' : '保存节点'}
                 </button>
               </div>
             </form>

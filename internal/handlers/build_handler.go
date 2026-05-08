@@ -149,17 +149,28 @@ func (h *BuildHandler) Get(c *fiber.Ctx) error {
 }
 
 func (h *BuildHandler) Delete(c *fiber.Ctx) error {
-	taskID := c.Params("id")
-
-	result := h.db.WithContext(c.UserContext()).Where("task_id = ?", taskID).Delete(&models.BuildTask{})
-	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(result.Error.Error()))
-	}
-	if result.RowsAffected == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(utils.ErrorResponse("build task not found"))
+	identifier := strings.TrimSpace(c.Params("id"))
+	if identifier == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("build task id is required"))
 	}
 
-	return c.JSON(utils.SuccessResponse(fiber.Map{"deleted": true, "task_id": taskID}))
+	var task models.BuildTask
+	query := h.db.WithContext(c.UserContext()).Where("task_id = ?", identifier)
+	if numericID, err := strconv.ParseUint(identifier, 10, 64); err == nil {
+		query = h.db.WithContext(c.UserContext()).Where("task_id = ? OR id = ?", identifier, numericID)
+	}
+	if err := query.First(&task).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(utils.ErrorResponse("build task not found"))
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+
+	if err := h.db.WithContext(c.UserContext()).Delete(&task).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+
+	return c.JSON(utils.SuccessResponse(fiber.Map{"deleted": true, "task_id": task.TaskID}))
 }
 
 func (h *BuildHandler) GetLogs(c *fiber.Ctx) error {
