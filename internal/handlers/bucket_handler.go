@@ -72,13 +72,16 @@ func (h *BucketHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(utils.SuccessResponse(bucket))
+	return c.Status(fiber.StatusCreated).JSON(utils.SuccessResponse(bucketForResponse(bucket)))
 }
 
 func (h *BucketHandler) List(c *fiber.Ctx) error {
 	var buckets []models.StorageBucket
 	if err := h.db.WithContext(c.UserContext()).Order("id ASC").Find(&buckets).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+	for index := range buckets {
+		buckets[index] = bucketForResponse(buckets[index])
 	}
 	return c.JSON(utils.SuccessResponse(buckets))
 }
@@ -97,7 +100,7 @@ func (h *BucketHandler) Get(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
 
-	return c.JSON(utils.SuccessResponse(bucket))
+	return c.JSON(utils.SuccessResponse(bucketForResponse(bucket)))
 }
 
 func (h *BucketHandler) Update(c *fiber.Ctx) error {
@@ -147,7 +150,7 @@ func (h *BucketHandler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
 
-	return c.JSON(utils.SuccessResponse(bucket))
+	return c.JSON(utils.SuccessResponse(bucketForResponse(bucket)))
 }
 
 func (h *BucketHandler) Delete(c *fiber.Ctx) error {
@@ -220,6 +223,11 @@ func buildS3Config(req bucketRequest) *storage.S3Config {
 		UseSSL:          req.UseSSL,
 		PublicDomain:    req.PublicDomain,
 	}
+}
+
+func bucketForResponse(bucket models.StorageBucket) models.StorageBucket {
+	bucket.PublicDomain = storage.NormalizePublicDomain(bucket.PublicDomain)
+	return bucket
 }
 
 func normalizeStorageType(value string) string {

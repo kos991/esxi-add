@@ -103,6 +103,53 @@ func TestUpdateLocalBucketMountPath(t *testing.T) {
 	}
 }
 
+func TestListBucketsNormalizesBarePublicDomain(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.StorageBucket{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	bucket := models.StorageBucket{
+		Name:         "R2",
+		Type:         models.StorageTypeS3,
+		Endpoint:     "r2.example",
+		BucketName:   "esxi-build",
+		PublicDomain: "driver.wwa.im",
+	}
+	if err := db.Create(&bucket).Error; err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+
+	app := fiber.New()
+	app.Get("/buckets", NewBucketHandler(db).List)
+
+	req := httptest.NewRequest(http.MethodGet, "/buckets", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var response struct {
+		Success bool                   `json:"success"`
+		Data    []models.StorageBucket `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Data) != 1 {
+		t.Fatalf("expected one bucket, got %+v", response.Data)
+	}
+	if response.Data[0].PublicDomain != "https://driver.wwa.im" {
+		t.Fatalf("expected normalized public domain, got %q", response.Data[0].PublicDomain)
+	}
+}
+
 func jsonQuote(t *testing.T, value string) string {
 	t.Helper()
 	raw, err := json.Marshal(value)

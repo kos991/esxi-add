@@ -128,14 +128,15 @@ func (s *S3Client) RenameObject(ctx context.Context, oldObjectName, newObjectNam
 }
 
 func (s *S3Client) GetPublicURL(objectName string) string {
-	domain := normalizePublicDomain(s.publicDomain)
+	domain := NormalizePublicDomain(s.publicDomain)
 	if domain == "" {
 		return ""
 	}
 	return domain + "/" + strings.TrimLeft(strings.TrimSpace(objectName), "/")
 }
 
-func normalizePublicDomain(rawDomain string) string {
+// NormalizePublicDomain returns an absolute public object host URL.
+func NormalizePublicDomain(rawDomain string) string {
 	domain := strings.TrimRight(strings.TrimSpace(rawDomain), "/")
 	if domain == "" {
 		return ""
