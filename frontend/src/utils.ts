@@ -26,6 +26,11 @@ export function parseDrivers(value?: string) {
   }
 }
 
+export function buildPublicObjectUrl(publicDomain?: string, objectPath?: string) {
+  if (!publicDomain || !objectPath) return undefined
+  return `${publicDomain.replace(/\/$/, '')}/${objectPath.replace(/^\//, '')}`
+}
+
 export function cn(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
 }

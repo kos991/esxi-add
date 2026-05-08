@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 import { listBuckets } from '../api/buckets'
 import { deleteFile, listDepots, listDrivers, listISOs, refreshFiles, renameFile, uploadFile } from '../api/files'
 import type { FileMetadata } from '../types'
-import { cn, formatBytes, formatDate } from '../utils'
+import { buildPublicObjectUrl, cn, formatBytes, formatDate } from '../utils'
 
 type UploadType = 'depot' | 'driver' | 'iso'
 
@@ -170,8 +170,9 @@ export default function FilesPage() {
 
   const copyIsoLink = async (file: FileMetadata) => {
     const link = selectedBucket?.public_domain
-      ? `${selectedBucket.public_domain.replace(/\/$/, '')}/${selectedBucket.bucket_name}/${file.path}`
+      ? buildPublicObjectUrl(selectedBucket.public_domain, file.path)
       : file.path
+    if (!link) return
     try {
       await navigator.clipboard.writeText(link)
       setMessage('ISO 链接已复制')

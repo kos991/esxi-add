@@ -131,7 +131,7 @@ func (s *S3Client) GetPublicURL(objectName string) string {
 	if s.publicDomain == "" {
 		return ""
 	}
-	return strings.TrimRight(s.publicDomain, "/") + "/" + s.bucketName + "/" + strings.TrimLeft(objectName, "/")
+	return strings.TrimRight(s.publicDomain, "/") + "/" + strings.TrimLeft(objectName, "/")
 }
 
 func (s *S3Client) TestConnection(ctx context.Context) error {
