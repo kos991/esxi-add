@@ -51,12 +51,38 @@ func TestBuildScriptAllowsCommunityDriversAndUnsignedExports(t *testing.T) {
 	script := string(content)
 	requiredSnippets := []string{
 		"Set-EsxImageProfile -ImageProfile $custom.Name -AcceptanceLevel CommunitySupported",
-		"Export-EsxImageProfile -ImageProfile $custom.Name -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck",
+		"Export-EsxImageProfile -ImageProfile $ImageProfile -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("build script must contain %q for community driver ISO exports", snippet)
 		}
+	}
+}
+
+func TestBuildScriptUsesBundleFirstExportForEsxi67(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	requiredSnippets := []string{
+		"$useBundleFirstExport = $ESXiVersion -match '^6\\.7'",
+		"Export-EsxImageProfile -ImageProfile $ImageProfile -ExportToBundle -FilePath $bundlePath -Force -NoSignatureCheck",
+		"Remove-EsxImageProfile -ImageProfile $ImageProfile",
+		"Add-EsxSoftwareDepot -DepotUrl $bundlePath",
+		"Get-EsxImageProfile -Name $ImageProfile",
+		"Export-EsxImageProfile -ImageProfile $bundleProfile.Name -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("build script must contain %q so ESXi 6.7 exports via an offline bundle before ISO creation", snippet)
+		}
+	}
+
+	if strings.Contains(script, "Get-EsxImageProfile -SoftwareDepot") {
+		t.Fatalf("build script must not rely on Get-EsxImageProfile -SoftwareDepot because older PowerCLI ImageBuilder versions may not support it")
 	}
 }
 

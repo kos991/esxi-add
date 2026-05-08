@@ -14,7 +14,9 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 
 	dockerfile := string(content)
 	requiredSnippets := []string{
-		"FROM vmware/powerclicore:latest",
+		"FROM mcr.microsoft.com/powershell:",
+		"ARG POWERCLI_VERSION=12.7.0",
+		"Install-Module -Name VMware.PowerCLI -RequiredVersion $env:POWERCLI_VERSION",
 		"python3 -m pip install --no-cache-dir lxml psutil pyopenssl six",
 		"COPY scripts/ ./scripts/",
 	}
@@ -26,11 +28,11 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
-		"FROM mcr.microsoft.com/powershell",
-		"Install-Module -Name VMware.PowerCLI",
+		"FROM vmware/powerclicore:latest",
+		"Install-Module -Name VMware.PowerCLI -Scope CurrentUser",
 	} {
 		if strings.Contains(dockerfile, forbidden) {
-			t.Fatalf("Dockerfile must not contain %q because ESXi 6.7 needs the VMware PowerCLI/ImageBuilder runtime set", forbidden)
+			t.Fatalf("Dockerfile must not contain %q because ESXi 6.7 needs a pinned Linux PowerCLI runtime", forbidden)
 		}
 	}
 }
@@ -45,6 +47,17 @@ func TestDockerContextIncludesPowerShellScripts(t *testing.T) {
 		if strings.Contains(dockerignore, forbidden) {
 			t.Fatalf(".dockerignore must not contain %q because the image needs build-esxi-iso.ps1 at runtime", forbidden)
 		}
+	}
+}
+
+func TestDockerfileDoesNotLetLinuxShellExpandPowerShellVariables(t *testing.T) {
+	dockerfile := readTextFile(t, "../Dockerfile")
+
+	if strings.Contains(dockerfile, `-Command "$ErrorActionPreference`) {
+		t.Fatalf("Dockerfile must single-quote pwsh -Command so Linux shell does not expand PowerShell variables")
+	}
+	if !strings.Contains(dockerfile, `-Command '$ErrorActionPreference = "Stop";`) {
+		t.Fatalf("Dockerfile must pass PowerShell variables through a single-quoted pwsh -Command")
 	}
 }
 

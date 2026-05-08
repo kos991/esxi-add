@@ -15,14 +15,19 @@ COPY . .
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
 
-# Single-image runtime: Go app + built frontend + Redis + VMware PowerCLI ImageBuilder.
-FROM vmware/powerclicore:latest
+# Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
+FROM mcr.microsoft.com/powershell:7.2-ubuntu-22.04
+
+ARG POWERCLI_VERSION=12.7.0
+ENV POWERCLI_VERSION=${POWERCLI_VERSION}
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3 python3-pip redis-server tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --no-cache-dir lxml psutil pyopenssl six
+
+RUN pwsh -NoLogo -NoProfile -Command '$ErrorActionPreference = "Stop"; Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name VMware.PowerCLI -RequiredVersion $env:POWERCLI_VERSION -Scope AllUsers -Force -AllowClobber; Import-Module VMware.ImageBuilder -ErrorAction Stop'
 
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server

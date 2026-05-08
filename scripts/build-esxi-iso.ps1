@@ -57,6 +57,36 @@ function Add-DriverSoftwarePackages {
     }
 }
 
+function Export-CustomImageProfile {
+    param(
+        [Parameter(Mandatory=$true)] [string]$ImageProfile,
+        [Parameter(Mandatory=$true)] [string]$OutputPath,
+        [Parameter(Mandatory=$true)] [string]$ESXiVersion,
+        [Parameter(Mandatory=$true)] [string]$WorkDir
+    )
+
+    $useBundleFirstExport = $ESXiVersion -match '^6\.7'
+    if (-not $useBundleFirstExport) {
+        Export-EsxImageProfile -ImageProfile $ImageProfile -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck
+        return
+    }
+
+    $bundlePath = Join-Path $WorkDir "$ImageProfile-offline_bundle.zip"
+    Write-Host "[PROGRESS] 85 Exporting offline bundle for ESXi 6.7..."
+    Export-EsxImageProfile -ImageProfile $ImageProfile -ExportToBundle -FilePath $bundlePath -Force -NoSignatureCheck
+
+    Write-Host "[PROGRESS] 90 Reloading offline bundle for ISO export..."
+    Remove-EsxImageProfile -ImageProfile $ImageProfile -Confirm:$false | Out-Null
+    Add-EsxSoftwareDepot -DepotUrl $bundlePath | Out-Null
+    $bundleProfiles = @(Get-EsxImageProfile -Name $ImageProfile)
+    $bundleProfile = $bundleProfiles | Select-Object -First 1
+    if ($null -eq $bundleProfile) {
+        throw "no ESXi image profile found in generated offline bundle: $bundlePath"
+    }
+
+    Export-EsxImageProfile -ImageProfile $bundleProfile.Name -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck
+}
+
 try {
     Write-Host "[PROGRESS] 0 Starting build..."
     Initialize-PowerCliRuntime
@@ -95,7 +125,7 @@ try {
     }
 
     Write-Host "[PROGRESS] 85 Exporting ISO..."
-    Export-EsxImageProfile -ImageProfile $custom.Name -ExportToIso -FilePath $OutputPath -Force -NoSignatureCheck
+    Export-CustomImageProfile -ImageProfile $custom.Name -OutputPath $OutputPath -ESXiVersion $ESXiVersion -WorkDir $WorkDir
 
     if (-not (Test-Path -LiteralPath $OutputPath)) {
         throw "ISO export did not create output file: $OutputPath"
