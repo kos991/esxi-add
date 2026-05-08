@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -14,6 +15,42 @@ import (
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
 	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 )
+
+func TestValidateBuildInputFileAcceptsZipAndVibMagic(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "driver.zip")
+	vibPath := filepath.Join(root, "driver.vib")
+
+	if err := os.WriteFile(zipPath, []byte("PK\x03\x04zip-data"), 0o644); err != nil {
+		t.Fatalf("write zip: %v", err)
+	}
+	if err := os.WriteFile(vibPath, []byte("!<arch>\nvib-data"), 0o644); err != nil {
+		t.Fatalf("write vib: %v", err)
+	}
+
+	if err := validateBuildInputFile(zipPath, "driver/driver.zip"); err != nil {
+		t.Fatalf("valid zip rejected: %v", err)
+	}
+	if err := validateBuildInputFile(vibPath, "driver/driver.vib"); err != nil {
+		t.Fatalf("valid vib rejected: %v", err)
+	}
+}
+
+func TestValidateBuildInputFileRejectsHtmlCachedAsDriver(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "driver.zip")
+	if err := os.WriteFile(path, []byte("\n\n<!DOCTYPE html><html></html>"), 0o644); err != nil {
+		t.Fatalf("write fake driver: %v", err)
+	}
+
+	err := validateBuildInputFile(path, "driver/6x/bad.zip")
+	if err == nil {
+		t.Fatal("expected invalid driver file to be rejected")
+	}
+	if !strings.Contains(err.Error(), "driver/6x/bad.zip") ||
+		!strings.Contains(err.Error(), "not a valid .zip file") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
 func TestBuildOutputFileNameSanitizesCustomName(t *testing.T) {
 	got := buildOutputFileName(`..\nested\custom`, "8.0")

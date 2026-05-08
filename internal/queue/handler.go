@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -100,6 +101,10 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		_ = h.updateError(payload.TaskID, err.Error())
 		return fmt.Errorf("cache depot: %w", err)
 	}
+	if err := validateBuildInputFile(depotLocal, payload.DepotPath); err != nil {
+		_ = h.updateError(payload.TaskID, err.Error())
+		return err
+	}
 
 	driverLocals := make([]string, 0, len(payload.DriverPaths))
 	for _, driverPath := range payload.DriverPaths {
@@ -107,6 +112,10 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		if err != nil {
 			_ = h.updateError(payload.TaskID, err.Error())
 			return fmt.Errorf("cache driver %s: %w", driverPath, err)
+		}
+		if err := validateBuildInputFile(localPath, driverPath); err != nil {
+			_ = h.updateError(payload.TaskID, err.Error())
+			return err
 		}
 		driverLocals = append(driverLocals, localPath)
 	}
@@ -249,6 +258,41 @@ func newLocalBuildStorage(localPath string) (buildStorage, error) {
 		return buildStorage{}, err
 	}
 	return buildStorage{resolver: store, uploader: store}, nil
+}
+
+func validateBuildInputFile(localPath, objectPath string) error {
+	ext := strings.ToLower(filepath.Ext(objectPath))
+	if ext != ".zip" && ext != ".vib" {
+		return nil
+	}
+
+	file, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open build input %s: %w", objectPath, err)
+	}
+	defer file.Close()
+
+	header := make([]byte, 8)
+	n, err := io.ReadFull(file, header)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return fmt.Errorf("read build input %s: %w", objectPath, err)
+	}
+	header = header[:n]
+
+	switch ext {
+	case ".zip":
+		if bytes.HasPrefix(header, []byte("PK\x03\x04")) ||
+			bytes.HasPrefix(header, []byte("PK\x05\x06")) ||
+			bytes.HasPrefix(header, []byte("PK\x07\x08")) {
+			return nil
+		}
+	case ".vib":
+		if bytes.HasPrefix(header, []byte("!<arch>\n")) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("build input %s is not a valid %s file; re-upload or refresh the cached object", objectPath, ext)
 }
 
 func storeBuildOutput(ctx context.Context, store buildStorage, outputLocalPath, outputFileName string) (string, string, int64, error) {
