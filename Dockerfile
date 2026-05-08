@@ -15,17 +15,14 @@ COPY . .
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
 
-# Single-image runtime: Go app + built frontend + Redis + PowerCLI build tooling.
-FROM mcr.microsoft.com/powershell:7.4-debian-12
+# Single-image runtime: Go app + built frontend + Redis + VMware PowerCLI ImageBuilder.
+FROM vmware/powerclicore:latest
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl python3 python3-pip redis-server tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --break-system-packages --no-cache-dir lxml psutil pyopenssl six
-
-RUN pwsh -NoLogo -NoProfile -Command "Set-PSRepository PSGallery -InstallationPolicy Trusted"
-RUN pwsh -NoLogo -NoProfile -Command "Install-Module -Name VMware.PowerCLI -Force -AllowClobber -AcceptLicense -Scope AllUsers"
+RUN python3 -m pip install --no-cache-dir lxml psutil pyopenssl six
 
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server

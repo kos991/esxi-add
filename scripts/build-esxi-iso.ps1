@@ -13,8 +13,9 @@ function Initialize-PowerCliRuntime {
 
     if (Get-Command Set-PowerCLIConfiguration -ErrorAction SilentlyContinue) {
         Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP:$false -Confirm:$false | Out-Null
-        if (Test-Path "/usr/bin/python3") {
-            Set-PowerCLIConfiguration -Scope User -PythonPath "/usr/bin/python3" -Confirm:$false | Out-Null
+        $pythonPath = @("/usr/local/bin/python3", "/usr/bin/python3") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($pythonPath) {
+            Set-PowerCLIConfiguration -Scope User -PythonPath $pythonPath -Confirm:$false | Out-Null
         }
     }
 }

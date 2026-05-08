@@ -14,16 +14,23 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 
 	dockerfile := string(content)
 	requiredSnippets := []string{
-		"FROM mcr.microsoft.com/powershell:7.4-debian-12",
-		"Set-PSRepository PSGallery -InstallationPolicy Trusted",
-		"Install-Module -Name VMware.PowerCLI",
-		"-AcceptLicense",
+		"FROM vmware/powerclicore:latest",
+		"python3 -m pip install --no-cache-dir lxml psutil pyopenssl six",
 		"COPY scripts/ ./scripts/",
 	}
 
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(dockerfile, snippet) {
 			t.Fatalf("Dockerfile must contain %q for in-container PowerShell builds", snippet)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"FROM mcr.microsoft.com/powershell",
+		"Install-Module -Name VMware.PowerCLI",
+	} {
+		if strings.Contains(dockerfile, forbidden) {
+			t.Fatalf("Dockerfile must not contain %q because ESXi 6.7 needs the VMware PowerCLI/ImageBuilder runtime set", forbidden)
 		}
 	}
 }

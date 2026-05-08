@@ -59,3 +59,21 @@ func TestBuildScriptAllowsCommunityDriversAndUnsignedExports(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildScriptDetectsPowerCliPythonPath(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	for _, snippet := range []string{
+		"/usr/local/bin/python3",
+		"/usr/bin/python3",
+		"Set-PowerCLIConfiguration -Scope User -PythonPath $pythonPath",
+	} {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("build script must contain %q so ImageBuilder can find Python in vmware/powerclicore", snippet)
+		}
+	}
+}
