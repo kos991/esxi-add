@@ -4,10 +4,11 @@ import { Check, Copy, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { listBuckets } from '../api/buckets'
 import { deleteFile, listDepots, listDrivers, listISOs, refreshFiles, renameFile, uploadFile } from '../api/files'
-import type { FileMetadata } from '../types'
+import type { FileMetadata, StorageBucket } from '../types'
 import { buildPublicObjectUrl, cn, formatBytes, formatDate } from '../utils'
 
 type UploadType = 'depot' | 'driver' | 'iso'
+type AssetCacheStatus = 'cached' | 'missing' | 'stale' | 'invalid'
 
 const versions = ['6.5', '6.7', '7.0', '8.0', '9.0']
 const categories = [
@@ -24,6 +25,14 @@ const iconButton = 'inline-flex h-8 w-8 items-center justify-center rounded bord
 const selectClass = 'rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] outline-none focus:border-blue-600'
 const inputClass = 'rounded border border-gray-300 bg-white px-3 py-1.5 text-[13px] outline-none focus:border-blue-600'
 const tabClass = 'border-b-2 border-transparent px-5 py-3 text-[13px] font-semibold text-gray-500 data-[state=active]:border-blue-600 data-[state=active]:bg-white data-[state=active]:text-blue-700'
+const assetTypeOrder: Record<FileMetadata['type'], number> = { depot: 0, driver: 1, iso: 2 }
+
+const cacheStatusClass: Record<AssetCacheStatus, string> = {
+  cached: 'border-green-200 bg-green-50 text-green-700',
+  missing: 'border-gray-200 bg-gray-50 text-gray-600',
+  stale: 'border-orange-200 bg-orange-50 text-orange-700',
+  invalid: 'border-red-200 bg-red-50 text-red-700',
+}
 
 function fileName(file: FileMetadata) {
   return file.path.split('/').pop() || file.path
@@ -39,6 +48,70 @@ function displayWithDescription(file: FileMetadata) {
 
 function checksumText(file: FileMetadata) {
   return `MD5: ${file.md5 || '暂无'}`
+}
+
+function bucketType(bucket?: StorageBucket) {
+  return bucket?.type === 'local' ? 'local' : 's3'
+}
+
+function bucketLocation(bucket?: StorageBucket) {
+  if (!bucket) return '-'
+  return bucketType(bucket) === 'local' ? bucket.local_path || '-' : bucket.endpoint || '-'
+}
+
+function providerText(bucket?: StorageBucket) {
+  if (!bucket) {
+    return {
+      label: '未选择存储',
+      description: '选择节点后展示对象路径、公开域名和资产统计。',
+    }
+  }
+  if (bucketType(bucket) === 'local') {
+    return {
+      label: 'Local filesystem',
+      description: '使用服务端本地路径保存 Depot、Driver 和 ISO 资产。',
+    }
+  }
+  if ((bucket.endpoint || '').toLowerCase().includes('r2.cloudflarestorage.com')) {
+    return {
+      label: 'Cloudflare R2',
+      description: 'S3 兼容对象存储，适合配合 public_domain 对外分发构建产物。',
+    }
+  }
+  return {
+    label: 'S3-compatible',
+    description: '支持 AWS S3、MinIO 以及其他 S3 兼容 endpoint。',
+  }
+}
+
+function isOutputAsset(file: FileMetadata) {
+  return file.path.toLowerCase().startsWith('output/')
+}
+
+function assetTypeLabel(file: FileMetadata) {
+  if (isOutputAsset(file)) return 'Output ISO'
+  if (file.type === 'depot') return 'Depot'
+  if (file.type === 'driver') return 'Driver'
+  return 'ISO'
+}
+
+function assetTypeClass(file: FileMetadata) {
+  if (isOutputAsset(file)) return 'border-purple-200 bg-purple-50 text-purple-700'
+  if (file.type === 'depot') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (file.type === 'driver') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  return 'border-sky-200 bg-sky-50 text-sky-700'
+}
+
+function cacheStatus(file: FileMetadata, bucket?: StorageBucket): AssetCacheStatus {
+  if (file.cache_status) return file.cache_status
+  if (bucketType(bucket) === 'local') return 'cached'
+  if (file.cache_valid === false) return 'invalid'
+  if (file.cached) return 'cached'
+  return 'missing'
+}
+
+function canCopyPublicLink(file: FileMetadata, bucket?: StorageBucket) {
+  return Boolean(bucket?.public_domain?.trim()) || file.type === 'iso' || isOutputAsset(file)
 }
 
 function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
@@ -75,6 +148,11 @@ export default function FilesPage() {
   const depotsQuery = useQuery({
     queryKey: ['depots', selectedBucketId],
     queryFn: () => listDepots(selectedBucketId as number),
+    enabled: Boolean(selectedBucketId),
+  })
+  const allDriversQuery = useQuery({
+    queryKey: ['drivers', selectedBucketId, 'all'],
+    queryFn: () => listDrivers(selectedBucketId as number),
     enabled: Boolean(selectedBucketId),
   })
   const driversQuery = useQuery({
@@ -168,22 +246,31 @@ export default function FilesPage() {
     }
   }
 
-  const copyIsoLink = async (file: FileMetadata) => {
+  const copyPublicLink = async (file: FileMetadata) => {
     const link = selectedBucket?.public_domain
       ? buildPublicObjectUrl(selectedBucket.public_domain, file.path)
       : file.path
     if (!link) return
     try {
       await navigator.clipboard.writeText(link)
-      setMessage('ISO 链接已复制')
+      setMessage('链接已复制')
     } catch (error) {
       setMessage(String(error))
     }
   }
 
   const depotCount = depotsQuery.data?.length ?? 0
-  const driverCount = driversQuery.data?.length ?? 0
+  const driverCount = allDriversQuery.data?.length ?? 0
   const isoCount = isoQuery.data?.length ?? 0
+  const assetCount = depotCount + driverCount + isoCount
+  const allAssets = useMemo(
+    () =>
+      [...(depotsQuery.data ?? []), ...(allDriversQuery.data ?? []), ...(isoQuery.data ?? [])].sort(
+        (a, b) => assetTypeOrder[a.type] - assetTypeOrder[b.type] || a.path.localeCompare(b.path)
+      ),
+    [allDriversQuery.data, depotsQuery.data, isoQuery.data]
+  )
+  const allAssetsLoading = depotsQuery.isLoading || allDriversQuery.isLoading || isoQuery.isLoading
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -209,8 +296,10 @@ export default function FilesPage() {
         </div>
       </div>
 
+      <StorageOverview bucket={selectedBucket} loading={bucketsQuery.isLoading} />
+
       <div className="grid gap-3 md:grid-cols-4">
-        <Metric label="当前存储" value={selectedBucket?.name ?? '未选择'} emphasis />
+        <Metric label="全部资产" value={String(assetCount)} emphasis />
         <Metric label="Depots" value={String(depotCount)} />
         <Metric label="Drivers" value={String(driverCount)} />
         <Metric label="ISOs" value={String(isoCount)} />
@@ -258,24 +347,45 @@ export default function FilesPage() {
       </div>
 
       {message && <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">{message}</div>}
-      {(depotsQuery.isError || driversQuery.isError || isoQuery.isError) && (
+      {(depotsQuery.isError || allDriversQuery.isError || driversQuery.isError || isoQuery.isError) && (
         <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {String(depotsQuery.error || driversQuery.error || isoQuery.error)}
+          {String(depotsQuery.error || allDriversQuery.error || driversQuery.error || isoQuery.error)}
         </div>
       )}
 
-      <Tabs.Root defaultValue="depots" className="overflow-hidden rounded border border-gray-200 bg-white shadow-sm">
-        <Tabs.List className="flex border-b bg-gray-50/50">
-          <Tabs.Trigger value="depots" className={tabClass}>Depot 文件</Tabs.Trigger>
-          <Tabs.Trigger value="drivers" className={tabClass}>驱动</Tabs.Trigger>
-          <Tabs.Trigger value="isos" className={tabClass}>ISO 文件</Tabs.Trigger>
+      <Tabs.Root defaultValue="all" className="overflow-hidden rounded border border-gray-200 bg-white shadow-sm">
+        <Tabs.List className="flex overflow-x-auto border-b bg-gray-50/50">
+          <Tabs.Trigger value="all" className={tabClass}>全部资产 ({assetCount})</Tabs.Trigger>
+          <Tabs.Trigger value="depots" className={tabClass}>Depot ({depotCount})</Tabs.Trigger>
+          <Tabs.Trigger value="drivers" className={tabClass}>Driver ({driverCount})</Tabs.Trigger>
+          <Tabs.Trigger value="isos" className={tabClass}>ISO ({isoCount})</Tabs.Trigger>
         </Tabs.List>
+
+        <Tabs.Content value="all">
+          <FileTable
+            files={allAssets}
+            loading={allAssetsLoading}
+            emptyLabel="暂无资产"
+            bucket={selectedBucket}
+            onCopy={copyPublicLink}
+            onStartRename={startRename}
+            onSubmitRename={submitRename}
+            onCancelRename={() => setRenamingId(null)}
+            onDelete={removeFile}
+            renamingId={renamingId}
+            renameValue={renameValue}
+            setRenameValue={setRenameValue}
+            busy={deleteMutation.isPending || renameMutation.isPending}
+          />
+        </Tabs.Content>
 
         <Tabs.Content value="depots">
           <FileTable
             files={depotsQuery.data ?? []}
             loading={depotsQuery.isLoading}
             emptyLabel="暂无 Depot 文件"
+            bucket={selectedBucket}
+            onCopy={copyPublicLink}
             onStartRename={startRename}
             onSubmitRename={submitRename}
             onCancelRename={() => setRenamingId(null)}
@@ -307,7 +417,8 @@ export default function FilesPage() {
             files={driversQuery.data ?? []}
             loading={driversQuery.isLoading}
             emptyLabel="暂无匹配驱动"
-            showCategory
+            bucket={selectedBucket}
+            onCopy={copyPublicLink}
             onStartRename={startRename}
             onSubmitRename={submitRename}
             onCancelRename={() => setRenamingId(null)}
@@ -324,7 +435,8 @@ export default function FilesPage() {
             files={isoQuery.data ?? []}
             loading={isoQuery.isLoading}
             emptyLabel="暂无 ISO 文件"
-            onCopy={copyIsoLink}
+            bucket={selectedBucket}
+            onCopy={copyPublicLink}
             onStartRename={startRename}
             onSubmitRename={submitRename}
             onCancelRename={() => setRenamingId(null)}
@@ -340,6 +452,43 @@ export default function FilesPage() {
   )
 }
 
+function StorageOverview({ bucket, loading }: { bucket?: StorageBucket; loading: boolean }) {
+  const provider = providerText(bucket)
+  const typeLabel = bucket ? (bucketType(bucket) === 'local' ? 'Local' : 'S3') : '-'
+  const locationLabel = bucketType(bucket) === 'local' ? 'Local path' : 'Endpoint'
+
+  return (
+    <div className="rounded border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 pb-3">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-gray-400">当前存储节点</div>
+          <div className="mt-1 text-lg font-bold text-gray-950">{loading ? '加载中...' : bucket?.name ?? '未选择'}</div>
+          <p className="mt-1 text-[12px] text-gray-500">{provider.description}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-700">{provider.label}</span>
+          <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-bold uppercase text-gray-600">{typeLabel}</span>
+          {bucket?.is_default && <span className="rounded border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-bold uppercase text-green-700">Default</span>}
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <StorageField label="默认" value={bucket ? (bucket.is_default ? '是' : '否') : '-'} />
+        <StorageField label={locationLabel} value={bucketLocation(bucket)} mono />
+        <StorageField label="Public domain" value={bucket?.public_domain?.trim() || '未配置'} mono />
+      </div>
+    </div>
+  )
+}
+
+function StorageField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{label}</div>
+      <div className={cn('mt-1 truncate text-[13px] text-gray-800', mono && 'font-mono')}>{value}</div>
+    </div>
+  )
+}
+
 function Metric({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
     <div className="rounded border border-gray-200 bg-white p-4">
@@ -349,11 +498,16 @@ function Metric({ label, value, emphasis }: { label: string; value: string; emph
   )
 }
 
+function CacheTag({ file, bucket }: { file: FileMetadata; bucket?: StorageBucket }) {
+  const status = cacheStatus(file, bucket)
+  return <span className={cn('inline-flex rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase', cacheStatusClass[status])}>{status}</span>
+}
+
 function FileTable({
   files,
   loading,
   emptyLabel,
-  showCategory,
+  bucket,
   onCopy,
   onStartRename,
   onSubmitRename,
@@ -367,7 +521,7 @@ function FileTable({
   files: FileMetadata[]
   loading: boolean
   emptyLabel: string
-  showCategory?: boolean
+  bucket?: StorageBucket
   onCopy?: (file: FileMetadata) => void
   onStartRename: (file: FileMetadata) => void
   onSubmitRename: (file: FileMetadata) => void
@@ -378,75 +532,87 @@ function FileTable({
   setRenameValue: (value: string) => void
   busy: boolean
 }) {
-  const colSpan = showCategory ? 6 : 5
+  const colSpan = 7
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-gray-200 bg-[#f9f9fb] text-[11px] font-bold uppercase tracking-wider text-gray-600">
           <tr>
-            <th className="px-4 py-3">文件名</th>
-            <th className="px-4 py-3">校验</th>
-            {showCategory && <th className="px-4 py-3">分类</th>}
+            <th className="px-4 py-3">资产</th>
+            <th className="px-4 py-3">类型</th>
+            <th className="px-4 py-3">路径</th>
             <th className="px-4 py-3">大小</th>
             <th className="px-4 py-3">更新时间</th>
+            <th className="px-4 py-3">缓存</th>
             <th className="px-4 py-3 text-right">操作</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {loading && <EmptyRow colSpan={colSpan} label="正在加载文件..." />}
           {!loading && files.length === 0 && <EmptyRow colSpan={colSpan} label={emptyLabel} />}
-          {files.map((file) => (
-            <tr key={file.id} className="text-[13px] hover:bg-[#f9f9fb]">
-              <td className="px-4 py-3">
-                {renamingId === file.id ? (
-                  <input className={inputClass} value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
-                ) : (
-                  <>
-                    <div className="font-semibold text-blue-700">{displayWithDescription(file)}</div>
-                    <div className="mt-1 break-all font-mono text-[11px] text-gray-500">{file.path}</div>
-                  </>
-                )}
-              </td>
-              <td className="px-4 py-3 break-all font-mono text-[12px] text-gray-600">{checksumText(file)}</td>
-              {showCategory && (
+          {files.map((file) => {
+            const copyEnabled = onCopy && canCopyPublicLink(file, bucket)
+
+            return (
+              <tr key={file.id} className="text-[13px] hover:bg-[#f9f9fb]">
                 <td className="px-4 py-3">
-                  <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{file.driver_category || 'other'}</span>
-                </td>
-              )}
-              <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
-              <td className="px-4 py-3 text-gray-500">{formatDate(file.last_modified)}</td>
-              <td className="px-4 py-3">
-                <div className="flex justify-end gap-2">
                   {renamingId === file.id ? (
-                    <>
-                      <button className={iconButton} title="确认重命名" onClick={() => onSubmitRename(file)} disabled={busy}>
-                        <Check className="h-4 w-4" />
-                      </button>
-                      <button className={iconButton} title="取消重命名" onClick={onCancelRename} disabled={busy}>
-                        <X className="h-4 w-4" />
-                      </button>
-                    </>
+                    <input className={inputClass} value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
                   ) : (
                     <>
-                      {onCopy && (
-                        <button className={iconButton} title="复制链接" onClick={() => onCopy(file)} disabled={busy}>
-                          <Copy className="h-4 w-4" />
-                        </button>
-                      )}
-                      <button className={iconButton} title="重命名" onClick={() => onStartRename(file)} disabled={busy}>
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button className={dangerButton} title="删除" onClick={() => onDelete(file)} disabled={busy}>
-                        <Trash2 className="h-4 w-4" />
-                        删除
-                      </button>
+                      <div className="font-semibold text-blue-700">{displayWithDescription(file)}</div>
+                      <div className="mt-1 break-all font-mono text-[11px] text-gray-500">{checksumText(file)}</div>
                     </>
                   )}
-                </div>
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col items-start gap-1">
+                    <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase', assetTypeClass(file))}>{assetTypeLabel(file)}</span>
+                    {file.esxi_version && <span className="text-[11px] text-gray-500">ESXi {file.esxi_version}</span>}
+                    {file.driver_category && <span className="text-[11px] text-gray-500">{file.driver_category}</span>}
+                  </div>
+                </td>
+                <td className="max-w-[360px] px-4 py-3">
+                  <div className="break-all font-mono text-[12px] text-gray-600">{file.path}</div>
+                </td>
+                <td className="px-4 py-3 text-gray-600">{formatBytes(file.size)}</td>
+                <td className="px-4 py-3 text-gray-500">{formatDate(file.last_modified)}</td>
+                <td className="px-4 py-3">
+                  <CacheTag file={file} bucket={bucket} />
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex justify-end gap-2">
+                    {renamingId === file.id ? (
+                      <>
+                        <button className={iconButton} title="确认重命名" onClick={() => onSubmitRename(file)} disabled={busy}>
+                          <Check className="h-4 w-4" />
+                        </button>
+                        <button className={iconButton} title="取消重命名" onClick={onCancelRename} disabled={busy}>
+                          <X className="h-4 w-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {copyEnabled && (
+                          <button className={iconButton} title="复制链接" onClick={() => onCopy?.(file)} disabled={busy}>
+                            <Copy className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button className={iconButton} title="重命名" onClick={() => onStartRename(file)} disabled={busy}>
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button className={dangerButton} title="删除" onClick={() => onDelete(file)} disabled={busy}>
+                          <Trash2 className="h-4 w-4" />
+                          删除
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
