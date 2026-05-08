@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
 	taskqueue "github.com/esxi-builder/esxi-iso-builder/internal/queue"
+	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 	"github.com/esxi-builder/esxi-iso-builder/internal/utils"
 )
 
@@ -202,6 +206,70 @@ func (h *BuildHandler) GetLogs(c *fiber.Ctx) error {
 
 	c.Type("txt", "utf-8")
 	return c.SendString(task.LogOutput)
+}
+
+func (h *BuildHandler) DownloadArtifact(c *fiber.Ctx) error {
+	taskID := c.Params("id")
+
+	var task models.BuildTask
+	if err := h.db.WithContext(c.UserContext()).Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(utils.ErrorResponse("build task not found"))
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+
+	if task.Status != models.BuildTaskStatusCompleted || strings.TrimSpace(task.OutputISO) == "" {
+		return c.Status(fiber.StatusConflict).JSON(utils.ErrorResponse("build artifact is not available"))
+	}
+
+	reader, err := h.openArtifact(c.UserContext(), task.StorageBucketID, task.OutputISO)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+
+	filename := path.Base(strings.ReplaceAll(task.OutputISO, "\\", "/"))
+	if filename == "." || filename == "/" || filename == "" {
+		filename = "artifact.iso"
+	}
+	c.Set(fiber.HeaderContentType, "application/x-iso9660-image")
+	c.Set(fiber.HeaderContentDisposition, fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filename, `"`, "")))
+	if task.OutputISOSize > 0 {
+		return c.SendStream(reader, int(task.OutputISOSize))
+	}
+	return c.SendStream(reader)
+}
+
+func (h *BuildHandler) openArtifact(ctx context.Context, bucketID uint, objectPath string) (io.ReadCloser, error) {
+	var bucket models.StorageBucket
+	if err := h.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {
+		return nil, fmt.Errorf("find storage bucket: %w", err)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(bucket.Type)) {
+	case "", models.StorageTypeS3:
+		client, err := storage.NewS3Client(&storage.S3Config{
+			Endpoint:        bucket.Endpoint,
+			AccessKeyID:     bucket.AccessKey,
+			SecretAccessKey: bucket.SecretKey,
+			BucketName:      bucket.BucketName,
+			Region:          bucket.Region,
+			UseSSL:          bucket.UseSSL,
+			PublicDomain:    bucket.PublicDomain,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return client.Download(ctx, objectPath)
+	case models.StorageTypeLocal:
+		store, err := storage.NewLocalStore(bucket.LocalPath)
+		if err != nil {
+			return nil, err
+		}
+		return store.Download(ctx, objectPath)
+	default:
+		return nil, fmt.Errorf("unsupported storage bucket type: %s", bucket.Type)
+	}
 }
 
 func parsePositiveInt(value string, fallback int) int {

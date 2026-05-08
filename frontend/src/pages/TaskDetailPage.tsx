@@ -1,10 +1,10 @@
 import * as Progress from '@radix-ui/react-progress'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDown, Download, Search, Terminal } from 'lucide-react'
+import { ArrowDown, Copy, Download, Search, Terminal } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { listBuckets } from '../api/buckets'
-import { getBuild } from '../api/builds'
+import { getBuild, getBuildArtifactUrl } from '../api/builds'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { cn, formatBytes, formatDate, parseDrivers } from '../utils'
 
@@ -43,6 +43,7 @@ export default function TaskDetailPage() {
 
   const [logFilter, setLogFilter] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
+  const [copyMessage, setCopyMessage] = useState<string | null>(null)
 
   const allLogs = useMemo(() => {
     if (wsLogs.length > 0) return wsLogs
@@ -62,7 +63,9 @@ export default function TaskDetailPage() {
 
   const task = taskQuery.data
   const bucket = useMemo(() => bucketsQuery.data?.find((item) => item.id === task?.storage_bucket_id), [bucketsQuery.data, task])
-  const downloadUrl = task?.output_iso && bucket?.public_domain ? `${bucket.public_domain.replace(/\/$/, '')}/${bucket.bucket_name}/${task.output_iso}` : undefined
+  const publicDownloadUrl = task?.output_iso && bucket?.public_domain ? `${bucket.public_domain.replace(/\/$/, '')}/${bucket.bucket_name}/${task.output_iso}` : undefined
+  const artifactDownloadUrl = task?.output_iso && task?.task_id ? getBuildArtifactUrl(task.task_id) : undefined
+  const downloadUrl = publicDownloadUrl || artifactDownloadUrl
   const driverList = useMemo(() => parseDrivers(task?.drivers), [task?.drivers])
   const effectiveProgress = progress || task?.progress || 0
 
@@ -76,6 +79,16 @@ export default function TaskDetailPage() {
     URL.revokeObjectURL(url)
   }
 
+  const copyArtifactLink = async () => {
+    if (!downloadUrl) return
+    try {
+      await navigator.clipboard.writeText(downloadUrl)
+      setCopyMessage('Download link copied')
+    } catch (error) {
+      setCopyMessage(String(error))
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -84,8 +97,8 @@ export default function TaskDetailPage() {
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-950">Task Monitor</h1>
           <p className="mt-1 font-mono text-[12px] text-gray-500">{taskId}</p>
         </div>
-        {task?.status === 'completed' && downloadUrl && (
-          <a href={downloadUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
+        {task?.status === 'completed' && task.output_iso && downloadUrl && (
+          <a href={downloadUrl} target="_blank" rel="noreferrer" download className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
             <Download className="h-4 w-4" />
             Download ISO
           </a>
@@ -93,6 +106,7 @@ export default function TaskDetailPage() {
       </div>
 
       {taskQuery.isError && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{String(taskQuery.error)}</div>}
+      {copyMessage && <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">{copyMessage}</div>}
 
       {task && (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -201,6 +215,20 @@ export default function TaskDetailPage() {
                   <InfoBlock label="ISO name" value={task.output_iso || '-'} mono />
                   <SideRow label="File size" value={formatBytes(task.output_iso_size)} />
                   <InfoBlock label="SHA256 checksum" value={task.output_iso_sha256 || '-'} mono />
+                  {downloadUrl && (
+                    <div>
+                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">Download link</div>
+                      <div className="flex items-start gap-2">
+                        <a href={downloadUrl} target="_blank" rel="noreferrer" download className="min-w-0 flex-1 break-all rounded border bg-gray-50 p-2 font-mono text-[12px] text-blue-700 underline decoration-blue-200 underline-offset-2">
+                          {downloadUrl}
+                        </a>
+                        <button type="button" onClick={copyArtifactLink} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-gray-300 text-gray-600 hover:bg-gray-50" title="Copy download link">
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="mt-1 text-[11px] text-gray-400">{publicDownloadUrl ? 'Public bucket URL' : 'Backend proxy download'}</div>
+                    </div>
+                  )}
                 </div>
               ) : task.status === 'failed' ? (
                 <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">

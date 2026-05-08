@@ -50,6 +50,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	api.Get("/builds/:id", buildHandler.Get)
 	api.Delete("/builds/:id", buildHandler.Delete)
 	api.Get("/builds/:id/logs", buildHandler.GetLogs)
+	api.Get("/builds/:id/artifact", buildHandler.DownloadArtifact)
 
 	api.Post("/worker/builds/claim", workerHandler.ClaimBuild)
 	api.Post("/worker/builds/:id/progress", workerHandler.UpdateProgress)

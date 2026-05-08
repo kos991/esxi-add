@@ -56,3 +56,7 @@ export async function getBuildLogs(taskId: string): Promise<string> {
   const response = await api.get(`/builds/${taskId}/logs`, { responseType: 'text' })
   return typeof response === 'string' ? response : ''
 }
+
+export function getBuildArtifactUrl(taskId: string): string {
+  return `/api/builds/${encodeURIComponent(taskId)}/artifact`
+}

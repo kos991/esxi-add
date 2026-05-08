@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Clock3, ExternalLink, Trash2 } from 'lucide-react'
+import { Clock3, Download, ExternalLink, Trash2 } from 'lucide-react'
 import { type MouseEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { deleteBuild, listBuilds } from '../api/builds'
+import { deleteBuild, getBuildArtifactUrl, listBuilds } from '../api/builds'
 import type { BuildTask } from '../types'
 import { cn, formatDate } from '../utils'
 
@@ -44,6 +44,12 @@ export default function TasksPage() {
     if (window.confirm(`删除任务 ${task.task_id}？`)) {
       deleteMutation.mutate(task.task_id)
     }
+  }
+
+  const downloadTaskArtifact = (event: MouseEvent<HTMLButtonElement>, task: BuildTask) => {
+    event.stopPropagation()
+    if (task.status !== 'completed' || !task.output_iso) return
+    window.open(getBuildArtifactUrl(task.task_id), '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -95,6 +101,16 @@ export default function TasksPage() {
                 <td className="px-4 py-3 text-[12px] text-gray-500">{formatDate(task.created_at)}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="inline-flex items-center justify-end gap-3">
+                    {task.status === 'completed' && task.output_iso && (
+                      <button
+                        type="button"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-blue-200 text-blue-700 hover:bg-blue-50"
+                        title="Download ISO"
+                        onClick={(event) => downloadTaskArtifact(event, task)}
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                    )}
                     <span className="inline-flex items-center gap-1 text-[12px] font-bold text-blue-700">
                       Details
                       <ExternalLink className="h-3.5 w-3.5" />

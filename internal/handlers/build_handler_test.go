@@ -131,6 +131,82 @@ func TestDeleteBuildAcceptsNumericID(t *testing.T) {
 	}
 }
 
+func TestDownloadBuildArtifactServesCompletedLocalISO(t *testing.T) {
+	localRoot := t.TempDir()
+	db, bucketID := newBuildHandlerLocalBucketTestDB(t, localRoot)
+	if err := db.AutoMigrate(&models.BuildTask{}); err != nil {
+		t.Fatalf("migrate build tasks: %v", err)
+	}
+
+	objectPath := "output/custom.iso"
+	writeBuildHandlerLocalObject(t, localRoot, objectPath, []byte("iso-content"))
+	task := models.BuildTask{
+		TaskID:          "task-download",
+		Status:          models.BuildTaskStatusCompleted,
+		StorageBucketID: bucketID,
+		OutputISO:       objectPath,
+		OutputISOSize:   int64(len("iso-content")),
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	app := fiber.New()
+	app.Get("/builds/:id/artifact", NewBuildHandler(db, nil, "external").DownloadArtifact)
+
+	req := httptest.NewRequest(http.MethodGet, "/builds/task-download/artifact", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("download request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "iso-content" {
+		t.Fatalf("unexpected artifact body %q", body)
+	}
+	if disposition := resp.Header.Get("Content-Disposition"); !strings.Contains(disposition, `filename="custom.iso"`) {
+		t.Fatalf("expected attachment filename, got %q", disposition)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.Contains(contentType, "application/x-iso9660-image") {
+		t.Fatalf("expected ISO content type, got %q", contentType)
+	}
+}
+
+func TestDownloadBuildArtifactRejectsIncompleteTask(t *testing.T) {
+	localRoot := t.TempDir()
+	db, bucketID := newBuildHandlerLocalBucketTestDB(t, localRoot)
+	if err := db.AutoMigrate(&models.BuildTask{}); err != nil {
+		t.Fatalf("migrate build tasks: %v", err)
+	}
+
+	task := models.BuildTask{
+		TaskID:          "task-running",
+		Status:          models.BuildTaskStatusRunning,
+		StorageBucketID: bucketID,
+		OutputISO:       "output/custom.iso",
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	app := fiber.New()
+	app.Get("/builds/:id/artifact", NewBuildHandler(db, nil, "external").DownloadArtifact)
+
+	req := httptest.NewRequest(http.MethodGet, "/builds/task-running/artifact", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("download request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusConflict {
+		t.Fatalf("expected status 409, got %d", resp.StatusCode)
+	}
+}
+
 func TestBuildPreflightLocalFilesReportsReadyAndInvalidInputs(t *testing.T) {
 	localRoot := t.TempDir()
 	buildWorkDir := t.TempDir()
