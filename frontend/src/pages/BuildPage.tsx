@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Check, ChevronRight, FileArchive, HardDrive, PackagePlus, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -10,6 +10,20 @@ import { cn } from '../utils'
 
 const esxiVersions = ['6.5', '6.7', '7.0', '8.0', '9.0']
 const stepLabels = ['源文件', '注入驱动', '下载校验', '确认启动']
+
+type DepotOption = {
+  key: string
+  bucket: {
+    id: number
+    name: string
+    is_default?: boolean
+  }
+  file: FileMetadata
+}
+
+function buildDepotOptionKey(bucketId: number, file: FileMetadata) {
+  return `${bucketId}:${file.id}:${file.path}`
+}
 
 function displayName(file?: FileMetadata) {
   if (!file) return '-'
@@ -98,16 +112,19 @@ export default function BuildPage() {
   const [preflightKey, setPreflightKey] = useState('')
 
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
+  const depotBuckets = bucketsQuery.data ?? []
+  const mixedDepotQueries = useQueries({
+    queries: depotBuckets.map((bucket) => ({
+      queryKey: ['build-depots', bucket.id, version],
+      queryFn: () => listDepots(bucket.id, version),
+      enabled: Boolean(bucket.id),
+    })),
+  })
   const selectedBucketId = useMemo(() => {
     if (typeof bucketId === 'number') return bucketId
     return bucketsQuery.data?.find((bucket) => bucket.is_default)?.id ?? bucketsQuery.data?.[0]?.id
   }, [bucketId, bucketsQuery.data])
 
-  const depotsQuery = useQuery({
-    queryKey: ['build-depots', selectedBucketId, version],
-    queryFn: () => listDepots(selectedBucketId as number, version),
-    enabled: Boolean(selectedBucketId),
-  })
   const driversQuery = useQuery({
     queryKey: ['build-drivers', selectedBucketId, version],
     queryFn: () => listDrivers(selectedBucketId as number, version),
@@ -118,9 +135,26 @@ export default function BuildPage() {
     () => bucketsQuery.data?.find((bucket) => bucket.id === selectedBucketId),
     [bucketsQuery.data, selectedBucketId]
   )
+  const mixedDepotOptions = useMemo<DepotOption[]>(
+    () =>
+      depotBuckets.flatMap((bucket, index) =>
+        (mixedDepotQueries[index]?.data ?? []).map((file) => ({
+          key: buildDepotOptionKey(bucket.id, file),
+          bucket,
+          file,
+        }))
+      ),
+    [depotBuckets, mixedDepotQueries]
+  )
+  const depotsLoading = bucketsQuery.isLoading || mixedDepotQueries.some((query) => query.isLoading)
+  const depotsError = mixedDepotQueries.find((query) => query.isError)?.error
+  const selectedDepotOption = useMemo(
+    () => mixedDepotOptions.find((option) => option.bucket.id === selectedBucketId && option.file.path === depotPath),
+    [depotPath, mixedDepotOptions, selectedBucketId]
+  )
   const selectedDepot = useMemo(
-    () => depotsQuery.data?.find((file) => file.path === depotPath),
-    [depotsQuery.data, depotPath]
+    () => selectedDepotOption?.file,
+    [selectedDepotOption]
   )
   const selectedDrivers = useMemo(
     () => (driversQuery.data ?? []).filter((file) => driverPaths.includes(file.path)),
@@ -180,20 +214,25 @@ export default function BuildPage() {
     setPreflightKey('')
   }
 
-  const changeBucket = (value: string) => {
-    setBucketId(value ? Number(value) : '')
-    setDepotPath('')
-    setDriverPaths([])
-    resetPreflight()
-    setStep(1)
-  }
-
   const changeVersion = (value: string) => {
     setVersion(value)
     setDepotPath('')
     setDriverPaths([])
     resetPreflight()
     setStep(1)
+  }
+
+  const handleDepotSelection = (value: string) => {
+    const option = mixedDepotOptions.find((item) => item.key === value)
+    if (!option) {
+      setDepotPath('')
+      resetPreflight()
+      return
+    }
+    setBucketId(option.bucket.id)
+    setDepotPath(option.file.path)
+    setDriverPaths([])
+    resetPreflight()
   }
 
   const toggleDriver = (value: string) => {
@@ -278,15 +317,19 @@ export default function BuildPage() {
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
               <div className="max-w-xl space-y-6">
                 <div className="space-y-2">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-600">存储节点</label>
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-600">混合存储节点</label>
+                  <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] text-blue-800">
+                    自动从所有存储节点识别 ESXi {version} Depot 包；选中 Depot 后会使用对应节点继续加载驱动和执行构建。
+                  </div>
                   <select
                     className="w-full rounded border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-600"
-                    value={selectedBucketId ?? ''}
-                    onChange={(e) => changeBucket(e.target.value)}
+                    value={selectedDepotOption?.key ?? ''}
+                    onChange={(e) => handleDepotSelection(e.target.value)}
                   >
-                    {(bucketsQuery.data ?? []).map((bucket) => (
-                      <option key={bucket.id} value={bucket.id}>
-                        {bucket.name}
+                    <option value="">选择 ESXi {version} Depot 文件</option>
+                    {mixedDepotOptions.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        [{option.bucket.name}] [{cacheBadge(option.file).label}] {displayName(option.file)} {versionTag(option.file) ? `(${versionTag(option.file)})` : ''}
                       </option>
                     ))}
                   </select>
@@ -311,27 +354,10 @@ export default function BuildPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-600">Depot 文件</label>
-                  <select
-                    className="w-full rounded border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-600"
-                    value={depotPath}
-                    onChange={(e) => {
-                      setDepotPath(e.target.value)
-                      resetPreflight()
-                    }}
-                  >
-                    <option value="">选择 ESXi {version} Depot 文件</option>
-                    {(depotsQuery.data ?? []).map((file) => (
-                      <option key={file.id} value={file.path}>
-                        [{cacheBadge(file).label}] {displayName(file)} {versionTag(file) ? `(${versionTag(file)})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {!depotsQuery.isLoading && (depotsQuery.data ?? []).length === 0 && (
-                    <div className="text-[12px] text-red-600">当前存储节点没有 ESXi {version} 对应的 Depot 文件。</div>
-                  )}
-                </div>
+                {!depotsLoading && mixedDepotOptions.length === 0 && (
+                  <div className="text-[12px] text-red-600">所有存储节点都没有 ESXi {version} 对应的 Depot 文件。</div>
+                )}
+                {depotsError && <div className="text-[12px] text-red-600">{String(depotsError)}</div>}
               </div>
 
               <div className="rounded border bg-gray-50 p-5">
@@ -352,6 +378,7 @@ export default function BuildPage() {
                   <div>
                     <div className="font-bold uppercase tracking-wider text-gray-400">Depot</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {selectedDepotOption?.bucket.name && <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{selectedDepotOption.bucket.name}</span>}
                       <span className="break-all font-mono text-gray-700">{displayName(selectedDepot)}</span>
                       {selectedDepot && <CacheTag file={selectedDepot} />}
                     </div>
