@@ -15,7 +15,7 @@ func TestAllInOneImageIncludesPowerShellBuildRuntime(t *testing.T) {
 	dockerfile := string(content)
 	requiredSnippets := []string{
 		"FROM mcr.microsoft.com/powershell:",
-		"ARG POWERCLI_VERSION=12.7.0",
+		"ARG POWERCLI_VERSION=12.7.0.20091289",
 		"Install-Module -Name VMware.PowerCLI -RequiredVersion $env:POWERCLI_VERSION",
 		"python3 -m pip install --no-cache-dir lxml psutil pyopenssl six",
 		"COPY scripts/ ./scripts/",

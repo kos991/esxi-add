@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server
 # Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
 FROM mcr.microsoft.com/powershell:7.2-ubuntu-22.04
 
-ARG POWERCLI_VERSION=12.7.0
+ARG POWERCLI_VERSION=12.7.0.20091289
 ENV POWERCLI_VERSION=${POWERCLI_VERSION}
 
 RUN apt-get update \
