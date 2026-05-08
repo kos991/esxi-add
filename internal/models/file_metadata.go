@@ -28,4 +28,7 @@ type FileMetadata struct {
 	Size              int64          `json:"size"`
 	ETag              string         `gorm:"column:etag" json:"etag"`
 	LastModified      *time.Time     `json:"last_modified"`
+	Cached            bool           `gorm:"-" json:"cached"`
+	CacheValid        bool           `gorm:"-" json:"cache_valid"`
+	CacheStatus       string         `gorm:"-" json:"cache_status"`
 }

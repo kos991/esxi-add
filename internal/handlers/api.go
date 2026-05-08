@@ -15,6 +15,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	healthHandler := NewHealthHandler(db)
 	bucketHandler := NewBucketHandler(db)
 	fileService := services.NewFileService(db, nil)
+	fileService.SetCacheRoot(cfg.Build.WorkDir)
 	fileHandler := NewFileHandler(fileService)
 
 	buildHandler := NewBuildHandler(db, taskClient, cfg.Build.Mode)

@@ -21,12 +21,17 @@ import (
 )
 
 type FileService struct {
-	db       *gorm.DB
-	s3Client *storage.S3Client
+	db        *gorm.DB
+	s3Client  *storage.S3Client
+	cacheRoot string
 }
 
 func NewFileService(db *gorm.DB, s3 *storage.S3Client) *FileService {
 	return &FileService{db: db, s3Client: s3}
+}
+
+func (s *FileService) SetCacheRoot(cacheRoot string) {
+	s.cacheRoot = cacheRoot
 }
 
 func (s *FileService) ListDepots(ctx context.Context, bucketID uint, esxiVersion ...string) ([]models.FileMetadata, error) {
@@ -41,6 +46,9 @@ func (s *FileService) ListDepots(ctx context.Context, bucketID uint, esxiVersion
 	err := query.
 		Order("path ASC").
 		Find(&files).Error
+	if err == nil {
+		err = s.applyCacheStatus(ctx, bucketID, files)
+	}
 	return files, err
 }
 
@@ -57,6 +65,9 @@ func (s *FileService) ListDrivers(ctx context.Context, bucketID uint, esxiVersio
 
 	var files []models.FileMetadata
 	err := query.Order("path ASC").Find(&files).Error
+	if err == nil {
+		err = s.applyCacheStatus(ctx, bucketID, files)
+	}
 	return files, err
 }
 
@@ -398,6 +409,43 @@ func (s *FileService) listObjects(ctx context.Context, bucket *models.StorageBuc
 	default:
 		return nil, fmt.Errorf("unsupported storage type: %s", bucket.Type)
 	}
+}
+
+func (s *FileService) applyCacheStatus(ctx context.Context, bucketID uint, files []models.FileMetadata) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	bucket, err := s.getBucket(ctx, bucketID)
+	if err != nil {
+		return err
+	}
+
+	if normalizeStorageType(bucket.Type) == models.StorageTypeLocal {
+		for i := range files {
+			files[i].Cached = true
+			files[i].CacheValid = true
+			files[i].CacheStatus = storage.CacheStatusCached
+		}
+		return nil
+	}
+
+	cacheRoot := strings.TrimSpace(s.cacheRoot)
+	if cacheRoot == "" {
+		cacheRoot = "./data/builds"
+	}
+	cacheManager := storage.NewCacheManager(filepath.Join(cacheRoot, "cache", fmt.Sprintf("bucket-%d", bucketID)), nil)
+	for i := range files {
+		objectInfo := minio.ObjectInfo{Key: files[i].Path, ETag: files[i].ETag, Size: files[i].Size}
+		status, err := cacheManager.Status(files[i].Path, objectInfo)
+		if err != nil {
+			return fmt.Errorf("read cache status for %s: %w", files[i].Path, err)
+		}
+		files[i].Cached = status.Cached
+		files[i].CacheValid = status.Valid
+		files[i].CacheStatus = status.Status
+	}
+	return nil
 }
 
 func buildObjectPath(fileType, esxiVersion, driverCategory, filename string) (string, error) {

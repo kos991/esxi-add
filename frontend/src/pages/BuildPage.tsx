@@ -29,6 +29,26 @@ function checksumText(file?: FileMetadata) {
   return `MD5: ${file?.md5 || '暂无'}`
 }
 
+function cacheBadge(file?: FileMetadata) {
+  switch (file?.cache_status) {
+    case 'cached':
+      return { label: '已下载', className: 'border-green-200 bg-green-50 text-green-700' }
+    case 'missing':
+      return { label: '未下载', className: 'border-gray-200 bg-gray-50 text-gray-600' }
+    case 'stale':
+      return { label: '需更新', className: 'border-orange-200 bg-orange-50 text-orange-700' }
+    case 'invalid':
+      return { label: '无效缓存', className: 'border-red-200 bg-red-50 text-red-700' }
+    default:
+      return { label: '未检查', className: 'border-gray-200 bg-white text-gray-500' }
+  }
+}
+
+function CacheTag({ file }: { file?: FileMetadata }) {
+  const badge = cacheBadge(file)
+  return <span className={cn('inline-flex rounded border px-1.5 py-0.5 text-[10px] font-bold', badge.className)}>{badge.label}</span>
+}
+
 export default function BuildPage() {
   const navigate = useNavigate()
   const [bucketId, setBucketId] = useState<number | ''>('')
@@ -209,7 +229,7 @@ export default function BuildPage() {
                     <option value="">选择 ESXi {version} Depot 文件</option>
                     {(depotsQuery.data ?? []).map((file) => (
                       <option key={file.id} value={file.path}>
-                        {displayName(file)} {versionTag(file) ? `(${versionTag(file)})` : ''}
+                        [{cacheBadge(file).label}] {displayName(file)} {versionTag(file) ? `(${versionTag(file)})` : ''}
                       </option>
                     ))}
                   </select>
@@ -236,7 +256,10 @@ export default function BuildPage() {
                   </div>
                   <div>
                     <div className="font-bold uppercase tracking-wider text-gray-400">Depot</div>
-                    <div className="mt-1 break-all font-mono text-gray-700">{displayName(selectedDepot)}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="break-all font-mono text-gray-700">{displayName(selectedDepot)}</span>
+                      {selectedDepot && <CacheTag file={selectedDepot} />}
+                    </div>
                     {selectedDepot && <div className="mt-1 break-all font-mono text-gray-500">{selectedDepot.path}</div>}
                   </div>
                 </div>
@@ -274,7 +297,10 @@ export default function BuildPage() {
                           onChange={() => toggleDriver(driver.path)}
                         />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-bold text-gray-950">{displayWithDescription(driver)}</span>
+                          <span className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="block truncate text-sm font-bold text-gray-950">{displayWithDescription(driver)}</span>
+                            <CacheTag file={driver} />
+                          </span>
                           <span className="mt-1 block break-all font-mono text-[12px] text-gray-600">{checksumText(driver)}</span>
                           <span className="mt-1 block break-all font-mono text-[11px] text-gray-400">{driver.path}</span>
                         </span>

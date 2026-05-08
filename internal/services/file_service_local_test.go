@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -380,6 +381,48 @@ func TestFileServiceListDriversFiltersByESXiVersion(t *testing.T) {
 	}
 }
 
+func TestFileServiceListDriversIncludesLocalCacheStatus(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := t.TempDir()
+	db, bucketID := newLocalFileServiceTestDB(t, root)
+	if err := db.Model(&models.StorageBucket{}).Where("id = ?", bucketID).Updates(map[string]any{
+		"type":        models.StorageTypeS3,
+		"endpoint":    "r2.example",
+		"bucket_name": "esxi-build",
+	}).Error; err != nil {
+		t.Fatalf("make test bucket s3: %v", err)
+	}
+	files := []models.FileMetadata{
+		{StorageBucketID: bucketID, Path: "driver/6x/net-cached.zip", Type: models.FileTypeDriver, ESXiVersion: "6x", DriverCategory: "network", ETag: "cached-etag"},
+		{StorageBucketID: bucketID, Path: "driver/6x/net-missing.zip", Type: models.FileTypeDriver, ESXiVersion: "6x", DriverCategory: "network", ETag: "missing-etag"},
+	}
+	if err := db.Create(&files).Error; err != nil {
+		t.Fatalf("create driver metadata: %v", err)
+	}
+	writeCacheFileForServiceTest(t, cacheRoot, bucketID, "driver/6x/net-cached.zip", []byte("PK\x03\x04zip"), "cached-etag")
+
+	service := NewFileService(db, nil)
+	service.SetCacheRoot(cacheRoot)
+	got, err := service.ListDrivers(context.Background(), bucketID, "6.7", "network")
+	if err != nil {
+		t.Fatalf("list drivers: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 drivers, got %+v", got)
+	}
+
+	statusByPath := map[string]string{}
+	for _, file := range got {
+		statusByPath[file.Path] = file.CacheStatus
+	}
+	if statusByPath["driver/6x/net-cached.zip"] != "cached" {
+		t.Fatalf("expected cached status, got %+v", got)
+	}
+	if statusByPath["driver/6x/net-missing.zip"] != "missing" {
+		t.Fatalf("expected missing status, got %+v", got)
+	}
+}
+
 func TestFileServiceListDriversAcceptsESXiVersionAliases(t *testing.T) {
 	root := t.TempDir()
 	db, bucketID := newLocalFileServiceTestDB(t, root)
@@ -430,5 +473,19 @@ func assertFileMetadata(t *testing.T, db *gorm.DB, bucketID uint, objectPath, fi
 	}
 	if file.Type != fileType || file.ESXiVersion != esxiVersion || file.DriverCategory != driverCategory {
 		t.Fatalf("unexpected metadata for %s: %+v", objectPath, file)
+	}
+}
+
+func writeCacheFileForServiceTest(t *testing.T, cacheRoot string, bucketID uint, objectPath string, content []byte, etag string) {
+	t.Helper()
+	localPath := filepath.Join(cacheRoot, "cache", "bucket-"+strconv.FormatUint(uint64(bucketID), 10), filepath.FromSlash(objectPath))
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		t.Fatalf("mkdir cache path: %v", err)
+	}
+	if err := os.WriteFile(localPath, content, 0o644); err != nil {
+		t.Fatalf("write cache file: %v", err)
+	}
+	if err := os.WriteFile(localPath+".etag", []byte(etag), 0o644); err != nil {
+		t.Fatalf("write cache etag: %v", err)
 	}
 }

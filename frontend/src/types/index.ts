@@ -34,6 +34,9 @@ export interface FileMetadata {
   size?: number
   etag?: string
   last_modified?: string
+  cached?: boolean
+  cache_valid?: boolean
+  cache_status?: 'cached' | 'missing' | 'stale' | 'invalid'
 }
 
 export interface BuildTask {
