@@ -117,20 +117,6 @@ func TestComposePullsPublishedSingleImageByDefault(t *testing.T) {
 	}
 }
 
-func TestBuildOverrideKeepsLocalImageBuildAvailable(t *testing.T) {
-	override := readTextFile(t, "../docker-compose.build.yml")
-
-	for _, snippet := range []string{
-		"build:",
-		"context: .",
-		"dockerfile: Dockerfile",
-	} {
-		if !strings.Contains(override, snippet) {
-			t.Fatalf("docker-compose.build.yml must contain %q", snippet)
-		}
-	}
-}
-
 func TestDockerWorkflowPublishesGHCRImage(t *testing.T) {
 	workflow := readTextFile(t, "../.github/workflows/docker.yml")
 

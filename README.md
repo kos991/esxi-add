@@ -12,7 +12,6 @@ driver bundles, storage nodes, and custom ISO build tasks.
 - Mixed-storage Depot discovery in the build wizard.
 - Preflight download and ZIP/VIB validation before builds start.
 - PowerShell/PowerCLI build execution inside the all-in-one container.
-- Optional external PowerCLI worker mode.
 - Task history, progress, logs, and ISO download links.
 
 ## Quick Start
@@ -38,8 +37,6 @@ APP_IMAGE=ghcr.io/kos991/esxi-add:v0.2.0
 
 - [Usage Guide](docs/usage.md)
 - [Deployment Guide](docs/deployment.md)
-- [Development Guide](docs/development.md)
-- [Release Guide](docs/release.md)
 - [Changelog](CHANGELOG.md)
 
 ## Project Layout

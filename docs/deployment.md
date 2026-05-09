@@ -48,39 +48,3 @@ curl http://127.0.0.1:8080/health
 docker-compose pull
 docker-compose up -d --force-recreate
 ```
-
-## Local Image Build
-
-For local development builds, use the override file:
-
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-```
-
-## External Build Worker
-
-The default Docker deployment runs builds inside the all-in-one container:
-
-```env
-BUILD_MODE=local
-```
-
-Use external mode only when PowerCLI should run outside Docker:
-
-```env
-BUILD_MODE=external
-WORKER_TOKEN=change-this-worker-token
-```
-
-Run the worker on a machine with PowerShell and VMware PowerCLI ImageBuilder:
-
-```powershell
-pwsh -File .\scripts\external-build-worker.ps1 `
-  -ApiBaseUrl http://192.168.0.142:8080 `
-  -WorkerToken change-this-worker-token `
-  -WorkDir D:\esxi-worker
-```
-
-The worker claims pending build tasks, downloads Depot and driver files through
-the API, runs `scripts/build-esxi-iso.ps1`, and uploads the generated ISO back
-to the configured storage bucket.
