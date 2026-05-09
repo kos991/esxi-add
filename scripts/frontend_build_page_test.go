@@ -31,18 +31,29 @@ func TestFrontendBuildPageFormatsDepotOptionsCompactly(t *testing.T) {
 
 	for _, snippet := range []string{
 		"function depotDisplayName",
-		"function depotCacheIcon",
 		"function depotOptionLabel",
 		"legacyDepotMatch",
 		".match(/^ESXi(?:650|670)-?(\\d+)/i)",
 		"return legacyDepotMatch[1]",
 		".replace(/^VMware-ESXi-/i, '')",
 		".replace(/[-_]?depot$/i, '')",
+		"cacheBadge(option.file).label",
 		"depotOptionLabel(option)",
 		"depotDisplayName(selectedDepot)",
 	} {
 		if !strings.Contains(buildPage, snippet) {
 			t.Fatalf("BuildPage must contain %q for compact Depot option formatting", snippet)
+		}
+	}
+
+	for _, snippet := range []string{
+		"function depotCacheIcon",
+		"▣",
+		"○",
+		"↻",
+	} {
+		if strings.Contains(buildPage, snippet) {
+			t.Fatalf("BuildPage should avoid decorative Depot option icon %q", snippet)
 		}
 	}
 }

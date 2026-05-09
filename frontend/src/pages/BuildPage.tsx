@@ -40,23 +40,8 @@ function depotDisplayName(file?: FileMetadata) {
     .replace(/[-_]?depot$/i, '')
 }
 
-function depotCacheIcon(file?: FileMetadata) {
-  switch (file?.cache_status) {
-    case 'cached':
-      return '✓'
-    case 'missing':
-      return '○'
-    case 'stale':
-      return '↻'
-    case 'invalid':
-      return '!'
-    default:
-      return '?'
-  }
-}
-
 function depotOptionLabel(option: DepotOption) {
-  return `▣${option.bucket.name} ${depotCacheIcon(option.file)} ${depotDisplayName(option.file)}`
+  return `[${option.bucket.name}] [${cacheBadge(option.file).label}] ${depotDisplayName(option.file)}`
 }
 
 function versionTag(file?: FileMetadata) {
