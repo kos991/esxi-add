@@ -124,10 +124,22 @@ func TestDockerWorkflowPublishesGHCRImage(t *testing.T) {
 		"ghcr.io/kos991/esxi-add",
 		"docker/login-action",
 		"docker/build-push-action",
-		"push: ${{ github.event_name == 'push' }}",
+		`tags: ["v*"]`,
+		"push: true",
 	} {
 		if !strings.Contains(workflow, snippet) {
 			t.Fatalf("docker workflow must contain %q", snippet)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"pull_request:",
+		`branches: ["main"]`,
+		"go test",
+		"npm run build",
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Fatalf("docker workflow must not contain %q because Actions should only publish tagged releases", forbidden)
 		}
 	}
 }
