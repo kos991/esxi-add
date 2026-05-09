@@ -1,6 +1,6 @@
 # ESXi ISO Builder
 
-Current release candidate: `v0.2.0`
+Current release: `v0.2.0`
 
 Custom ESXi ISO build platform with:
 
@@ -66,6 +66,21 @@ npm run dev
 
 ## Docker
 
+### Quick Start
+
+Create an `.env` file or export these variables before starting the service:
+
+```env
+APP_IMAGE=ghcr.io/kos991/esxi-add:v0.2.0
+APP_PORT=8080
+STORAGE_TYPE=local
+STORAGE_PATH=/data/storage
+CACHE_DIR=/data/builds
+BUILD_MODE=local
+```
+
+Start the all-in-one container:
+
 ```bash
 docker-compose pull
 docker-compose up -d
@@ -81,6 +96,26 @@ For local image development, build with the override file:
 
 ```bash
 docker-compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+### Basic Usage
+
+1. Open `http://localhost:8080`.
+2. Go to **Storage & Assets** and confirm the default local storage node, or add an S3-compatible/R2 node.
+3. Upload Depot files and driver bundles, or click refresh after placing files in the configured storage path.
+4. Open **Custom Build**, select the target ESXi version, then choose a Depot from the mixed storage node list.
+5. Select optional drivers and run the download validation step. The build button is enabled only after validation succeeds.
+6. Start the ISO build and watch logs/progress from the task detail page.
+7. After completion, download the ISO from the local API button, or use the remote public URL button when the storage node has a public domain configured.
+
+Recommended storage layout for local files:
+
+```text
+/data/storage/
+  depot/6x/ESXi670-202210001.zip
+  depot/8x/VMware-ESXi-8.0U3w-24784741-depot.zip
+  driver/8x/network/net-driver-offline_bundle.zip
+  output/custom-esxi.iso
 ```
 
 ## External Build Worker
