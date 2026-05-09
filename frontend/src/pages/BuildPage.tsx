@@ -30,6 +30,35 @@ function displayName(file?: FileMetadata) {
   return file.driver_name || file.path.split('/').pop() || file.path
 }
 
+function depotDisplayName(file?: FileMetadata) {
+  if (!file) return '-'
+  const baseName = (file.path.split('/').pop() || file.path).replace(/\.[^.]+$/, '')
+  const legacyDepotMatch = baseName.match(/^ESXi(?:650|670)-?(\d+)/i)
+  if (legacyDepotMatch) return legacyDepotMatch[1]
+  return baseName
+    .replace(/^VMware-ESXi-/i, '')
+    .replace(/[-_]?depot$/i, '')
+}
+
+function depotCacheIcon(file?: FileMetadata) {
+  switch (file?.cache_status) {
+    case 'cached':
+      return '✓'
+    case 'missing':
+      return '○'
+    case 'stale':
+      return '↻'
+    case 'invalid':
+      return '!'
+    default:
+      return '?'
+  }
+}
+
+function depotOptionLabel(option: DepotOption) {
+  return `▣${option.bucket.name} ${depotCacheIcon(option.file)} ${depotDisplayName(option.file)}`
+}
+
 function versionTag(file?: FileMetadata) {
   return file?.driver_version || file?.esxi_version || ''
 }
@@ -329,7 +358,7 @@ export default function BuildPage() {
                     <option value="">选择 ESXi {version} Depot 文件</option>
                     {mixedDepotOptions.map((option) => (
                       <option key={option.key} value={option.key}>
-                        [{option.bucket.name}] [{cacheBadge(option.file).label}] {displayName(option.file)} {versionTag(option.file) ? `(${versionTag(option.file)})` : ''}
+                        {depotOptionLabel(option)}
                       </option>
                     ))}
                   </select>
@@ -379,7 +408,7 @@ export default function BuildPage() {
                     <div className="font-bold uppercase tracking-wider text-gray-400">Depot</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       {selectedDepotOption?.bucket.name && <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{selectedDepotOption.bucket.name}</span>}
-                      <span className="break-all font-mono text-gray-700">{displayName(selectedDepot)}</span>
+                      <span className="break-all font-mono text-gray-700">{depotDisplayName(selectedDepot)}</span>
                       {selectedDepot && <CacheTag file={selectedDepot} />}
                     </div>
                     {selectedDepot && <div className="mt-1 break-all font-mono text-gray-500">{selectedDepot.path}</div>}
@@ -534,7 +563,7 @@ export default function BuildPage() {
                   <div className="space-y-3 text-sm">
                     <SummaryRow label="存储节点" value={selectedBucket?.name ?? '-'} />
                     <SummaryRow label="基础版本" value={`ESXi ${version}`} />
-                    <SummaryRow label="Depot" value={selectedDepot ? `${displayName(selectedDepot)} (${versionTag(selectedDepot)})` : '-'} mono />
+                    <SummaryRow label="Depot" value={selectedDepot ? `${selectedDepotOption?.bucket.name ?? '-'} / ${depotDisplayName(selectedDepot)}` : '-'} mono />
                     <SummaryRow label="注入驱动" value={`已选择 ${driverPaths.length} 个`} />
                     <SummaryRow label="下载校验" value={preflightReady ? '已通过' : '未通过'} />
                     <SummaryRow label="ISO 名称" value={customISOName || '使用后端默认名称'} mono />

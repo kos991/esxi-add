@@ -17,11 +17,32 @@ func TestFrontendBuildPageUsesMixedStorageDepotSelection(t *testing.T) {
 		"自动从所有存储节点识别",
 		"listDepots(bucket.id, version)",
 		"setBucketId(option.bucket.id)",
-		"[{option.bucket.name}]",
+		"depotOptionLabel(option)",
 		"selectedDepotOption?.bucket.name",
 	} {
 		if !strings.Contains(buildPage, snippet) {
 			t.Fatalf("BuildPage must contain %q for mixed-storage depot selection", snippet)
+		}
+	}
+}
+
+func TestFrontendBuildPageFormatsDepotOptionsCompactly(t *testing.T) {
+	buildPage := readTextFile(t, "../frontend/src/pages/BuildPage.tsx")
+
+	for _, snippet := range []string{
+		"function depotDisplayName",
+		"function depotCacheIcon",
+		"function depotOptionLabel",
+		"legacyDepotMatch",
+		".match(/^ESXi(?:650|670)-?(\\d+)/i)",
+		"return legacyDepotMatch[1]",
+		".replace(/^VMware-ESXi-/i, '')",
+		".replace(/[-_]?depot$/i, '')",
+		"depotOptionLabel(option)",
+		"depotDisplayName(selectedDepot)",
+	} {
+		if !strings.Contains(buildPage, snippet) {
+			t.Fatalf("BuildPage must contain %q for compact Depot option formatting", snippet)
 		}
 	}
 }
