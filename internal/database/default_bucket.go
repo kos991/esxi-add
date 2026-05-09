@@ -56,8 +56,14 @@ func EnsureDefaultStorageBucket(db *gorm.DB, cfg *config.Config) error {
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.StorageBucket{}).Where("1 = 1").Update("is_default", false).Error; err != nil {
+		var existingDefaultCount int64
+		if err := tx.Model(&models.StorageBucket{}).Where("is_default = ?", true).Count(&existingDefaultCount).Error; err != nil {
 			return err
+		}
+		if existingDefaultCount == 0 {
+			if err := tx.Model(&models.StorageBucket{}).Where("1 = 1").Update("is_default", false).Error; err != nil {
+				return err
+			}
 		}
 
 		var existing models.StorageBucket
@@ -72,13 +78,14 @@ func EnsureDefaultStorageBucket(db *gorm.DB, cfg *config.Config) error {
 			existing.UseSSL = bucket.UseSSL
 			existing.PublicDomain = bucket.PublicDomain
 			existing.LocalPath = bucket.LocalPath
-			existing.IsDefault = true
+			existing.IsDefault = existing.IsDefault || existingDefaultCount == 0
 			return tx.Save(&existing).Error
 		}
 		if err != gorm.ErrRecordNotFound {
 			return err
 		}
 
+		bucket.IsDefault = existingDefaultCount == 0
 		return tx.Create(&bucket).Error
 	})
 }

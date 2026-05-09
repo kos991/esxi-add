@@ -1,5 +1,7 @@
 # ESXi ISO Builder
 
+Current release candidate: `v0.2.0`
+
 Custom ESXi ISO build platform with:
 
 - Go backend
@@ -121,6 +123,12 @@ GitHub Actions validates:
 - frontend dependency install
 - frontend production build
 - single Docker image build and GHCR publish on `main`
+
+## Release
+
+The prepared release version is stored in `VERSION` and mirrored in
+`frontend/package.json`. Push a `v*` tag, for example `v0.2.0`, to publish a
+matching GHCR image tag in addition to `latest`, `main`, and the commit SHA.
 
 ## Environment
 

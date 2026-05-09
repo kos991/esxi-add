@@ -113,9 +113,6 @@ func (h *BucketHandler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("invalid request body"))
 	}
-	if err := validateBucketRequest(c.UserContext(), &req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
-	}
 
 	var bucket models.StorageBucket
 	if err := h.db.WithContext(c.UserContext()).First(&bucket, id).Error; err != nil {
@@ -123,6 +120,11 @@ func (h *BucketHandler) Update(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(utils.ErrorResponse("bucket not found"))
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+
+	mergeBucketUpdateRequest(&req, bucket)
+	if err := validateBucketRequest(c.UserContext(), &req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
 	}
 
 	err = h.db.WithContext(c.UserContext()).Transaction(func(tx *gorm.DB) error {
@@ -227,7 +229,17 @@ func buildS3Config(req bucketRequest) *storage.S3Config {
 
 func bucketForResponse(bucket models.StorageBucket) models.StorageBucket {
 	bucket.PublicDomain = storage.NormalizePublicDomain(bucket.PublicDomain)
+	bucket.SecretKey = ""
 	return bucket
+}
+
+func mergeBucketUpdateRequest(req *bucketRequest, existing models.StorageBucket) {
+	if req == nil {
+		return
+	}
+	if normalizeStorageType(req.Type) == models.StorageTypeS3 && strings.TrimSpace(req.SecretKey) == "" {
+		req.SecretKey = existing.SecretKey
+	}
 }
 
 func normalizeStorageType(value string) string {

@@ -1,7 +1,8 @@
 .git
 .tmp
-*.md
 bin/
 data/
+*.db
+*.md
 frontend/node_modules/
 frontend/dist/

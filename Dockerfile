@@ -18,6 +18,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server
 # Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
 FROM vmware/powerclicore:latest
 
+ARG APP_VERSION=dev
+LABEL org.opencontainers.image.title="ESXi ISO Builder" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.source="https://github.com/kos991/esxi-add"
+
 RUN if command -v apt-get >/dev/null 2>&1; then \
         apt-get update \
         && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \

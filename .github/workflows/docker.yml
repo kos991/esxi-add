@@ -3,6 +3,7 @@ name: docker
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -31,7 +32,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: |
+            APP_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
           push: ${{ github.event_name == 'push' }}
           tags: |
             ghcr.io/kos991/esxi-add:latest
             ghcr.io/kos991/esxi-add:${{ github.sha }}
+            ghcr.io/kos991/esxi-add:${{ github.ref_type == 'tag' && github.ref_name || 'main' }}

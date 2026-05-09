@@ -150,6 +150,37 @@ func TestListBucketsNormalizesBarePublicDomain(t *testing.T) {
 	}
 }
 
+func TestBucketResponseRedactsSecretKey(t *testing.T) {
+	bucket := bucketForResponse(models.StorageBucket{
+		Name:      "R2",
+		Type:      models.StorageTypeS3,
+		SecretKey: "super-secret",
+	})
+
+	if bucket.SecretKey != "" {
+		t.Fatalf("bucket response must redact secret_key, got %q", bucket.SecretKey)
+	}
+}
+
+func TestMergeBucketUpdateRequestKeepsExistingSecretWhenBlank(t *testing.T) {
+	req := bucketRequest{
+		Name:       "R2",
+		Type:       models.StorageTypeS3,
+		Endpoint:   "https://r2.example",
+		AccessKey:  "access",
+		SecretKey:  "",
+		BucketName: "esxi-build",
+		UseSSL:     true,
+	}
+	existing := models.StorageBucket{SecretKey: "stored-secret"}
+
+	mergeBucketUpdateRequest(&req, existing)
+
+	if req.SecretKey != "stored-secret" {
+		t.Fatalf("expected blank update secret to preserve existing secret, got %q", req.SecretKey)
+	}
+}
+
 func jsonQuote(t *testing.T, value string) string {
 	t.Helper()
 	raw, err := json.Marshal(value)

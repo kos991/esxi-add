@@ -18,7 +18,7 @@ deps:
 	go mod tidy
 
 docker-build:
-	docker-compose build
+	docker-compose -f docker-compose.yml -f docker-compose.build.yml build
 
 docker-up:
 	docker-compose up -d
