@@ -1,6 +1,10 @@
 bin/
 data/
 *.db
+*.iso
+.chrome-debug/
+.claude/
+docs/pencil-import/
 frontend/node_modules/
 frontend/dist/
 frontend/src/.umi/

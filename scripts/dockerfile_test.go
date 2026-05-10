@@ -126,7 +126,7 @@ func TestDockerWorkflowValidatesPublishesAndDeploysGHCRImage(t *testing.T) {
 		`tags: ["v*"]`,
 		"npm run test",
 		"npm run build",
-		"go test ./...",
+		"go test ./cmd/... ./internal/... ./scripts",
 		"ghcr.io/kos991/esxi-add",
 		"docker/login-action",
 		"docker/build-push-action",
@@ -137,6 +137,8 @@ func TestDockerWorkflowValidatesPublishesAndDeploysGHCRImage(t *testing.T) {
 		"192.168.0.142",
 		"docker compose pull",
 		"docker compose up -d",
+		"docker-compose pull",
+		"docker-compose up -d",
 	} {
 		if !strings.Contains(workflow, snippet) {
 			t.Fatalf("docker workflow must contain %q", snippet)

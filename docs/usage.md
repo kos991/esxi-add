@@ -1,23 +1,19 @@
-# Usage Guide
+# 使用说明
 
-## Basic Workflow
+## 基本流程
 
-1. Open the web UI at `http://localhost:8080`.
-2. Go to **Storage & Assets**.
-3. Confirm the default local storage node, or add an S3-compatible/R2 node.
-4. Upload ESXi Depot files and driver bundles, or place files in the configured storage path and click refresh.
-5. Open **Custom Build**.
-6. Select the target ESXi version.
-7. Choose a Depot from the mixed storage node list.
-8. Select optional drivers.
-9. Run the download validation step.
-10. Start the ISO build after validation succeeds.
-11. Open the task detail page to watch progress and logs.
-12. Download the completed ISO from the local API button, or use the remote public URL button when a public domain is configured on the storage node.
+1. 打开 Web 页面：`http://服务器地址:8080`。
+2. 进入“存储挂载”，确认默认本地存储可用，或新增 S3/R2 存储节点。
+3. 进入“文件库”，上传 ESXi Depot、驱动包，或把文件放入挂载目录后刷新。
+4. 进入“自定义构建”，选择 ESXi 版本、Depot 和需要注入的驱动。
+5. 先执行构建前校验，确认文件能下载并通过 ZIP/VIB 检查。
+6. 校验通过后启动构建。
+7. 进入“任务与实时日志”，查看构建进度和自动滚动日志。
+8. 构建完成后，从任务页面下载生成的 ISO。
 
-## Local Storage Layout
+## 本地存储目录
 
-Recommended layout under the configured storage path:
+默认容器内数据目录是 `/data`，本地文件建议按类型和版本分层：
 
 ```text
 /data/storage/
@@ -27,34 +23,41 @@ Recommended layout under the configured storage path:
   output/custom-esxi.iso
 ```
 
-Supported aliases include both version directories such as `6.5`, `6.7`, `7.0`,
-`8.0`, `9.0`, and legacy families such as `6x`, `7x`, `8x`, `9x`.
+版本目录支持 `6.5`、`6.7`、`7.0`、`8.0`、`9.0`，也支持 `6x`、`7x`、`8x`、`9x`。
 
-## Depot Selection
+## Depot 和驱动选择
 
-The build wizard discovers Depot files from all configured storage nodes for
-the selected ESXi version. After selecting a Depot, the wizard uses that same
-storage node for driver selection, preflight validation, and build output.
+构建页面会按所选 ESXi 版本扫描所有可用存储节点。选择 Depot 后，驱动列表、预检下载和构建输出会沿用同一个存储节点，避免跨存储混用导致文件路径不一致。
 
-Depot labels are shortened for scanning:
+Depot 标签会被压缩成便于扫描的格式：
 
 ```text
-[NodeName] [Downloaded] 202210001
-[NodeName] [Downloaded] 8.0U3w-24784741
+[本地存储] [已下载] 202210001
+[R2存储] [远程] 8.0U3w-24784741
 ```
 
-## Download Validation
+## 构建前校验
 
-Before a build starts, the preflight step downloads the selected Depot and
-drivers into local cache and validates file headers. Invalid cached objects,
-HTML error pages, and incomplete downloads are rejected before PowerCLI runs.
+构建前校验会把 Depot 和驱动下载到本地缓存，并检查文件头。常见失败原因：
 
-## ISO Downloads
+- 远程 URL 返回 HTML 错误页。
+- 文件未上传完整。
+- Depot 或驱动包格式不正确。
+- 存储节点没有访问权限。
 
-Completed task pages expose two download paths:
+校验失败时不要直接构建，先重新上传文件或修正存储节点配置。
 
-- **Local Download**: downloads through the backend API.
-- **Remote Download**: uses the storage node public domain plus the ISO object path.
+## ISO 下载
 
-Remote Download is available only when the selected storage node has a public
-domain configured.
+任务完成后提供两类下载：
+
+- 本地下载：通过后端 API 下载，适合内网使用。
+- 远程下载：使用存储节点公开域名拼接 ISO 对象路径，只有配置了公开域名时才显示。
+
+## 页面说明
+
+- 总览：展示本机 CPU、内存、网络和构建概况。
+- 存储挂载：管理本地存储、S3、R2 节点。
+- 文件库：查看、上传、刷新 Depot 和驱动文件。
+- 自定义构建：按步骤选择版本、Depot、驱动并启动构建。
+- 任务与实时日志：合并任务列表、任务详情和实时日志。
