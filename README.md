@@ -27,7 +27,4 @@ http://localhost:8080
 ## 截图
 
 ![总览](docs/screenshots/overview.png)
-![存储挂载](docs/screenshots/buckets.png)
-![文件库](docs/screenshots/files.png)
-![自定义构建](docs/screenshots/build.png)
 ![任务与日志](docs/screenshots/tasks.png)
