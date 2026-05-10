@@ -3,3 +3,6 @@ data/
 *.db
 frontend/node_modules/
 frontend/dist/
+frontend/src/.umi/
+frontend/src/.umi-production/
+.superpowers/

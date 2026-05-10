@@ -54,7 +54,7 @@ func (s buildStorage) Upload(ctx context.Context, objectPath string, reader io.R
 	return s.uploader.Upload(ctx, objectPath, reader, size, contentType)
 }
 
-func NewBuildTaskHandler(db *gorm.DB, executor *builder.PowerShellExecutor, _ *storage.CacheManager, _ *storage.S3Client, workDir string, wsManager *ws.Manager) *BuildTaskHandler {
+func NewBuildTaskHandler(db *gorm.DB, executor *builder.PowerShellExecutor, workDir string, wsManager *ws.Manager) *BuildTaskHandler {
 	return &BuildTaskHandler{
 		db:        db,
 		executor:  executor,

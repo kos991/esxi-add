@@ -22,7 +22,6 @@ import (
 	"github.com/esxi-builder/esxi-iso-builder/internal/handlers"
 	"github.com/esxi-builder/esxi-iso-builder/internal/middleware"
 	"github.com/esxi-builder/esxi-iso-builder/internal/queue"
-	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 	"github.com/esxi-builder/esxi-iso-builder/internal/utils"
 	appws "github.com/esxi-builder/esxi-iso-builder/internal/websocket"
 )
@@ -77,29 +76,6 @@ func main() {
 
 	executor := builder.NewPowerShellExecutor(cfg.Build.PowerShellPath, cfg.Build.ScriptPath)
 
-	var s3Client *storage.S3Client
-	if cfg.Storage.S3.Endpoint != "" && cfg.Storage.S3.BucketName != "" {
-		client, err := storage.NewS3Client(&storage.S3Config{
-			Endpoint:        cfg.Storage.S3.Endpoint,
-			AccessKeyID:     cfg.Storage.S3.AccessKey,
-			SecretAccessKey: cfg.Storage.S3.SecretKey,
-			BucketName:      cfg.Storage.S3.BucketName,
-			Region:          cfg.Storage.S3.Region,
-			UseSSL:          cfg.Storage.S3.UseSSL,
-			PublicDomain:    cfg.Storage.S3.PublicDomain,
-		})
-		if err != nil {
-			utils.Logger.Warn("failed to initialize default s3 client; bucket-specific clients will be used", zap.Error(err))
-		} else {
-			s3Client = client
-		}
-	}
-
-	var cacheManager *storage.CacheManager
-	if s3Client != nil {
-		cacheManager = storage.NewCacheManager(filepath.Join(cfg.Build.WorkDir, "cache"), s3Client)
-	}
-
 	wsManager := appws.NewManager()
 
 	if strings.EqualFold(strings.TrimSpace(cfg.Build.Mode), "external") {
@@ -113,7 +89,7 @@ func main() {
 			Concurrency:   cfg.Queue.Concurrency,
 		})
 
-		buildTaskHandler := queue.NewBuildTaskHandler(db, executor, cacheManager, s3Client, cfg.Build.WorkDir, wsManager)
+		buildTaskHandler := queue.NewBuildTaskHandler(db, executor, cfg.Build.WorkDir, wsManager)
 
 		mux := asynq.NewServeMux()
 		mux.HandleFunc(queue.TypeBuildISO, buildTaskHandler.HandleBuildISO)

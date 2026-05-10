@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export function useWebSocket(taskId: string | null) {
   const [logs, setLogs] = useState<string[]>([])
   const [progress, setProgress] = useState(0)
-  const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
     setLogs([])
@@ -12,7 +11,6 @@ export function useWebSocket(taskId: string | null) {
 
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${protocol}://${location.host}/ws/builds/${taskId}`)
-    wsRef.current = ws
 
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data)
@@ -24,7 +22,7 @@ export function useWebSocket(taskId: string | null) {
       else if (msg.type === 'progress') setProgress(Number(pct) || 0)
     }
 
-    return () => { ws.close(); wsRef.current = null }
+    return () => { ws.close() }
   }, [taskId])
 
   return { logs, progress }

@@ -1,219 +1,94 @@
+import { CheckCircleOutlined, CloudDownloadOutlined, FileZipOutlined, PlayCircleOutlined, ToolOutlined } from '@ant-design/icons'
+import { PageContainer, ProCard } from '@ant-design/pro-components'
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, Check, ChevronRight, FileArchive, HardDrive, PackagePlus, RefreshCw, ShieldCheck } from 'lucide-react'
+import { Alert, Button, Form, Input, Progress, Select, Space, Steps, Tag, Typography, message } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { listBuckets } from '../api/buckets'
 import { createBuild, getBuildPreflight, startBuildPreflight } from '../api/builds'
 import { listDepots, listDrivers } from '../api/files'
-import type { BuildPreflightFile, FileMetadata } from '../types'
-import { cn } from '../utils'
-
-const esxiVersions = ['6.5', '6.7', '7.0', '8.0', '9.0']
-const stepLabels = ['源文件', '注入驱动', '下载校验', '确认启动']
+import type { FileMetadata } from '../types'
+import { assetTitle, cacheStatusColor, cacheStatusText, esxiVersions, fileName } from './pageUtils'
 
 type DepotOption = {
   key: string
-  bucket: {
-    id: number
-    name: string
-    is_default?: boolean
-  }
+  bucketId: number
+  bucketName: string
   file: FileMetadata
 }
 
-function buildDepotOptionKey(bucketId: number, file: FileMetadata) {
+function depotKey(bucketId: number, file: FileMetadata) {
   return `${bucketId}:${file.id}:${file.path}`
 }
 
-function displayName(file?: FileMetadata) {
-  if (!file) return '-'
-  return file.driver_name || file.path.split('/').pop() || file.path
-}
-
-function depotDisplayName(file?: FileMetadata) {
-  if (!file) return '-'
-  const baseName = (file.path.split('/').pop() || file.path).replace(/\.[^.]+$/, '')
-  const legacyDepotMatch = baseName.match(/^ESXi(?:650|670)-?(\d+)/i)
-  if (legacyDepotMatch) return legacyDepotMatch[1]
-  return baseName
-    .replace(/^VMware-ESXi-/i, '')
-    .replace(/[-_]?depot$/i, '')
-}
-
-function depotOptionLabel(option: DepotOption) {
-  return `[${option.bucket.name}] [${cacheBadge(option.file).label}] ${depotDisplayName(option.file)}`
-}
-
-function versionTag(file?: FileMetadata) {
-  return file?.driver_version || file?.esxi_version || ''
-}
-
-function displayWithDescription(file?: FileMetadata) {
-  const name = displayName(file)
-  return file?.driver_description ? `${name}(${file.driver_description})` : name
-}
-
-function checksumText(file?: FileMetadata) {
-  return `MD5: ${file?.md5 || '暂无'}`
-}
-
-function cacheBadge(file?: FileMetadata) {
-  switch (file?.cache_status) {
-    case 'cached':
-      return { label: '已下载', className: 'border-green-200 bg-green-50 text-green-700' }
-    case 'missing':
-      return { label: '未下载', className: 'border-gray-200 bg-gray-50 text-gray-600' }
-    case 'stale':
-      return { label: '需更新', className: 'border-orange-200 bg-orange-50 text-orange-700' }
-    case 'invalid':
-      return { label: '无效缓存', className: 'border-red-200 bg-red-50 text-red-700' }
-    default:
-      return { label: '未检查', className: 'border-gray-200 bg-white text-gray-500' }
-  }
-}
-
-function CacheTag({ file }: { file?: FileMetadata }) {
-  const badge = cacheBadge(file)
-  return <span className={cn('inline-flex rounded border px-1.5 py-0.5 text-[10px] font-bold', badge.className)}>{badge.label}</span>
-}
-
-function preflightStatusText(file: BuildPreflightFile) {
-  switch (file.status) {
-    case 'pending':
-      return '等待处理'
-    case 'downloading':
-      return file.cached ? '本地缓存命中' : '正在下载'
-    case 'validating':
-      return '正在校验'
-    case 'ready':
-      return '校验通过'
-    case 'invalid':
-      return '假包或格式无效'
-    case 'failed':
-      return '处理失败'
-    default:
-      return file.status
-  }
-}
-
-function progressColor(status?: string) {
-  if (status === 'ready') return 'bg-green-600'
-  if (status === 'invalid' || status === 'failed') return 'bg-red-600'
-  return 'bg-blue-700'
-}
-
-function buildPendingPreflightFiles(depotPath: string, driverPaths: string[]): BuildPreflightFile[] {
-  const files: BuildPreflightFile[] = []
-  if (depotPath) {
-    files.push({ kind: 'depot', path: depotPath, status: 'pending', progress: 0, cached: false })
-  }
-  for (const path of driverPaths) {
-    files.push({ kind: 'driver', path, status: 'pending', progress: 0, cached: false })
-  }
-  return files
-}
-
 export default function BuildPage() {
-  const navigate = useNavigate()
-  const [bucketId, setBucketId] = useState<number | ''>('')
+  const [messageApi, contextHolder] = message.useMessage()
+  const [form] = Form.useForm()
+  const [step, setStep] = useState(0)
   const [version, setVersion] = useState('8.0')
+  const [bucketId, setBucketId] = useState<number | undefined>()
   const [depotPath, setDepotPath] = useState('')
   const [driverPaths, setDriverPaths] = useState<string[]>([])
-  const [customISOName, setCustomISOName] = useState('')
-  const [step, setStep] = useState(1)
-  const [message, setMessage] = useState<string | null>(null)
   const [preflightId, setPreflightId] = useState<string | null>(null)
   const [preflightKey, setPreflightKey] = useState('')
 
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
-  const depotBuckets = bucketsQuery.data ?? []
-  const mixedDepotQueries = useQueries({
-    queries: depotBuckets.map((bucket) => ({
+  const buckets = bucketsQuery.data ?? []
+  const depotQueries = useQueries({
+    queries: buckets.map((bucket) => ({
       queryKey: ['build-depots', bucket.id, version],
       queryFn: () => listDepots(bucket.id, version),
       enabled: Boolean(bucket.id),
     })),
   })
-  const selectedBucketId = useMemo(() => {
-    if (typeof bucketId === 'number') return bucketId
-    return bucketsQuery.data?.find((bucket) => bucket.is_default)?.id ?? bucketsQuery.data?.[0]?.id
-  }, [bucketId, bucketsQuery.data])
 
+  const depotOptions = useMemo<DepotOption[]>(
+    () =>
+      buckets.flatMap((bucket, index) =>
+        (depotQueries[index]?.data ?? []).map((file) => ({
+          key: depotKey(bucket.id, file),
+          bucketId: bucket.id,
+          bucketName: bucket.name,
+          file,
+        }))
+      ),
+    [buckets, depotQueries]
+  )
+
+  const selectedBucketId = bucketId ?? buckets.find((bucket) => bucket.is_default)?.id ?? buckets[0]?.id
+  const selectedBucket = buckets.find((bucket) => bucket.id === selectedBucketId)
   const driversQuery = useQuery({
     queryKey: ['build-drivers', selectedBucketId, version],
     queryFn: () => listDrivers(selectedBucketId as number, version),
     enabled: Boolean(selectedBucketId),
   })
+  const selectedDepot = depotOptions.find((item) => item.bucketId === selectedBucketId && item.file.path === depotPath)
+  const selectionKey = JSON.stringify({ bucketId: selectedBucketId, depotPath, driverPaths: [...driverPaths].sort() })
 
-  const selectedBucket = useMemo(
-    () => bucketsQuery.data?.find((bucket) => bucket.id === selectedBucketId),
-    [bucketsQuery.data, selectedBucketId]
-  )
-  const mixedDepotOptions = useMemo<DepotOption[]>(
-    () =>
-      depotBuckets.flatMap((bucket, index) =>
-        (mixedDepotQueries[index]?.data ?? []).map((file) => ({
-          key: buildDepotOptionKey(bucket.id, file),
-          bucket,
-          file,
-        }))
-      ),
-    [depotBuckets, mixedDepotQueries]
-  )
-  const depotsLoading = bucketsQuery.isLoading || mixedDepotQueries.some((query) => query.isLoading)
-  const depotsError = mixedDepotQueries.find((query) => query.isError)?.error
-  const selectedDepotOption = useMemo(
-    () => mixedDepotOptions.find((option) => option.bucket.id === selectedBucketId && option.file.path === depotPath),
-    [depotPath, mixedDepotOptions, selectedBucketId]
-  )
-  const selectedDepot = useMemo(
-    () => selectedDepotOption?.file,
-    [selectedDepotOption]
-  )
-  const selectedDrivers = useMemo(
-    () => (driversQuery.data ?? []).filter((file) => driverPaths.includes(file.path)),
-    [driversQuery.data, driverPaths]
-  )
-  const selectionKey = useMemo(
-    () => JSON.stringify({ bucket_id: selectedBucketId || 0, depot_path: depotPath, driver_paths: [...driverPaths].sort() }),
-    [selectedBucketId, depotPath, driverPaths]
-  )
-
-  const groupedDrivers = useMemo(() => {
-    const groups: Record<string, FileMetadata[]> = {}
-    for (const driver of driversQuery.data ?? []) {
-      const key = driver.driver_category || 'other'
-      groups[key] = [...(groups[key] ?? []), driver]
-    }
-    return groups
-  }, [driversQuery.data])
-
-  const createMutation = useMutation({
-    mutationFn: createBuild,
-    onSuccess: (task) => navigate(`/tasks/${task.task_id}`),
-    onError: (error) => setMessage(String(error)),
-  })
   const startPreflightMutation = useMutation({
     mutationFn: startBuildPreflight,
     onSuccess: (preflight) => {
       setPreflightId(preflight.id)
-      setMessage(null)
+      messageApi.success('下载校验已启动')
     },
-    onError: (error) => setMessage(String(error)),
+    onError: (error) => messageApi.error(String(error)),
   })
   const preflightQuery = useQuery({
     queryKey: ['build-preflight', preflightId],
     queryFn: () => getBuildPreflight(preflightId as string),
     enabled: Boolean(preflightId),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1000 : false),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1200 : false),
   })
   const preflight = preflightQuery.data
   const preflightReady = preflight?.status === 'ready' && preflightKey === selectionKey
 
+  const createMutation = useMutation({
+    mutationFn: createBuild,
+    onSuccess: (task) => window.location.assign(`/tasks/${task.task_id}`),
+    onError: (error) => messageApi.error(String(error)),
+  })
+
   useEffect(() => {
-    if (step !== 3 || !selectedBucketId || !depotPath || preflightKey === selectionKey || startPreflightMutation.isPending) {
-      return
-    }
+    if (step !== 2 || !selectedBucketId || !depotPath || preflightKey === selectionKey || startPreflightMutation.isPending) return
     setPreflightId(null)
     setPreflightKey(selectionKey)
     startPreflightMutation.mutate({
@@ -228,394 +103,210 @@ export default function BuildPage() {
     setPreflightKey('')
   }
 
-  const changeVersion = (value: string) => {
-    setVersion(value)
-    setDepotPath('')
-    setDriverPaths([])
-    resetPreflight()
-    setStep(1)
-  }
-
-  const handleDepotSelection = (value: string) => {
-    const option = mixedDepotOptions.find((item) => item.key === value)
-    if (!option) {
-      setDepotPath('')
-      resetPreflight()
-      return
-    }
-    setBucketId(option.bucket.id)
-    setDepotPath(option.file.path)
+  const chooseDepot = (value: string) => {
+    const option = depotOptions.find((item) => item.key === value)
+    setBucketId(option?.bucketId)
+    setDepotPath(option?.file.path ?? '')
     setDriverPaths([])
     resetPreflight()
   }
 
-  const toggleDriver = (value: string) => {
-    resetPreflight()
-    setDriverPaths((prev) => (prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]))
-  }
-
-  const nextStep = () => {
-    if (step === 1 && !depotPath) {
-      setMessage('请选择与 ESXi 基础版本匹配的 Depot 文件')
+  const nextStep = async () => {
+    if (step === 0 && !depotPath) {
+      messageApi.warning('请选择 Depot 源文件')
       return
     }
-    if (step === 3 && !preflightReady) {
-      setMessage(preflight?.status === 'invalid' ? '下载校验未通过，请重新上传或刷新存储节点文件。' : '请等待下载校验完成后再确认启动。')
+    if (step === 2 && !preflightReady) {
+      messageApi.warning('请等待下载校验完成')
       return
     }
-    setMessage(null)
-    setStep((current) => Math.min(4, current + 1))
+    setStep((value) => Math.min(value + 1, 3))
   }
 
-  const submit = () => {
+  const submitBuild = async () => {
+    const values = await form.validateFields()
     if (!selectedBucketId || !depotPath) {
-      setMessage('请选择存储节点和 Depot 文件')
-      setStep(1)
+      messageApi.warning('请选择存储节点和 Depot 文件')
+      setStep(0)
       return
     }
     if (!preflightReady) {
-      setMessage('请先完成下载校验。')
-      setStep(3)
+      messageApi.warning('请先完成下载校验')
+      setStep(2)
       return
     }
-
     createMutation.mutate({
       bucket_id: selectedBucketId,
       esxi_version: version,
       depot_path: depotPath,
       driver_paths: driverPaths,
-      custom_iso_name: customISOName || undefined,
+      custom_iso_name: values.custom_iso_name || undefined,
     })
   }
 
+  const items = [
+    { title: '选择源文件', icon: <FileZipOutlined /> },
+    { title: '驱动注入', icon: <ToolOutlined /> },
+    { title: '下载校验', icon: <CloudDownloadOutlined /> },
+    { title: '输出设置', icon: <PlayCircleOutlined /> },
+  ]
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-[12px] font-medium text-blue-700">构建 / 自定义 ISO</div>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-950">定制构建向导</h1>
-        </div>
-        <div className="hidden items-center gap-2 text-[12px] font-medium text-gray-500 md:flex">
-          <HardDrive className="h-4 w-4" />
-          {selectedBucket?.name ?? '未选择存储节点'}
-        </div>
-      </div>
+    <PageContainer title="自定义构建" subTitle="四步导航式 ISO 构建流程，选择项通过下拉框完成">
+      {contextHolder}
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <ProCard bordered className="wizard-steps-card">
+          <Steps type="navigation" current={step} onChange={(next) => next <= step && setStep(next)} items={items} />
+        </ProCard>
 
-      {message && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{message}</div>}
+        <ProCard title={`${step + 1}. ${items[step].title}`} bordered headerBordered className="build-step-card" bodyStyle={{ minHeight: 390 }}>
+          {step === 0 && (
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Alert type="info" showIcon message="从所有存储节点中选择与 ESXi 版本匹配的 Depot 文件。" />
+              <Form layout="vertical">
+                <Form.Item label="ESXi 基础版本" required>
+                  <Select
+                    value={version}
+                    onChange={(value) => {
+                      setVersion(value)
+                      setBucketId(undefined)
+                      setDepotPath('')
+                      setDriverPaths([])
+                      resetPreflight()
+                    }}
+                    options={esxiVersions.map((item) => ({ value: item, label: `ESXi ${item}` }))}
+                    style={{ maxWidth: 320 }}
+                  />
+                </Form.Item>
+                <Form.Item label="Depot 源文件" required>
+                  <Select
+                    showSearch
+                    value={selectedDepot?.key}
+                    placeholder="选择 Depot 文件"
+                    loading={bucketsQuery.isLoading || depotQueries.some((query) => query.isLoading)}
+                    onChange={chooseDepot}
+                    optionFilterProp="label"
+                    options={depotOptions.map((item) => ({
+                      value: item.key,
+                      label: `${item.bucketName} / ${fileName(item.file)}`,
+                    }))}
+                  />
+                </Form.Item>
+              </Form>
+              {selectedDepot && (
+                <ProCard ghost bordered={false} className="selected-source-card">
+                  <Space wrap>
+                    <Tag color="blue">{selectedDepot.bucketName}</Tag>
+                    <Tag color={cacheStatusColor(selectedDepot.file, selectedBucket)}>{cacheStatusText(selectedDepot.file, selectedBucket)}</Tag>
+                    <Typography.Text className="mono" copyable>
+                      {selectedDepot.file.path}
+                    </Typography.Text>
+                  </Space>
+                </ProCard>
+              )}
+            </Space>
+          )}
 
-      <div className="overflow-hidden rounded border bg-white shadow-sm">
-        <div className="flex border-b bg-gray-50/70 text-[13px]">
-          {stepLabels.map((label, index) => {
-            const number = index + 1
-            const disabled = number > step
-            return (
-              <button
-                key={label}
-                type="button"
-                disabled={disabled}
-                onClick={() => !disabled && setStep(number)}
-                className={cn(
-                  'flex items-center gap-2 border-b-2 px-5 py-3 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  step === number ? 'border-blue-700 bg-white text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-900'
-                )}
-              >
-                <span className="flex h-5 w-5 items-center justify-center rounded border text-[11px]">{number}</span>
-                {label}
-              </button>
-            )
-          })}
-        </div>
-
-        <div className="min-h-[430px] p-6">
           {step === 1 && (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="max-w-xl space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-600">混合存储节点</label>
-                  <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] text-blue-800">
-                    自动从所有存储节点识别 ESXi {version} Depot 包；选中 Depot 后会使用对应节点继续加载驱动和执行构建。
-                  </div>
-                  <select
-                    className="w-full rounded border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-600"
-                    value={selectedDepotOption?.key ?? ''}
-                    onChange={(e) => handleDepotSelection(e.target.value)}
-                  >
-                    <option value="">选择 ESXi {version} Depot 文件</option>
-                    {mixedDepotOptions.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {depotOptionLabel(option)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-600">ESXi 基础版本</label>
-                  <div className="grid grid-cols-5 gap-2">
-                    {esxiVersions.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => changeVersion(item)}
-                        className={cn(
-                          'rounded border px-3 py-2 text-[12px] font-bold transition-colors',
-                          version === item ? 'border-blue-700 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-700 hover:border-gray-400'
-                        )}
-                      >
-                        v{item}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {!depotsLoading && mixedDepotOptions.length === 0 && (
-                  <div className="text-[12px] text-red-600">所有存储节点都没有 ESXi {version} 对应的 Depot 文件。</div>
-                )}
-                {depotsError && <div className="text-[12px] text-red-600">{String(depotsError)}</div>}
-              </div>
-
-              <div className="rounded border bg-gray-50 p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded bg-white text-blue-700">
-                    <FileArchive className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500">已选源文件</div>
-                    <div className="text-sm font-semibold text-gray-950">ESXi {version}</div>
-                  </div>
-                </div>
-                <div className="mt-5 space-y-3 text-[12px]">
-                  <div>
-                    <div className="font-bold uppercase tracking-wider text-gray-400">存储节点</div>
-                    <div className="mt-1 break-all font-medium text-gray-900">{selectedBucket?.name ?? '-'}</div>
-                  </div>
-                  <div>
-                    <div className="font-bold uppercase tracking-wider text-gray-400">Depot</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      {selectedDepotOption?.bucket.name && <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{selectedDepotOption.bucket.name}</span>}
-                      <span className="break-all font-mono text-gray-700">{depotDisplayName(selectedDepot)}</span>
-                      {selectedDepot && <CacheTag file={selectedDepot} />}
-                    </div>
-                    {selectedDepot && <div className="mt-1 break-all font-mono text-gray-500">{selectedDepot.path}</div>}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <Form layout="vertical">
+              <Form.Item label="选择需要注入的驱动">
+                <Select
+                  mode="multiple"
+                  allowClear
+                  showSearch
+                  value={driverPaths}
+                  placeholder="可留空，仅使用 Depot 构建"
+                  loading={driversQuery.isLoading}
+                  onChange={(value) => {
+                    setDriverPaths(value)
+                    resetPreflight()
+                  }}
+                  optionFilterProp="label"
+                  options={(driversQuery.data ?? []).map((file) => ({
+                    value: file.path,
+                    label: `${assetTitle(file)} / ${file.path}`,
+                  }))}
+                />
+              </Form.Item>
+              <Typography.Paragraph type="secondary">
+                当前已选择 {driverPaths.length} 个驱动。驱动清单只通过下拉框选择，不再展示额外表格。
+              </Typography.Paragraph>
+            </Form>
           )}
 
           {step === 2 && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-gray-950">选择注入驱动</h2>
-                  <p className="text-[12px] text-gray-500">已为 ESXi {version} 选择 {driverPaths.length} 个驱动</p>
-                </div>
-                <span className="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-bold uppercase text-blue-700">
-                  {version}
-                </span>
-              </div>
-
-              {driversQuery.isLoading && <div className="rounded border bg-gray-50 p-5 text-sm text-gray-500">正在加载驱动...</div>}
-              {!driversQuery.isLoading && Object.keys(groupedDrivers).length === 0 && (
-                <div className="rounded border bg-gray-50 p-5 text-sm text-gray-500">当前存储节点和版本下没有匹配驱动。</div>
-              )}
-
-              {Object.entries(groupedDrivers).map(([group, items]) => (
-                <div key={group} className="space-y-3">
-                  <h3 className="border-b pb-1 text-[11px] font-bold uppercase tracking-widest text-gray-400">{group}</h3>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {items.map((driver) => (
-                      <label key={driver.id} className="flex cursor-pointer items-start gap-3 rounded border bg-white p-4 shadow-sm hover:border-blue-300">
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-700 focus:ring-blue-600"
-                          checked={driverPaths.includes(driver.path)}
-                          onChange={() => toggleDriver(driver.path)}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span className="block truncate text-sm font-bold text-gray-950">{displayWithDescription(driver)}</span>
-                            <CacheTag file={driver} />
-                          </span>
-                          <span className="mt-1 block break-all font-mono text-[12px] text-gray-600">{checksumText(driver)}</span>
-                          <span className="mt-1 block break-all font-mono text-[11px] text-gray-400">{driver.path}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Space>
+                <Button
+                  icon={<CloudDownloadOutlined />}
+                  onClick={() => {
+                    if (!selectedBucketId || !depotPath) return
+                    setPreflightKey(selectionKey)
+                    startPreflightMutation.mutate({
+                      bucket_id: selectedBucketId,
+                      depot_path: depotPath,
+                      driver_paths: driverPaths,
+                    })
+                  }}
+                  loading={startPreflightMutation.isPending || preflight?.status === 'running'}
+                >
+                  重新校验
+                </Button>
+                {preflightReady && (
+                  <Tag color="success" icon={<CheckCircleOutlined />}>
+                    校验通过
+                  </Tag>
+                )}
+              </Space>
+              <Progress
+                percent={preflight?.progress ?? 0}
+                status={preflight?.status === 'failed' || preflight?.status === 'invalid' ? 'exception' : preflightReady ? 'success' : 'active'}
+              />
+              {(preflight?.files ?? []).map((file) => (
+                <ProCard key={`${file.kind}-${file.path}`} size="small" bordered className="preflight-file-card">
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    <Space wrap>
+                      <Tag>{file.kind === 'depot' ? 'Depot' : '驱动'}</Tag>
+                      <Tag color={file.status === 'ready' ? 'success' : file.status === 'failed' || file.status === 'invalid' ? 'error' : 'processing'}>
+                        {file.status}
+                      </Tag>
+                      <Typography.Text>{file.progress}%</Typography.Text>
+                    </Space>
+                    <Typography.Text className="mono" copyable>
+                      {file.path}
+                    </Typography.Text>
+                    {file.message && <Typography.Text type="danger">{file.message}</Typography.Text>}
+                  </Space>
+                </ProCard>
               ))}
-            </div>
+            </Space>
           )}
 
           {step === 3 && (
-            <div className="space-y-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-sm font-bold text-gray-950">下载校验</h2>
-                  <p className="text-[12px] text-gray-500">从存储节点拉取 Depot 和驱动到本地缓存，并校验 ZIP/VIB 文件头。</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetPreflight()
-                    if (selectedBucketId && depotPath) {
-                      setPreflightKey(selectionKey)
-                      startPreflightMutation.mutate({
-                        bucket_id: selectedBucketId,
-                        depot_path: depotPath,
-                        driver_paths: driverPaths,
-                      })
-                    }
-                  }}
-                  disabled={startPreflightMutation.isPending || preflight?.status === 'running'}
-                  className="inline-flex items-center gap-2 rounded border bg-white px-3 py-2 text-[12px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <RefreshCw className={cn('h-4 w-4', (startPreflightMutation.isPending || preflight?.status === 'running') && 'animate-spin')} />
-                  重新校验
-                </button>
-              </div>
-
-              <div className="rounded border bg-gray-50 p-5">
-                <div className="mb-3 flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2 font-bold text-gray-950">
-                    {preflight?.status === 'ready' ? <ShieldCheck className="h-4 w-4 text-green-700" /> : <RefreshCw className={cn('h-4 w-4 text-blue-700', preflight?.status === 'running' && 'animate-spin')} />}
-                    总进度
-                  </div>
-                  <span className="font-mono text-[12px] text-gray-600">{preflight?.progress ?? 0}%</span>
-                </div>
-                <ProgressBar value={preflight?.progress ?? 0} className={progressColor(preflight?.status)} />
-                {preflight?.status === 'invalid' && (
-                  <div className="mt-3 flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-                    <span>发现假包或格式无效文件，请重新上传真实 ZIP/VIB 文件，或刷新存储节点后重试。</span>
-                  </div>
-                )}
-                {preflight?.status === 'failed' && (
-                  <div className="mt-3 flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-                    <span>{preflight.message || '下载校验失败'}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                {(preflight?.files ?? buildPendingPreflightFiles(depotPath, driverPaths)).map((file) => (
-                  <div key={`${file.kind}-${file.path}`} className="rounded border bg-white p-4 shadow-sm">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-gray-600">
-                            {file.kind === 'depot' ? 'Depot' : 'Driver'}
-                          </span>
-                          <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-bold', file.status === 'ready' && 'border-green-200 bg-green-50 text-green-700', (file.status === 'invalid' || file.status === 'failed') && 'border-red-200 bg-red-50 text-red-700', !['ready', 'invalid', 'failed'].includes(file.status) && 'border-blue-200 bg-blue-50 text-blue-700')}>
-                            {preflightStatusText(file)}
-                          </span>
-                        </div>
-                        <div className="mt-2 break-all font-mono text-[12px] text-gray-700">{file.path}</div>
-                        {(file.status === 'invalid' || file.status === 'failed') && file.message && (
-                          <div className="mt-2 break-all text-[12px] text-red-700">{file.message}</div>
-                        )}
-                      </div>
-                      <span className="font-mono text-[12px] text-gray-500">{file.progress}%</span>
-                    </div>
-                    <div className="mt-3">
-                      <ProgressBar value={file.progress} className={progressColor(file.status)} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <Form form={form} layout="vertical" initialValues={{ custom_iso_name: '' }}>
+              <Form.Item name="custom_iso_name" label="输出镜像名称">
+                <Input className="mono" placeholder="custom-esxi.iso" />
+              </Form.Item>
+              <Alert type="success" showIcon message="配置已完成，可以提交后端创建构建任务。" />
+            </Form>
           )}
+        </ProCard>
 
-          {step === 4 && (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,520px)_1fr]">
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-600">输出镜像名称</label>
-                  <input
-                    className="w-full rounded border border-gray-300 px-3 py-2.5 font-mono text-sm outline-none focus:border-blue-600"
-                    value={customISOName}
-                    onChange={(e) => setCustomISOName(e.target.value)}
-                    placeholder="custom-esxi.iso"
-                  />
-                </div>
-                <div className="rounded border bg-gray-50 p-5">
-                  <div className="mb-4 flex items-center gap-2 text-sm font-bold text-gray-950">
-                    <PackagePlus className="h-4 w-4 text-blue-700" />
-                    构建摘要
-                  </div>
-                  <div className="space-y-3 text-sm">
-                    <SummaryRow label="存储节点" value={selectedBucket?.name ?? '-'} />
-                    <SummaryRow label="基础版本" value={`ESXi ${version}`} />
-                    <SummaryRow label="Depot" value={selectedDepot ? `${selectedDepotOption?.bucket.name ?? '-'} / ${depotDisplayName(selectedDepot)}` : '-'} mono />
-                    <SummaryRow label="注入驱动" value={`已选择 ${driverPaths.length} 个`} />
-                    <SummaryRow label="下载校验" value={preflightReady ? '已通过' : '未通过'} />
-                    <SummaryRow label="ISO 名称" value={customISOName || '使用后端默认名称'} mono />
-                  </div>
-                </div>
-              </div>
-              <div className="rounded border bg-gray-50 p-5">
-                <div className="mb-4 text-sm font-bold text-gray-950">已选驱动</div>
-                {selectedDrivers.length === 0 ? (
-                  <div className="text-[12px] text-gray-500">未选择驱动，仅使用 Depot 构建。</div>
-                ) : (
-                  <div className="space-y-3">
-                    {selectedDrivers.map((driver) => (
-                      <div key={driver.id} className="rounded border bg-white px-3 py-2">
-                        <div className="break-all text-sm font-semibold text-gray-900">{displayWithDescription(driver)}</div>
-                        <div className="mt-1 break-all font-mono text-[11px] text-gray-500">{driver.path}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-3 border-t bg-gray-50/70 p-4">
-          {step > 1 && (
-            <button type="button" onClick={() => setStep((current) => Math.max(1, current - 1))} className="rounded border bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              上一步
-            </button>
-          )}
-          {step < 4 ? (
-            <button type="button" onClick={nextStep} className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
-              {step === 3 ? '确认启动' : '下一步'}
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded border border-blue-700 bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={submit}
-              disabled={createMutation.isPending || !preflightReady}
-            >
-              <Check className="h-4 w-4" />
-              {createMutation.isPending ? '提交中...' : '启动 ISO 构建任务'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SummaryRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <span className="text-gray-500">{label}</span>
-      <span className={cn('max-w-[70%] break-all text-right font-semibold text-gray-950', mono && 'font-mono text-[12px]')}>{value}</span>
-    </div>
-  )
-}
-
-function ProgressBar({ value, className }: { value: number; className?: string }) {
-  const width = Math.max(0, Math.min(100, value))
-  return (
-    <div className="h-2 overflow-hidden rounded bg-gray-200">
-      <div className={cn('h-full transition-all', className)} style={{ width: `${width}%` }} />
-    </div>
+        <ProCard ghost className="build-action-bar">
+          <Space>
+            {step > 0 && <Button onClick={() => setStep((value) => Math.max(value - 1, 0))}>上一步</Button>}
+            {step < 3 ? (
+              <Button type="primary" onClick={nextStep}>
+                下一步
+              </Button>
+            ) : (
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={submitBuild} loading={createMutation.isPending} disabled={!preflightReady}>
+                开始构建
+              </Button>
+            )}
+          </Space>
+        </ProCard>
+      </Space>
+    </PageContainer>
   )
 }

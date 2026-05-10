@@ -13,6 +13,7 @@ import (
 
 func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClient *asynq.Client, wsManager *taskws.Manager) {
 	healthHandler := NewHealthHandler(db)
+	systemStatusHandler := NewSystemStatusHandler()
 	bucketHandler := NewBucketHandler(db)
 	fileService := services.NewFileService(db, nil)
 	fileService.SetCacheRoot(cfg.Build.WorkDir)
@@ -26,6 +27,8 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	app.Get("/health", healthHandler.Check)
 
 	api := app.Group("/api")
+
+	api.Get("/system/status", systemStatusHandler.Get)
 
 	api.Get("/buckets", bucketHandler.List)
 	api.Post("/buckets", bucketHandler.Create)

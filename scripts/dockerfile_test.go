@@ -117,15 +117,26 @@ func TestComposePullsPublishedSingleImageByDefault(t *testing.T) {
 	}
 }
 
-func TestDockerWorkflowPublishesGHCRImage(t *testing.T) {
+func TestDockerWorkflowValidatesPublishesAndDeploysGHCRImage(t *testing.T) {
 	workflow := readTextFile(t, "../.github/workflows/docker.yml")
 
 	for _, snippet := range []string{
+		"pull_request:",
+		`branches: ["main"]`,
+		`tags: ["v*"]`,
+		"npm run test",
+		"npm run build",
+		"go test ./...",
 		"ghcr.io/kos991/esxi-add",
 		"docker/login-action",
 		"docker/build-push-action",
-		`tags: ["v*"]`,
 		"push: true",
+		"appleboy/scp-action",
+		"appleboy/ssh-action",
+		"docker-compose.yml",
+		"192.168.0.142",
+		"docker compose pull",
+		"docker compose up -d",
 	} {
 		if !strings.Contains(workflow, snippet) {
 			t.Fatalf("docker workflow must contain %q", snippet)
@@ -133,13 +144,11 @@ func TestDockerWorkflowPublishesGHCRImage(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
-		"pull_request:",
-		`branches: ["main"]`,
-		"go test",
-		"npm run build",
+		"docker image prune -f",
+		"build:",
 	} {
 		if strings.Contains(workflow, forbidden) {
-			t.Fatalf("docker workflow must not contain %q because Actions should only publish tagged releases", forbidden)
+			t.Fatalf("docker workflow must not contain %q in pull-based deploy mode", forbidden)
 		}
 	}
 }

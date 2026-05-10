@@ -87,7 +87,7 @@ func TestResolveStorageLocalUsesLocalStore(t *testing.T) {
 		t.Fatalf("create bucket: %v", err)
 	}
 
-	handler := NewBuildTaskHandler(db, nil, nil, nil, t.TempDir(), nil)
+	handler := NewBuildTaskHandler(db, nil, t.TempDir(), nil)
 	resolved, err := handler.resolveStorage(ctx, bucket.ID)
 	if err != nil {
 		t.Fatalf("resolve storage: %v", err)
@@ -102,52 +102,7 @@ func TestResolveStorageLocalUsesLocalStore(t *testing.T) {
 	}
 }
 
-func TestResolveStorageLocalIgnoresInjectedS3Cache(t *testing.T) {
-	ctx := context.Background()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := db.AutoMigrate(&models.StorageBucket{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	root := t.TempDir()
-	depotPath := filepath.Join(root, "depots", "offline.zip")
-	if err := os.MkdirAll(filepath.Dir(depotPath), 0o755); err != nil {
-		t.Fatalf("create depot dir: %v", err)
-	}
-	if err := os.WriteFile(depotPath, []byte("depot"), 0o644); err != nil {
-		t.Fatalf("write depot: %v", err)
-	}
-
-	bucket := models.StorageBucket{
-		Name:      "local",
-		Type:      models.StorageTypeLocal,
-		LocalPath: root,
-	}
-	if err := db.Create(&bucket).Error; err != nil {
-		t.Fatalf("create bucket: %v", err)
-	}
-
-	injectedS3 := &storage.S3Client{}
-	injectedCache := storage.NewCacheManager(filepath.Join(t.TempDir(), "cache"), injectedS3)
-	handler := NewBuildTaskHandler(db, nil, injectedCache, injectedS3, t.TempDir(), nil)
-
-	resolved, err := handler.resolveStorage(ctx, bucket.ID)
-	if err != nil {
-		t.Fatalf("resolve storage: %v", err)
-	}
-	got, err := resolved.EnsureFile(ctx, "depots/offline.zip")
-	if err != nil {
-		t.Fatalf("ensure local file: %v", err)
-	}
-	if got != depotPath {
-		t.Fatalf("expected local depot path %q, got %q", depotPath, got)
-	}
-}
-
-func TestResolveStorageS3DoesNotUseInjectedDefaultCacheForBucketSpecificClient(t *testing.T) {
+func TestResolveStorageS3UsesBucketSpecificClient(t *testing.T) {
 	ctx := context.Background()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -180,16 +135,11 @@ func TestResolveStorageS3DoesNotUseInjectedDefaultCacheForBucketSpecificClient(t
 	}
 	defer func() { newBuildS3Client = originalNewS3Client }()
 
-	injectedS3 := &storage.S3Client{}
-	injectedCache := storage.NewCacheManager(filepath.Join(t.TempDir(), "default-cache"), injectedS3)
-	handler := NewBuildTaskHandler(db, nil, injectedCache, injectedS3, t.TempDir(), nil)
+	handler := NewBuildTaskHandler(db, nil, t.TempDir(), nil)
 
 	resolved, err := handler.resolveStorage(ctx, bucket.ID)
 	if err != nil {
 		t.Fatalf("resolve storage: %v", err)
-	}
-	if resolved.resolver == injectedCache {
-		t.Fatal("expected selected S3 bucket to use a bucket-specific cache manager, not the injected default cache")
 	}
 	if resolved.uploader != bucketS3 {
 		t.Fatal("expected selected S3 bucket client to be used for uploads")
