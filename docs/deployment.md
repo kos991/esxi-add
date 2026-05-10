@@ -105,7 +105,7 @@ curl http://192.168.0.142:8080/api/system/status
 1. 后端测试。
 2. 前端 `npm ci`、测试和构建。
 3. 构建并推送 `ghcr.io/kos991/esxi-add:latest`。
-4. SSH 到 142 拉取新镜像并重启服务。
+4. 当仓库变量 `ENABLE_DEPLOY_142=true` 时，尝试 SSH 到部署目标拉取新镜像并重启服务。
 
 仓库 Secrets：
 
@@ -119,7 +119,19 @@ GHCR_USERNAME     可选，私有镜像登录用户名
 GHCR_TOKEN        可选，私有镜像登录 token
 ```
 
-如果 Actions 在同步 compose 文件阶段失败，优先检查 `DEPLOY_USER`、`DEPLOY_SSH_KEY` 和服务器 `/opt/esxi-add` 权限。
+仓库 Variables：
+
+```text
+ENABLE_DEPLOY_142  设为 true 时才启用 Actions 自动部署
+```
+
+注意：`192.168.0.142` 是内网地址，GitHub 托管 runner 通常无法直接访问。默认不要开启 `ENABLE_DEPLOY_142`。如果要让 Actions 自动部署，需要满足其中一种条件：
+
+- 给 142 配置 GitHub self-hosted runner，并把部署 job 改到该 runner 上执行。
+- 提供 GitHub runner 可访问的公网部署地址和安全的 SSH 白名单。
+- 继续使用本机或内网机器执行手动部署命令。
+
+如果 Actions 在同步 compose 文件阶段失败，优先检查 runner 是否能访问部署地址，然后再检查 `DEPLOY_USER`、`DEPLOY_SSH_KEY` 和服务器 `/opt/esxi-add` 权限。
 
 后端测试范围固定为项目源码目录：
 

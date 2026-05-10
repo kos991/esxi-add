@@ -133,6 +133,7 @@ func TestDockerWorkflowValidatesPublishesAndDeploysGHCRImage(t *testing.T) {
 		"push: true",
 		"appleboy/scp-action",
 		"appleboy/ssh-action",
+		"vars.ENABLE_DEPLOY_142 == 'true'",
 		"docker-compose.yml",
 		"192.168.0.142",
 		"docker compose pull",

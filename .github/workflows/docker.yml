@@ -88,7 +88,7 @@ jobs:
 
   deploy-142:
     needs: image
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && vars.ENABLE_DEPLOY_142 == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     env:
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/esxi-add' }}
