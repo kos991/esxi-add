@@ -1,5 +1,5 @@
 import { CloudOutlined, DatabaseOutlined, FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { PageContainer, ProCard, StatisticCard } from '@ant-design/pro-components'
+import { PageContainer, ProCard, StatisticCard } from '../components/pro-compat'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'

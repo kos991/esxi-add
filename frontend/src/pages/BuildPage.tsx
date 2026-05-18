@@ -1,5 +1,5 @@
 import { CheckCircleOutlined, CloudDownloadOutlined, FileZipOutlined, PlayCircleOutlined, ToolOutlined } from '@ant-design/icons'
-import { PageContainer, ProCard } from '@ant-design/pro-components'
+import { PageContainer, ProCard } from '../components/pro-compat'
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
 import { Alert, Button, Form, Input, Progress, Select, Space, Steps, Tag, Typography, message } from 'antd'
 import { useEffect, useMemo, useState } from 'react'

@@ -1,5 +1,5 @@
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
-import { PageContainer, ProCard } from '@ant-design/pro-components'
+import { PageContainer, ProCard } from './pro-compat'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Descriptions, Empty, Popconfirm, Progress, Space, Table, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'

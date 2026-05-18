@@ -9,7 +9,7 @@ import {
   ReloadOutlined,
   RocketOutlined,
 } from '@ant-design/icons'
-import { PageContainer, ProCard, StatisticCard } from '@ant-design/pro-components'
+import { PageContainer, ProCard, StatisticCard } from '../components/pro-compat'
 import { useQuery } from '@tanstack/react-query'
 import { Badge, Button, Progress, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'

@@ -5,19 +5,22 @@ import {
   FileZipOutlined,
   GithubOutlined,
   HistoryOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons'
-import { ProLayout } from '@ant-design/pro-components'
-import { ConfigProvider, Tooltip, theme } from 'antd'
+import { ConfigProvider, Layout, Menu, Tooltip, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
 
-const menuRoutes = [
-  { path: '/', name: '总览', icon: <CloudServerOutlined /> },
-  { path: '/buckets', name: '存储', icon: <DatabaseOutlined /> },
-  { path: '/files', name: '文件库', icon: <FileZipOutlined /> },
-  { path: '/build', name: '构建', icon: <BuildOutlined /> },
-  { path: '/tasks', name: '日志', icon: <HistoryOutlined /> },
+const { Sider, Content, Footer } = Layout
+
+const menuItems = [
+  { key: '/', label: '总览', icon: <CloudServerOutlined /> },
+  { key: '/buckets', label: '存储', icon: <DatabaseOutlined /> },
+  { key: '/files', label: '文件库', icon: <FileZipOutlined /> },
+  { key: '/build', label: '构建', icon: <BuildOutlined /> },
+  { key: '/tasks', label: '日志', icon: <HistoryOutlined /> },
 ]
 
 type AppShellProps = {
@@ -99,45 +102,72 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
         algorithm: theme.defaultAlgorithm,
       }}
     >
-      <ProLayout
-        className={`app-shell ${collapsed ? 'app-shell-collapsed' : 'app-shell-expanded'}`}
-        title={false}
-        logo={<AnimatedLogo />}
-        route={{ path: '/', routes: menuRoutes }}
-        location={{ pathname: selectedPath }}
-        headerRender={false}
-        fixedHeader={false}
-        fixSiderbar
-        layout="side"
-        navTheme="light"
-        siderWidth={208}
-        breakpoint={false}
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        collapsedButtonRender={(isCollapsed, defaultDom) => (
-          <Tooltip title={isCollapsed ? '展开侧栏' : '收起侧栏'} placement="right">
-            {defaultDom}
-          </Tooltip>
-        )}
-        menuItemRender={(item, dom) => (
-          <a
-            href={item.path}
-            onClick={(event) => {
-              event.preventDefault()
-              if (item.path) navigate(item.path)
+      <Layout hasSider className={`app-shell ant-pro-layout ${collapsed ? 'app-shell-collapsed' : 'app-shell-expanded'}`} style={{ minHeight: '100vh' }}>
+        <Sider
+          theme="light"
+          trigger={null}
+          collapsible
+          collapsed={collapsed}
+          width={208}
+          className={`ant-pro-sider ${collapsed ? 'ant-pro-sider-collapsed' : ''}`}
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: 100,
+            borderRight: '1px solid #e8ebf2',
+            boxShadow: '4px 0 18px rgba(31, 35, 41, 0.03)',
+          }}
+        >
+          <div className="ant-pro-sider-logo" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 58, borderBottom: '1px solid #eef0f5' }}>
+            <AnimatedLogo />
+          </div>
+          <Menu
+            mode="inline"
+            selectedKeys={[selectedPath]}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+            style={{ borderRight: 0, paddingBlock: 8 }}
+          />
+          <div
+            className="ant-pro-model-menu-footer"
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              width: '100%',
+              padding: '8px 0',
+              borderTop: '1px solid #eef0f5',
+              display: 'flex',
+              justifyContent: 'center',
             }}
           >
-            {dom}
-          </a>
-        )}
-        contentStyle={{
-          minHeight: '100vh',
-          paddingBlock: 0,
-          paddingInline: 0,
-          background: '#f4f6fb',
-        }}
-        footerRender={() => (
-          <footer className="app-footer">
+            <Tooltip title={collapsed ? '展开侧栏' : '收起侧栏'} placement="right">
+              <div
+                onClick={() => setCollapsed(!collapsed)}
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  borderRadius: '6px',
+                  transition: 'background 0.3s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#f5f5f5')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              </div>
+            </Tooltip>
+          </div>
+        </Sider>
+        <Layout style={{ marginLeft: collapsed ? 80 : 208, transition: 'margin-left 0.2s', background: '#f4f6fb' }}>
+          <Content className="ant-pro-layout-content" style={{ display: 'block', width: '100%' }}>
+            <div className="app-content">{children}</div>
+          </Content>
+          <Footer className="app-footer">
             <div className="app-footer-links">
               <a href="https://github.com/kos991/esxi-add" target="_blank" rel="noreferrer">
                 <GithubOutlined />
@@ -148,11 +178,9 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
               </a>
             </div>
             <div className="app-footer-copy">Copyright © 2026 ESXi ISO Builder</div>
-          </footer>
-        )}
-      >
-        <div className="app-content">{children}</div>
-      </ProLayout>
+          </Footer>
+        </Layout>
+      </Layout>
     </ConfigProvider>
   )
 }

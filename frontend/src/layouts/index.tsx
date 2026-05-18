@@ -1,4 +1,4 @@
-import { Outlet, useLocation, useNavigate } from '@umijs/max'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AppShell } from './AppShell'
 
 export default function Layout() {

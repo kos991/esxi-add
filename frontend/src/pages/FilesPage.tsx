@@ -1,5 +1,5 @@
 import { CopyOutlined, DeleteOutlined, EditOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
-import { PageContainer, ProCard, StatisticCard } from '@ant-design/pro-components'
+import { PageContainer, ProCard, StatisticCard } from '../components/pro-compat'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, Upload, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
