@@ -29,10 +29,12 @@ textarea {
 
 .app-content {
   min-height: 100vh;
+  min-width: 0;
   width: 100%;
   max-width: none;
   margin: 0;
   padding: 20px 22px;
+  overflow-x: hidden;
 }
 
 .app-shell .ant-pro-layout-container {
@@ -272,6 +274,12 @@ textarea {
   margin: 0;
 }
 
+.overview-hero-main > div:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .overview-hero-main h4.ant-typography {
   margin-bottom: 6px;
   color: #111827;
@@ -280,10 +288,12 @@ textarea {
 }
 
 .overview-hero-main div.ant-typography {
+  width: 100%;
   max-width: 720px;
   color: #697386;
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .overview-hero-icon {
@@ -308,6 +318,7 @@ textarea {
 }
 
 .overview-stat-group .ant-pro-card {
+  min-width: 0;
   box-shadow: none;
 }
 
@@ -521,6 +532,12 @@ textarea {
   font-weight: 600;
 }
 
+.ant-page-header-heading-left,
+.ant-alert-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .ant-descriptions-item-label,
 .ant-descriptions-item-content {
   font-size: 13px;
@@ -674,7 +691,12 @@ textarea {
   }
 
   .overview-subpage-card {
-    display: block;
+    display: block !important;
+  }
+
+  .overview-subpage-card > .ant-pro-card {
+    width: 100% !important;
+    max-width: 100% !important;
   }
 
   .runtime-status-grid {
@@ -683,8 +705,36 @@ textarea {
 }
 
 @media (max-width: 768px) {
+  .app-shell .ant-layout-sider {
+    flex: 0 0 64px !important;
+    width: 64px !important;
+    min-width: 64px !important;
+    max-width: 64px !important;
+  }
+
+  .app-main-layout {
+    width: calc(100vw - 64px) !important;
+    max-width: calc(100vw - 64px) !important;
+    margin-left: 64px !important;
+  }
+
+  .app-shell .ant-pro-sider-collapsed .ant-menu-item {
+    margin-inline: 8px !important;
+  }
+
   .app-content {
-    padding: 16px;
+    padding: 16px 12px;
+  }
+
+  .ant-pro-card-group {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px !important;
+  }
+
+  .ant-pro-card-group .ant-pro-card {
+    width: 100%;
+    min-width: 0;
   }
 
   .ant-page-header-heading {
@@ -700,9 +750,16 @@ textarea {
     flex-direction: column;
   }
 
+  .overview-hero-main {
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
   .overview-hero-actions {
     width: 100%;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .overview-link-list a {

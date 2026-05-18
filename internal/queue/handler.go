@@ -86,23 +86,23 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	defer os.RemoveAll(taskWorkDir)
 
 	if err := os.MkdirAll(taskWorkDir, 0o755); err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
+		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return fmt.Errorf("create task work directory: %w", err)
 	}
 
 	buildStore, err := h.resolveStorage(ctx, payload.BucketID)
 	if err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
+		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
 	depotLocal, err := buildStore.EnsureFile(ctx, payload.DepotPath)
 	if err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
+		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return fmt.Errorf("cache depot: %w", err)
 	}
 	if err := ValidateBuildInputFile(depotLocal, payload.DepotPath); err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
+		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
@@ -110,17 +110,17 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	for _, driverPath := range payload.DriverPaths {
 		localPath, err := buildStore.EnsureFile(ctx, driverPath)
 		if err != nil {
-			_ = h.updateError(payload.TaskID, err.Error())
+			_ = h.updateError(ctx, payload.TaskID, err.Error())
 			return fmt.Errorf("cache driver %s: %w", driverPath, err)
 		}
 		if err := ValidateBuildInputFile(localPath, driverPath); err != nil {
-			_ = h.updateError(payload.TaskID, err.Error())
+			_ = h.updateError(ctx, payload.TaskID, err.Error())
 			return err
 		}
 		driverLocals = append(driverLocals, localPath)
 	}
 
-	outputFileName := buildOutputFileName(payload.CustomISOName, payload.ESXiVersion)
+	outputFileName := BuildOutputFileName(payload.CustomISOName, payload.ESXiVersion)
 	outputLocalPath := filepath.Join(taskWorkDir, outputFileName)
 
 	progressChan := make(chan builder.BuildProgress, 32)
@@ -130,20 +130,19 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		defer wg.Done()
 		for progress := range progressChan {
 			if progress.Message != "" {
-				_ = h.appendLog(payload.TaskID, progress.Message)
+				_ = h.appendLog(ctx, payload.TaskID, progress.Message)
 				if h.wsManager != nil {
 					h.wsManager.BroadcastLog(payload.TaskID, progress.Message)
 				}
 			}
 			if progress.Percentage >= 0 {
-				_ = h.updateStatus(payload.TaskID, models.BuildTaskStatusRunning, progress.Percentage)
+				_ = h.updateStatus(ctx, payload.TaskID, models.BuildTaskStatusRunning, progress.Percentage)
 				if h.wsManager != nil {
 					h.wsManager.BroadcastProgress(payload.TaskID, progress.Percentage)
 				}
 			}
 		}
 	}()
-
 	err = h.executor.ExecuteBuild(ctx, &builder.BuildParams{
 		DepotPath:   depotLocal,
 		DriverPaths: driverLocals,
@@ -153,13 +152,13 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	}, progressChan)
 	wg.Wait()
 	if err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
+		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
 	outputObjectPath, shaValue, outputSize, err := storeBuildOutput(ctx, buildStore, outputLocalPath, outputFileName)
 	if err != nil {
-		_ = h.updateError(payload.TaskID, err.Error())
+		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
@@ -178,7 +177,7 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		return fmt.Errorf("finalize build task: %w", err)
 	}
 
-	_ = h.appendLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
+	_ = h.appendLog(ctx, payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 	if h.wsManager != nil {
 		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 		h.wsManager.BroadcastProgress(payload.TaskID, 100)
@@ -187,21 +186,21 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	return nil
 }
 
-func (h *BuildTaskHandler) appendLog(taskID, msg string) error {
-	return h.db.Model(&models.BuildTask{}).
+func (h *BuildTaskHandler) appendLog(ctx context.Context, taskID string, msg string) error {
+	return h.db.WithContext(ctx).Model(&models.BuildTask{}).
 		Where("task_id = ?", taskID).
 		Update("log_output", gorm.Expr("COALESCE(log_output, '') || ?", msg+"\n")).Error
 }
 
-func (h *BuildTaskHandler) updateStatus(taskID, status string, progress int) error {
-	return h.db.Model(&models.BuildTask{}).
+func (h *BuildTaskHandler) updateStatus(ctx context.Context, taskID string, status string, progress int) error {
+	return h.db.WithContext(ctx).Model(&models.BuildTask{}).
 		Where("task_id = ?", taskID).
 		Updates(map[string]any{"status": status, "progress": progress}).Error
 }
 
-func (h *BuildTaskHandler) updateError(taskID, errMsg string) error {
+func (h *BuildTaskHandler) updateError(ctx context.Context, taskID string, errMsg string) error {
 	now := time.Now()
-	return h.db.Model(&models.BuildTask{}).
+	return h.db.WithContext(ctx).Model(&models.BuildTask{}).
 		Where("task_id = ?", taskID).
 		Updates(map[string]any{
 			"status":        models.BuildTaskStatusFailed,
@@ -238,18 +237,6 @@ func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (b
 
 	cacheManager := storage.NewCacheManager(filepath.Join(h.workDir, "cache", fmt.Sprintf("bucket-%d", bucket.ID)), client)
 	return buildStorage{resolver: cacheManager, uploader: client}, nil
-}
-
-func buildOutputFileName(customISOName, esxiVersion string) string {
-	if customISOName != "" {
-		name := filepath.Base(strings.ReplaceAll(customISOName, "\\", "/"))
-		if strings.EqualFold(filepath.Ext(name), ".iso") {
-			return name
-		}
-		return name + ".iso"
-	}
-
-	return fmt.Sprintf("ESXi-%s-custom-%s.iso", esxiVersion, time.Now().Format("20060102-150405"))
 }
 
 func newLocalBuildStorage(localPath string) (buildStorage, error) {

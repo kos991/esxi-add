@@ -96,7 +96,7 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 	hashingReader := io.TeeReader(reader, io.MultiWriter(shaHasher, md5Hasher))
 	var objectInfo minio.ObjectInfo
 	var infoErr error
-	switch normalizeStorageType(bucket.Type) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case models.StorageTypeLocal:
 		store, err := storage.NewLocalStore(bucket.LocalPath)
 		if err != nil {
@@ -195,7 +195,7 @@ func (s *FileService) DeleteFile(ctx context.Context, id uint) error {
 		return err
 	}
 
-	switch normalizeStorageType(bucket.Type) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case models.StorageTypeLocal:
 		store, err := storage.NewLocalStore(bucket.LocalPath)
 		if err != nil {
@@ -255,7 +255,7 @@ func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (
 	}
 
 	var objectInfo minio.ObjectInfo
-	switch normalizeStorageType(bucket.Type) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case models.StorageTypeLocal:
 		store, err := storage.NewLocalStore(bucket.LocalPath)
 		if err != nil {
@@ -393,7 +393,7 @@ func (s *FileService) newS3ClientForBucket(bucket *models.StorageBucket) (*stora
 }
 
 func (s *FileService) listObjects(ctx context.Context, bucket *models.StorageBucket, prefix string) ([]minio.ObjectInfo, error) {
-	switch normalizeStorageType(bucket.Type) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case models.StorageTypeLocal:
 		store, err := storage.NewLocalStore(bucket.LocalPath)
 		if err != nil {
@@ -421,7 +421,7 @@ func (s *FileService) applyCacheStatus(ctx context.Context, bucketID uint, files
 		return err
 	}
 
-	if normalizeStorageType(bucket.Type) == models.StorageTypeLocal {
+	if models.NormalizeStorageType(bucket.Type) == models.StorageTypeLocal {
 		for i := range files {
 			files[i].Cached = true
 			files[i].CacheValid = true
@@ -485,17 +485,6 @@ func normalizeFileType(fileType string) string {
 		return models.FileTypeISO
 	default:
 		return strings.ToLower(fileType)
-	}
-}
-
-func normalizeStorageType(storageType string) string {
-	switch strings.ToLower(strings.TrimSpace(storageType)) {
-	case "", models.StorageTypeS3:
-		return models.StorageTypeS3
-	case models.StorageTypeLocal:
-		return models.StorageTypeLocal
-	default:
-		return strings.ToLower(strings.TrimSpace(storageType))
 	}
 }
 

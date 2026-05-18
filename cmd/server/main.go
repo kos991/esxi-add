@@ -104,7 +104,7 @@ func main() {
 	app := fiber.New(serverFiberConfig())
 
 	app.Use(middleware.Logger())
-	app.Use(middleware.CORS())
+	app.Use(middleware.CORS(cfg.Server.CORSOrigins))
 
 	handlers.RegisterRoutes(app, db, cfg, taskClient, wsManager)
 	registerFrontendRoutes(app, frontendDistDir())

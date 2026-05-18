@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -17,6 +18,18 @@ const (
 	StorageTypeS3    = "s3"
 	StorageTypeLocal = "local"
 )
+
+// NormalizeStorageType returns a canonical storage type string.
+func NormalizeStorageType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", StorageTypeS3:
+		return StorageTypeS3
+	case StorageTypeLocal:
+		return StorageTypeLocal
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
 
 type StorageBucket struct {
 	BaseModel

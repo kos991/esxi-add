@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/gofiber/contrib/websocket"
 	"gorm.io/gorm"
@@ -27,8 +29,11 @@ func (h *WebSocketHandler) HandleTaskLogs(conn *websocket.Conn) {
 	defer h.manager.Unregister(taskID, conn)
 	defer conn.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	var task models.BuildTask
-	if err := h.db.Where("task_id = ?", taskID).First(&task).Error; err == nil && task.LogOutput != "" {
+	if err := h.db.WithContext(ctx).Where("task_id = ?", taskID).First(&task).Error; err == nil && task.LogOutput != "" {
 		payload, _ := json.Marshal(map[string]any{
 			"type":    "history",
 			"message": task.LogOutput,

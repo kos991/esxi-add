@@ -21,4 +21,19 @@ describe('Ant Design Pro layout', () => {
     expect(screen.getByText('自定义构建页面')).toBeInTheDocument()
     expect(screen.queryByText(/Docker/i)).not.toBeInTheDocument()
   })
+
+  it('sizes the main content layout within the remaining viewport width', () => {
+    render(
+      <AppShell pathname="/" navigate={vi.fn()}>
+        <div>总览页面</div>
+      </AppShell>
+    )
+
+    const mainLayout = screen.getByTestId('app-main-layout')
+    expect(mainLayout).toHaveStyle({
+      marginLeft: '80px',
+      width: 'calc(100vw - 80px)',
+      minWidth: '0',
+    })
+  })
 })

@@ -22,8 +22,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string `mapstructure:"host"`
-	Port int    `mapstructure:"port"`
+	Host        string `mapstructure:"host"`
+	Port        int    `mapstructure:"port"`
+	APIToken    string `mapstructure:"api_token"`
+	CORSOrigins string `mapstructure:"cors_origins"`
 }
 
 type DatabaseConfig struct {
@@ -91,8 +93,10 @@ func Load() (*Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.host", "127.0.0.1")
 	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.api_token", "")
+	v.SetDefault("server.cors_origins", "http://localhost:5173,http://127.0.0.1:5173")
 	v.SetDefault("database.path", "./data/esxi-builder.db")
 	v.SetDefault("storage.type", "local")
 	v.SetDefault("storage.local_path", "./data/storage")
@@ -113,6 +117,8 @@ func setDefaults(v *viper.Viper) {
 func bindEnvAliases(v *viper.Viper) error {
 	aliases := map[string][]string{
 		"server.port":              {"PORT"},
+		"server.api_token":         {"API_TOKEN"},
+		"server.cors_origins":      {"CORS_ORIGINS"},
 		"database.path":            {"DB_PATH"},
 		"storage.type":             {"STORAGE_TYPE"},
 		"storage.local_path":       {"STORAGE_PATH"},

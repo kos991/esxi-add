@@ -40,6 +40,9 @@ func TestLoadSupportsDeploymentEnvAliases(t *testing.T) {
 	t.Setenv("DEFAULT_S3_REGION", "us-east-1")
 	t.Setenv("DEFAULT_S3_USE_SSL", "false")
 	t.Setenv("DEFAULT_S3_PUBLIC_DOMAIN", "http://localhost:9000")
+	t.Setenv("SERVER_HOST", "0.0.0.0")
+	t.Setenv("API_TOKEN", "api-secret")
+	t.Setenv("CORS_ORIGINS", "https://app.example")
 
 	cfg, err := Load()
 	if err != nil {
@@ -48,6 +51,15 @@ func TestLoadSupportsDeploymentEnvAliases(t *testing.T) {
 
 	if cfg.Server.Port != 9090 {
 		t.Fatalf("expected PORT alias to set server port, got %d", cfg.Server.Port)
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Fatalf("expected SERVER_HOST alias, got %q", cfg.Server.Host)
+	}
+	if cfg.Server.APIToken != "api-secret" {
+		t.Fatalf("expected API_TOKEN alias, got %q", cfg.Server.APIToken)
+	}
+	if cfg.Server.CORSOrigins != "https://app.example" {
+		t.Fatalf("expected CORS_ORIGINS alias, got %q", cfg.Server.CORSOrigins)
 	}
 	if cfg.Database.Path != "/data/custom.db" {
 		t.Fatalf("expected DB_PATH alias, got %q", cfg.Database.Path)
@@ -69,5 +81,35 @@ func TestLoadSupportsDeploymentEnvAliases(t *testing.T) {
 		cfg.Storage.S3.UseSSL ||
 		cfg.Storage.S3.PublicDomain != "http://localhost:9000" {
 		t.Fatalf("default s3 aliases were not loaded: %+v", cfg.Storage.S3)
+	}
+}
+
+func TestLoadDefaultsToLoopbackHost(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "configs")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Fatalf("expected default host to be loopback, got %q", cfg.Server.Host)
 	}
 }

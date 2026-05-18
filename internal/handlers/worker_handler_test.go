@@ -150,3 +150,25 @@ func TestWorkerClaimDownloadAndUploadArtifactForLocalBucket(t *testing.T) {
 		t.Fatalf("unexpected artifact content: %q", artifact)
 	}
 }
+
+func TestWorkerTokenIsRequired(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.BuildTask{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	app := fiber.New()
+	app.Post("/worker/builds/claim", NewWorkerHandler(db, "").ClaimBuild)
+
+	req := httptest.NewRequest(http.MethodPost, "/worker/builds/claim", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("claim request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusServiceUnavailable {
+		t.Fatalf("expected worker API to be unavailable without token, got %d", resp.StatusCode)
+	}
+}

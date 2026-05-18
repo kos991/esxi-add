@@ -10,7 +10,10 @@ export function useWebSocket(taskId: string | null) {
     if (!taskId) return
 
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${protocol}://${location.host}/ws/builds/${taskId}`)
+    const encodedTaskId = encodeURIComponent(taskId)
+    const apiToken = import.meta.env.VITE_API_TOKEN?.trim()
+    const tokenQuery = apiToken ? `?token=${encodeURIComponent(apiToken)}` : ''
+    const ws = new WebSocket(`${protocol}://${location.host}/ws/builds/${encodedTaskId}${tokenQuery}`)
 
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data)

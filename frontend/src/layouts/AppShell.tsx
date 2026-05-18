@@ -52,6 +52,7 @@ function AnimatedLogo() {
 export function AppShell({ pathname, navigate, children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(true)
   const selectedPath = pathname.startsWith('/tasks/') ? '/tasks' : pathname
+  const siderWidth = collapsed ? 80 : 208
 
   return (
     <ConfigProvider
@@ -163,7 +164,18 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
             </Tooltip>
           </div>
         </Sider>
-        <Layout style={{ marginLeft: collapsed ? 80 : 208, transition: 'margin-left 0.2s', background: '#f4f6fb' }}>
+        <Layout
+          className="app-main-layout"
+          data-testid="app-main-layout"
+          style={{
+            marginLeft: siderWidth,
+            width: `calc(100vw - ${siderWidth}px)`,
+            maxWidth: `calc(100vw - ${siderWidth}px)`,
+            minWidth: 0,
+            transition: 'margin-left 0.2s, width 0.2s, max-width 0.2s',
+            background: '#f4f6fb',
+          }}
+        >
           <Content className="ant-pro-layout-content" style={{ display: 'block', width: '100%' }}>
             <div className="app-content">{children}</div>
           </Content>

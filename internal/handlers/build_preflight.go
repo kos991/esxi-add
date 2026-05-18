@@ -80,7 +80,9 @@ func (h *BuildHandler) StartPreflight(c *fiber.Ctx) error {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	h.setPreflight(preflight)
+	if !h.registerPreflight(preflight) {
+		return c.Status(fiber.StatusTooManyRequests).JSON(utils.ErrorResponse("too many build preflights are already running"))
+	}
 
 	ctx := context.WithoutCancel(c.UserContext())
 	go h.runPreflight(ctx, preflight.ID, req)
@@ -156,6 +158,13 @@ func buildPreflightFiles(depotPath string, driverPaths []string) []PreflightFile
 }
 
 func (h *BuildHandler) runPreflight(ctx context.Context, id string, req buildPreflightRequest) {
+	timeout := h.preflightTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	resolver, err := h.preflightResolver(ctx, req.BucketID)
 	if err != nil {
 		h.finishPreflight(id, PreflightStatusFailed, err.Error())
@@ -266,14 +275,15 @@ func (h *BuildHandler) preflightResolver(ctx context.Context, bucketID uint) (pr
 		return nil, fmt.Errorf("find storage bucket: %w", err)
 	}
 
-	if bucket.Type == models.StorageTypeLocal {
+	bucketType := models.NormalizeStorageType(bucket.Type)
+	if bucketType == models.StorageTypeLocal {
 		store, err := storage.NewLocalStore(bucket.LocalPath)
 		if err != nil {
 			return nil, err
 		}
 		return preflightLocalResolver{store: store}, nil
 	}
-	if bucket.Type != "" && bucket.Type != models.StorageTypeS3 {
+	if bucketType != models.StorageTypeS3 {
 		return nil, fmt.Errorf("unsupported storage bucket type: %s", bucket.Type)
 	}
 
@@ -298,10 +308,27 @@ func (h *BuildHandler) preflightResolver(ctx context.Context, bucketID uint) (pr
 	return preflightCacheResolver{manager: manager}, nil
 }
 
-func (h *BuildHandler) setPreflight(preflight *BuildPreflight) {
+func (h *BuildHandler) registerPreflight(preflight *BuildPreflight) bool {
 	h.preflightMu.Lock()
 	defer h.preflightMu.Unlock()
+
+	h.prunePreflightsLocked(time.Now())
+	activeCount := 0
+	for _, existing := range h.preflights {
+		if existing != nil && !isTerminalPreflightStatus(existing.Status) {
+			activeCount++
+		}
+	}
+	maxPreflights := h.maxPreflights
+	if maxPreflights <= 0 {
+		maxPreflights = 1
+	}
+	if activeCount >= maxPreflights {
+		return false
+	}
+
 	h.preflights[preflight.ID] = preflight.clone()
+	return true
 }
 
 func (h *BuildHandler) getPreflight(id string) (*BuildPreflight, bool) {
@@ -312,6 +339,39 @@ func (h *BuildHandler) getPreflight(id string) (*BuildPreflight, bool) {
 		return nil, false
 	}
 	return preflight.clone(), true
+}
+
+func (h *BuildHandler) prunePreflightsLocked(now time.Time) {
+	ttl := h.preflightTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	timeout := h.preflightTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	for id, preflight := range h.preflights {
+		if preflight == nil {
+			delete(h.preflights, id)
+			continue
+		}
+		if isTerminalPreflightStatus(preflight.Status) && now.Sub(preflight.UpdatedAt) > ttl {
+			delete(h.preflights, id)
+			continue
+		}
+		if !isTerminalPreflightStatus(preflight.Status) && now.Sub(preflight.CreatedAt) > timeout {
+			delete(h.preflights, id)
+		}
+	}
+}
+
+func isTerminalPreflightStatus(status string) bool {
+	switch status {
+	case PreflightStatusReady, PreflightStatusInvalid, PreflightStatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *BuildHandler) updatePreflightFile(id string, index int, update func(*PreflightFile)) {

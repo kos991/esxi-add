@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
+	taskqueue "github.com/esxi-builder/esxi-iso-builder/internal/queue"
 	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 	"github.com/esxi-builder/esxi-iso-builder/internal/utils"
 )
@@ -109,7 +111,7 @@ func (h *WorkerHandler) ClaimBuild(c *fiber.Ctx) error {
 		DepotPath:     claimed.DepotPath,
 		DriverPaths:   driverPaths,
 		CustomISOName: claimed.CustomISOName,
-		OutputISOName: buildOutputFileName(claimed.CustomISOName, claimed.ESXiVersion),
+		OutputISOName: taskqueue.BuildOutputFileName(claimed.CustomISOName, claimed.ESXiVersion),
 	}))
 }
 
@@ -154,7 +156,7 @@ func (h *WorkerHandler) UpdateProgress(c *fiber.Ctx) error {
 	}
 
 	if strings.TrimSpace(req.Log) != "" {
-		if err := h.appendLog(taskID, strings.TrimSpace(req.Log)); err != nil {
+		if err := h.appendLog(c.UserContext(), taskID, strings.TrimSpace(req.Log)); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 		}
 	}
@@ -221,7 +223,7 @@ func (h *WorkerHandler) UploadArtifact(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
 
-	outputName := buildOutputFileName(task.CustomISOName, task.ESXiVersion)
+	outputName := taskqueue.BuildOutputFileName(task.CustomISOName, task.ESXiVersion)
 	outputObjectPath := path.Join("output", outputName)
 	hasher := sha256.New()
 	if err := store.Upload(c.UserContext(), outputObjectPath, io.TeeReader(file, hasher), fileHeader.Size, contentTypeFromName(outputName)); err != nil {
@@ -244,7 +246,7 @@ func (h *WorkerHandler) UploadArtifact(c *fiber.Ctx) error {
 	if err := h.db.WithContext(c.UserContext()).Model(&models.BuildTask{}).Where("task_id = ?", taskID).Updates(updates).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
-	_ = h.appendLog(taskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
+	_ = h.appendLog(c.UserContext(), taskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 
 	return c.JSON(utils.SuccessResponse(fiber.Map{
 		"output_iso":        outputObjectPath,
@@ -255,9 +257,10 @@ func (h *WorkerHandler) UploadArtifact(c *fiber.Ctx) error {
 
 func (h *WorkerHandler) authorize(c *fiber.Ctx) error {
 	if h.workerToken == "" {
-		return nil
+		return c.Status(fiber.StatusServiceUnavailable).JSON(utils.ErrorResponse("worker token is not configured"))
 	}
-	if c.Get("X-Worker-Token") != h.workerToken {
+	token := strings.TrimSpace(c.Get("X-Worker-Token"))
+	if len(token) != len(h.workerToken) || subtle.ConstantTimeCompare([]byte(token), []byte(h.workerToken)) != 1 {
 		return c.Status(fiber.StatusUnauthorized).JSON(utils.ErrorResponse("invalid worker token"))
 	}
 	return nil
@@ -268,7 +271,7 @@ func (h *WorkerHandler) objectStore(ctx context.Context, bucketID uint) (objectS
 	if err := h.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {
 		return nil, fmt.Errorf("find storage bucket: %w", err)
 	}
-	switch normalizeStorageType(bucket.Type) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case models.StorageTypeLocal:
 		return storage.NewLocalStore(bucket.LocalPath)
 	case models.StorageTypeS3:
@@ -286,8 +289,8 @@ func (h *WorkerHandler) objectStore(ctx context.Context, bucketID uint) (objectS
 	}
 }
 
-func (h *WorkerHandler) appendLog(taskID, msg string) error {
-	return h.db.Model(&models.BuildTask{}).
+func (h *WorkerHandler) appendLog(ctx context.Context, taskID, msg string) error {
+	return h.db.WithContext(ctx).Model(&models.BuildTask{}).
 		Where("task_id = ?", taskID).
 		Update("log_output", gorm.Expr("COALESCE(log_output, '') || ?", msg+"\n")).Error
 }
@@ -301,17 +304,6 @@ func parseDriverPaths(raw string) ([]string, error) {
 		return nil, fmt.Errorf("parse driver paths: %w", err)
 	}
 	return paths, nil
-}
-
-func buildOutputFileName(customISOName, esxiVersion string) string {
-	if strings.TrimSpace(customISOName) != "" {
-		name := filepath.Base(strings.ReplaceAll(strings.TrimSpace(customISOName), "\\", "/"))
-		if strings.EqualFold(filepath.Ext(name), ".iso") {
-			return name
-		}
-		return name + ".iso"
-	}
-	return fmt.Sprintf("ESXi-%s-custom-%s.iso", esxiVersion, time.Now().Format("20060102-150405"))
 }
 
 func contentTypeFromName(name string) string {

@@ -333,6 +333,68 @@ func TestBuildPreflightS3FilesDownloadsMissingCacheBeforeValidation(t *testing.T
 	}
 }
 
+func TestBuildPreflightRejectsWhenTooManyAreRunning(t *testing.T) {
+	localRoot := t.TempDir()
+	db, bucketID := newBuildHandlerLocalBucketTestDB(t, localRoot)
+
+	validDepot := "depot/8x/ESXi-8.0.zip"
+	writeBuildHandlerLocalObject(t, localRoot, validDepot, []byte("PK\x03\x04depot"))
+	if err := db.Create(&models.FileMetadata{
+		StorageBucketID: bucketID,
+		Path:            validDepot,
+		Type:            models.FileTypeDepot,
+		ESXiVersion:     "8.0",
+	}).Error; err != nil {
+		t.Fatalf("create file metadata: %v", err)
+	}
+
+	app := fiber.New()
+	handler := NewBuildHandler(db, nil, "external")
+	handler.preflights["running"] = &BuildPreflight{
+		ID:        "running",
+		Status:    PreflightStatusRunning,
+		Files:     []PreflightFile{{Kind: "depot", Path: validDepot, Status: PreflightFileStatusDownloading}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	app.Post("/builds/preflight", handler.StartPreflight)
+
+	body := `{"bucket_id":` + strconv.FormatUint(uint64(bucketID), 10) + `,"depot_path":"` + validDepot + `","driver_paths":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/builds/preflight", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("start preflight request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusTooManyRequests {
+		t.Fatalf("expected status 429, got %d", resp.StatusCode)
+	}
+}
+
+func TestBuildPreflightResolverNormalizesStorageType(t *testing.T) {
+	localRoot := t.TempDir()
+	db, bucketID := newBuildHandlerLocalBucketTestDB(t, localRoot)
+	if err := db.Model(&models.StorageBucket{}).Where("id = ?", bucketID).Update("type", "LOCAL").Error; err != nil {
+		t.Fatalf("update bucket type: %v", err)
+	}
+
+	handler := NewBuildHandler(db, nil, "external")
+	resolver, err := handler.preflightResolver(context.Background(), bucketID)
+	if err != nil {
+		t.Fatalf("expected normalized local bucket to resolve, got %v", err)
+	}
+
+	objectPath := "depot/8x/ESXi-8.0.zip"
+	writeBuildHandlerLocalObject(t, localRoot, objectPath, []byte("PK\x03\x04depot"))
+	localPath, err := resolver.EnsureFile(context.Background(), objectPath, nil)
+	if err != nil {
+		t.Fatalf("ensure local object: %v", err)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(localPath), objectPath) {
+		t.Fatalf("expected local object path to end with %q, got %q", objectPath, localPath)
+	}
+}
+
 func waitForBuildPreflightStatus(t *testing.T, app *fiber.App, id string) struct {
 	Success bool           `json:"success"`
 	Data    BuildPreflight `json:"data"`

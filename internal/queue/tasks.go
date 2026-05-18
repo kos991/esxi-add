@@ -2,6 +2,10 @@ package queue
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/hibiken/asynq"
 )
@@ -23,4 +27,16 @@ func NewBuildISOTask(p *BuildISOPayload) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypeBuildISO, data), nil
+}
+
+// BuildOutputFileName generates the output ISO filename from a custom name or ESXi version.
+func BuildOutputFileName(customISOName, esxiVersion string) string {
+	if strings.TrimSpace(customISOName) != "" {
+		name := filepath.Base(strings.ReplaceAll(strings.TrimSpace(customISOName), "\\", "/"))
+		if strings.EqualFold(filepath.Ext(name), ".iso") {
+			return name
+		}
+		return name + ".iso"
+	}
+	return fmt.Sprintf("ESXi-%s-custom-%s.iso", esxiVersion, time.Now().Format("20060102-150405"))
 }

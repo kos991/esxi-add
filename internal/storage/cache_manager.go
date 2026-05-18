@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -59,7 +60,10 @@ func NewCacheManagerWithCallbacks(
 }
 
 func (c *CacheManager) Status(objectPath string, objectInfo minio.ObjectInfo) (CacheFileStatus, error) {
-	localPath := filepath.Join(c.cacheDir, filepath.FromSlash(objectPath))
+	localPath, err := c.cachePath(objectPath)
+	if err != nil {
+		return CacheFileStatus{}, err
+	}
 	info, err := os.Stat(localPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -97,7 +101,10 @@ func (c *CacheManager) EnsureFileWithProgress(ctx context.Context, s3Path string
 		return "", fmt.Errorf("s3 client is not configured")
 	}
 
-	localPath = filepath.Join(c.cacheDir, filepath.FromSlash(s3Path))
+	localPath, err = c.cachePath(s3Path)
+	if err != nil {
+		return "", err
+	}
 	etagPath := localPath + ".etag"
 
 	objectInfo, err := c.getObjectInfo(ctx, s3Path)
@@ -168,6 +175,36 @@ func (c *CacheManager) EnsureFileWithProgress(ctx context.Context, s3Path string
 	}
 
 	return localPath, nil
+}
+
+func (c *CacheManager) cachePath(objectPath string) (string, error) {
+	if strings.TrimSpace(c.cacheDir) == "" {
+		return "", fmt.Errorf("cache directory is required")
+	}
+	normalized := strings.ReplaceAll(strings.TrimSpace(objectPath), "\\", "/")
+	cleanName := path.Clean(normalized)
+	cleanName = strings.TrimPrefix(cleanName, "./")
+	if cleanName == "" || cleanName == "." || path.IsAbs(normalized) || cleanName == ".." || strings.HasPrefix(cleanName, "../") {
+		return "", fmt.Errorf("invalid cache object path: %s", objectPath)
+	}
+
+	root, err := filepath.Abs(c.cacheDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve cache directory: %w", err)
+	}
+	localPath := filepath.Join(root, filepath.FromSlash(cleanName))
+	absPath, err := filepath.Abs(localPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve cache object path: %w", err)
+	}
+	rel, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return "", fmt.Errorf("check cache object path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("cache object path escapes cache directory: %s", objectPath)
+	}
+	return absPath, nil
 }
 
 type progressWriter struct {

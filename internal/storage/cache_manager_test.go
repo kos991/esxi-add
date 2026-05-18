@@ -144,6 +144,29 @@ func TestCacheManagerEnsureFileWithProgressReportsDownloadAndCacheHit(t *testing
 	}
 }
 
+func TestCacheManagerRejectsPathTraversal(t *testing.T) {
+	cacheDir := t.TempDir()
+	manager := NewCacheManager(cacheDir, nil)
+	escapePath := "../escape.zip"
+
+	if _, err := manager.Status(escapePath, minio.ObjectInfo{Key: escapePath, ETag: "etag"}); err == nil {
+		t.Fatal("expected traversal status path to be rejected")
+	}
+
+	manager.getObjectInfo = func(ctx context.Context, path string) (minio.ObjectInfo, error) {
+		t.Fatalf("get object info should not be called for invalid path %s", path)
+		return minio.ObjectInfo{}, nil
+	}
+	manager.downloadObject = func(ctx context.Context, path string) (io.ReadCloser, error) {
+		t.Fatalf("download should not be called for invalid path %s", path)
+		return nil, nil
+	}
+
+	if _, err := manager.EnsureFile(context.Background(), escapePath); err == nil {
+		t.Fatal("expected traversal ensure path to be rejected")
+	}
+}
+
 func writeCacheFile(t *testing.T, cacheDir, objectPath string, content []byte, etag string) {
 	t.Helper()
 	localPath := filepath.Join(cacheDir, filepath.FromSlash(objectPath))

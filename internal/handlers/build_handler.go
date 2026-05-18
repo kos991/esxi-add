@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -23,12 +24,15 @@ import (
 )
 
 type BuildHandler struct {
-	db          *gorm.DB
-	taskClient  *asynq.Client
-	buildMode   string
-	workDir     string
-	preflightMu sync.RWMutex
-	preflights  map[string]*BuildPreflight
+	db               *gorm.DB
+	taskClient       *asynq.Client
+	buildMode        string
+	workDir          string
+	preflightMu      sync.RWMutex
+	preflights       map[string]*BuildPreflight
+	maxPreflights    int
+	preflightTTL     time.Duration
+	preflightTimeout time.Duration
 }
 
 type createBuildRequest struct {
@@ -41,11 +45,14 @@ type createBuildRequest struct {
 
 func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
 	return &BuildHandler{
-		db:         db,
-		taskClient: client,
-		buildMode:  normalizeBuildMode(buildMode),
-		workDir:    "./data/builds",
-		preflights: make(map[string]*BuildPreflight),
+		db:               db,
+		taskClient:       client,
+		buildMode:        normalizeBuildMode(buildMode),
+		workDir:          "./data/builds",
+		preflights:       make(map[string]*BuildPreflight),
+		maxPreflights:    1,
+		preflightTTL:     30 * time.Minute,
+		preflightTimeout: 30 * time.Minute,
 	}
 }
 
@@ -246,7 +253,7 @@ func (h *BuildHandler) openArtifact(ctx context.Context, bucketID uint, objectPa
 		return nil, fmt.Errorf("find storage bucket: %w", err)
 	}
 
-	switch strings.ToLower(strings.TrimSpace(bucket.Type)) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case "", models.StorageTypeS3:
 		client, err := storage.NewS3Client(&storage.S3Config{
 			Endpoint:        bucket.Endpoint,

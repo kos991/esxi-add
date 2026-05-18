@@ -48,7 +48,7 @@ func (h *BucketHandler) Create(c *fiber.Ctx) error {
 
 	bucket := models.StorageBucket{
 		Name:         req.Name,
-		Type:         normalizeStorageType(req.Type),
+		Type:         models.NormalizeStorageType(req.Type),
 		Endpoint:     req.Endpoint,
 		AccessKey:    req.AccessKey,
 		SecretKey:    req.SecretKey,
@@ -135,7 +135,7 @@ func (h *BucketHandler) Update(c *fiber.Ctx) error {
 		}
 
 		bucket.Name = req.Name
-		bucket.Type = normalizeStorageType(req.Type)
+		bucket.Type = models.NormalizeStorageType(req.Type)
 		bucket.Endpoint = req.Endpoint
 		bucket.AccessKey = req.AccessKey
 		bucket.SecretKey = req.SecretKey
@@ -237,25 +237,14 @@ func mergeBucketUpdateRequest(req *bucketRequest, existing models.StorageBucket)
 	if req == nil {
 		return
 	}
-	if normalizeStorageType(req.Type) == models.StorageTypeS3 && strings.TrimSpace(req.SecretKey) == "" {
+	if models.NormalizeStorageType(req.Type) == models.StorageTypeS3 && strings.TrimSpace(req.SecretKey) == "" {
 		req.SecretKey = existing.SecretKey
-	}
-}
-
-func normalizeStorageType(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", models.StorageTypeS3:
-		return models.StorageTypeS3
-	case models.StorageTypeLocal:
-		return models.StorageTypeLocal
-	default:
-		return strings.ToLower(strings.TrimSpace(value))
 	}
 }
 
 func validateBucketRequest(ctx context.Context, req *bucketRequest) error {
 	req.Name = strings.TrimSpace(req.Name)
-	req.Type = normalizeStorageType(req.Type)
+	req.Type = models.NormalizeStorageType(req.Type)
 	req.Endpoint = strings.TrimSpace(req.Endpoint)
 	req.AccessKey = strings.TrimSpace(req.AccessKey)
 	req.SecretKey = strings.TrimSpace(req.SecretKey)
@@ -287,7 +276,7 @@ func validateBucketRequest(ctx context.Context, req *bucketRequest) error {
 }
 
 func testBucketConnection(ctx context.Context, bucket *models.StorageBucket) error {
-	switch normalizeStorageType(bucket.Type) {
+	switch models.NormalizeStorageType(bucket.Type) {
 	case models.StorageTypeS3:
 		client, err := storage.NewS3Client(&storage.S3Config{
 			Endpoint:        bucket.Endpoint,

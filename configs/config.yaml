@@ -1,6 +1,8 @@
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8080
+  api_token: ""
+  cors_origins: http://localhost:5173,http://127.0.0.1:5173
 database:
   path: ./data/esxi-builder.db
 storage:
