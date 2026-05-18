@@ -1,0 +1,21 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+database:
+  path: ./data/esxi-builder.db
+storage:
+  type: local
+  local_path: ./data/storage
+build:
+  mode: local
+  work_dir: ./data/builds
+  powershell_path: pwsh
+  script_path: ./scripts/build-esxi-iso.ps1
+  max_concurrent: 3
+  worker_token: ""
+queue:
+  concurrency: 2
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
