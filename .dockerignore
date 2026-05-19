@@ -1,8 +1,0 @@
-.git
-.tmp
-bin/
-data/
-*.db
-*.md
-frontend/node_modules/
-frontend/dist/
