@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interaction Workbench Concept</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 80% 12%, rgb(37 99 235 / 8%), transparent 30%),
+          radial-gradient(circle at 25% 86%, rgb(20 184 166 / 7%), transparent 30%),
+          #f7f9fc;
+        color: #0f172a;
+        font-family:
+          Inter, "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", "Segoe UI",
+          sans-serif;
+      }
+
+      .app {
+        display: grid;
+        min-height: 100vh;
+        grid-template-columns: 212px 1fr;
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #e5e7eb;
+        background: rgb(255 255 255 / 94%);
+      }
+
+      .brand {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        height: 68px;
+        padding: 0 18px;
+        border-bottom: 1px solid #edf0f4;
+      }
+
+      .logo {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border-radius: 9px;
+        background: linear-gradient(135deg, #2563eb, #14b8a6);
+        color: #fff;
+        font-weight: 900;
+        box-shadow: 0 12px 26px rgb(37 99 235 / 22%);
+      }
+
+      .brand strong {
+        display: block;
+        font-size: 14px;
+      }
+
+      .brand span {
+        color: #64748b;
+        font-size: 11px;
+      }
+
+      .nav {
+        display: grid;
+        gap: 5px;
+        padding: 16px 12px;
+      }
+
+      .nav-item {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        gap: 10px;
+        align-items: center;
+        height: 38px;
+        padding: 0 12px;
+        border-radius: 8px;
+        color: #475569;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .nav-item.active {
+        position: relative;
+        background: #eff6ff;
+        color: #1d4ed8;
+      }
+
+      .nav-item.active::after {
+        position: absolute;
+        right: 10px;
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: #14b8a6;
+        box-shadow: 0 0 0 5px rgb(20 184 166 / 12%);
+        content: "";
+        animation: pulse 1.8s ease-in-out infinite;
+      }
+
+      svg {
+        width: 17px;
+        height: 17px;
+        fill: none;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 2;
+      }
+
+      .collapse {
+        margin-top: auto;
+        padding: 12px;
+        border-top: 1px solid #edf0f4;
+      }
+
+      .collapse button,
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 36px;
+        gap: 8px;
+        padding: 0 14px;
+        border: 1px solid #dbe3ee;
+        border-radius: 8px;
+        background: #fff;
+        color: #1e293b;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .collapse button {
+        width: 100%;
+        color: #64748b;
+      }
+
+      .button.primary {
+        border-color: #2563eb;
+        background: linear-gradient(135deg, #2563eb, #0f766e, #2563eb);
+        background-size: 220% 220%;
+        color: #fff;
+        animation: flow 4.5s linear infinite;
+        box-shadow: 0 12px 28px rgb(37 99 235 / 18%);
+      }
+
+      .main {
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        min-width: 0;
+        padding: 26px 32px 0;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 18px;
+      }
+
+      .crumb {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      h1 {
+        margin: 8px 0 5px;
+        font-size: 26px;
+        line-height: 1.15;
+      }
+
+      .subtitle {
+        color: #64748b;
+        font-size: 13px;
+      }
+
+      .stepper {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-bottom: 18px;
+        padding: 18px;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+      }
+
+      .step {
+        position: relative;
+        display: grid;
+        grid-template-columns: 38px 1fr;
+        gap: 10px;
+        min-height: 54px;
+        padding-right: 18px;
+      }
+
+      .step:not(:last-child)::after {
+        position: absolute;
+        top: 17px;
+        right: 18px;
+        left: 48px;
+        height: 2px;
+        border-radius: 999px;
+        background: #dbeafe;
+        content: "";
+      }
+
+      .step.done:not(:last-child)::after {
+        background: linear-gradient(90deg, #22c55e, #14b8a6);
+      }
+
+      .step.active:not(:last-child)::after {
+        background: linear-gradient(90deg, #2563eb, #14b8a6, #8b5cf6, #dbeafe);
+        background-size: 240% 100%;
+        animation: flow 3s linear infinite;
+      }
+
+      .dot {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border: 1px solid #dbeafe;
+        border-radius: 999px;
+        background: #fff;
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .done .dot {
+        border-color: #86efac;
+        background: #ecfdf5;
+        color: #15803d;
+      }
+
+      .active .dot {
+        border-color: #2563eb;
+        background: #eff6ff;
+        color: #1d4ed8;
+        box-shadow: 0 0 0 7px rgb(37 99 235 / 10%);
+        animation: pulse 1.8s ease-in-out infinite;
+      }
+
+      .step strong {
+        display: block;
+        margin: 1px 0 4px;
+        font-size: 14px;
+      }
+
+      .step span {
+        color: #64748b;
+        font-size: 12px;
+      }
+
+      .workspace {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(0, 1fr) 322px;
+        align-items: start;
+      }
+
+      .panel {
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+      }
+
+      .panel.active {
+        border: 1px solid transparent;
+        background:
+          linear-gradient(#fff, #fff) padding-box,
+          linear-gradient(120deg, #2563eb, #14b8a6, #8b5cf6, #2563eb) border-box;
+        background-size: auto, 240% 240%;
+        animation: flow 4s linear infinite;
+        box-shadow:
+          0 1px 2px rgb(15 23 42 / 4%),
+          0 16px 36px rgb(37 99 235 / 8%);
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 54px;
+        padding: 0 18px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+
+      .title {
+        display: grid;
+        gap: 3px;
+      }
+
+      .title strong {
+        font-size: 15px;
+      }
+
+      .title span {
+        color: #64748b;
+        font-size: 12px;
+      }
+
+      .toolbar {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 1fr 132px 132px auto;
+        padding: 14px 18px;
+        border-bottom: 1px solid #e2e8f0;
+        background: #fbfdff;
+      }
+
+      .input,
+      .select {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 36px;
+        gap: 8px;
+        padding: 0 12px;
+        border: 1px solid #dbe3ee;
+        border-radius: 8px;
+        background: #fff;
+        color: #334155;
+        font-size: 13px;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th {
+        height: 38px;
+        padding: 0 14px;
+        border-bottom: 1px solid #e2e8f0;
+        background: #f8fafc;
+        color: #64748b;
+        text-align: left;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      td {
+        height: 54px;
+        padding: 0 14px;
+        border-bottom: 1px solid #eef2f7;
+        color: #1e293b;
+      }
+
+      tr.selected td {
+        background: #f8fbff;
+      }
+
+      .check {
+        display: grid;
+        width: 16px;
+        height: 16px;
+        place-items: center;
+        border: 1px solid #bfdbfe;
+        border-radius: 5px;
+        background: #2563eb;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .empty-check {
+        width: 16px;
+        height: 16px;
+        border: 1px solid #cbd5e1;
+        border-radius: 5px;
+        background: #fff;
+      }
+
+      .driver {
+        display: grid;
+        gap: 3px;
+      }
+
+      .driver strong {
+        font-size: 13px;
+      }
+
+      .driver span {
+        color: #64748b;
+        font-size: 12px;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: #eef2ff;
+        color: #3730a3;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .tag.good {
+        background: #dcfce7;
+        color: #166534;
+      }
+
+      .tag.warn {
+        background: #fff7ed;
+        color: #9a3412;
+      }
+
+      .row-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .link {
+        color: #2563eb;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .side-body {
+        display: grid;
+        gap: 14px;
+        padding: 16px 18px;
+      }
+
+      .summary {
+        display: grid;
+        gap: 5px;
+        padding-bottom: 13px;
+        border-bottom: 1px solid #eef2f7;
+      }
+
+      .summary span {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .summary strong,
+      .summary code {
+        overflow: hidden;
+        font-size: 13px;
+        font-weight: 850;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .bottom-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 66px;
+        margin: 18px -32px 0;
+        padding: 0 32px;
+        border-top: 1px solid #e2e8f0;
+        background: rgb(255 255 255 / 90%);
+        backdrop-filter: blur(12px);
+      }
+
+      .bottom-bar span {
+        color: #64748b;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: scale(0.92);
+          opacity: 0.75;
+        }
+
+        50% {
+          transform: scale(1.08);
+          opacity: 1;
+        }
+      }
+
+      @keyframes flow {
+        0% {
+          background-position: 0 0, 0% 50%;
+        }
+
+        50% {
+          background-position: 0 0, 100% 50%;
+        }
+
+        100% {
+          background-position: 0 0, 0% 50%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="logo">E</div>
+          <div>
+            <strong>ESXi Builder</strong>
+            <span>build console</span>
+          </div>
+        </div>
+        <nav class="nav">
+          <div class="nav-item"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5" /><path d="M6.5 10v9h11v-9" /></svg><span>总览</span></div>
+          <div class="nav-item"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="2" /><rect x="4" y="14" width="16" height="6" rx="2" /></svg><span>存储节点</span></div>
+          <div class="nav-item"><svg viewBox="0 0 24 24"><path d="M4 7.5h6l2 2H20v8.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" /></svg><span>文件库</span></div>
+          <div class="nav-item active"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5" /><circle cx="18" cy="7" r="2.5" /><circle cx="12" cy="17" r="2.5" /><path d="M8.5 7h7" /><path d="m7.5 9 3.2 5.7" /><path d="m16.5 9-3.2 5.7" /></svg><span>构建流水线</span></div>
+          <div class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg><span>任务日志</span></div>
+        </nav>
+        <div class="collapse"><button>收起侧栏</button></div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="crumb">Local Storage / ESXi 8.0</div>
+            <h1>构建自定义 ESXi ISO</h1>
+            <div class="subtitle">步骤驱动工作流：每一步只处理当前需要完成的动作。</div>
+          </div>
+          <div class="button primary"><svg viewBox="0 0 24 24"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg>继续预检</div>
+        </header>
+
+        <section class="stepper">
+          <div class="step done">
+            <div class="dot">✓</div>
+            <div><strong>选择源文件</strong><span>Depot 已匹配版本</span></div>
+          </div>
+          <div class="step active">
+            <div class="dot">2</div>
+            <div><strong>选择驱动</strong><span>筛选并确认注入列表</span></div>
+          </div>
+          <div class="step">
+            <div class="dot">3</div>
+            <div><strong>预检校验</strong><span>依赖、缓存、空间检查</span></div>
+          </div>
+          <div class="step">
+            <div class="dot">4</div>
+            <div><strong>构建输出</strong><span>生成 ISO 并归档</span></div>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <div class="panel active">
+            <div class="panel-head">
+              <div class="title">
+                <strong>驱动选择</strong>
+                <span>勾选要注入的驱动，冲突项会在预检前提示。</span>
+              </div>
+              <div class="button">批量导入</div>
+            </div>
+            <div class="toolbar">
+              <div class="input"><span>搜索驱动名称 / 供应商 / 文件名</span><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg></div>
+              <div class="select">兼容性 <span>全部</span></div>
+              <div class="select">来源 <span>本地</span></div>
+              <div class="button">应用筛选</div>
+            </div>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width: 44px"><div class="check">✓</div></th>
+                  <th>驱动</th>
+                  <th>版本</th>
+                  <th>来源</th>
+                  <th>兼容性</th>
+                  <th>大小</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="selected">
+                  <td><div class="check">✓</div></td>
+                  <td><div class="driver"><strong>net-community</strong><span>Realtek / Intel legacy NIC support</span></div></td>
+                  <td>1.2.7</td>
+                  <td>Local</td>
+                  <td><span class="tag good">匹配</span></td>
+                  <td>18 MB</td>
+                  <td><span class="tag">待注入</span></td>
+                  <td><div class="row-actions"><span class="link">查看</span><span class="link">排除</span></div></td>
+                </tr>
+                <tr class="selected">
+                  <td><div class="check">✓</div></td>
+                  <td><div class="driver"><strong>nvme-community</strong><span>NVMe storage controller package</span></div></td>
+                  <td>1.0.3</td>
+                  <td>Cache</td>
+                  <td><span class="tag good">匹配</span></td>
+                  <td>11 MB</td>
+                  <td><span class="tag">待注入</span></td>
+                  <td><div class="row-actions"><span class="link">查看</span><span class="link">排除</span></div></td>
+                </tr>
+                <tr>
+                  <td><div class="empty-check"></div></td>
+                  <td><div class="driver"><strong>usb-nic-fling</strong><span>USB network adapter driver</span></div></td>
+                  <td>1.12</td>
+                  <td>Remote</td>
+                  <td><span class="tag warn">需确认</span></td>
+                  <td>9 MB</td>
+                  <td><span class="tag warn">未选择</span></td>
+                  <td><div class="row-actions"><span class="link">查看</span><span class="link">注入</span></div></td>
+                </tr>
+                <tr class="selected">
+                  <td><div class="check">✓</div></td>
+                  <td><div class="driver"><strong>sata-xahci</strong><span>Additional SATA AHCI mappings</span></div></td>
+                  <td>1.43</td>
+                  <td>Local</td>
+                  <td><span class="tag good">匹配</span></td>
+                  <td>6 MB</td>
+                  <td><span class="tag">待注入</span></td>
+                  <td><div class="row-actions"><span class="link">查看</span><span class="link">排除</span></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <aside class="panel">
+            <div class="panel-head">
+              <div class="title"><strong>当前步骤摘要</strong><span>选择驱动</span></div>
+            </div>
+            <div class="side-body">
+              <div class="summary"><span>已选择驱动</span><strong>3 个，35 MB</strong></div>
+              <div class="summary"><span>兼容性</span><strong>3 匹配，1 需确认</strong></div>
+              <div class="summary"><span>Depot</span><code>ESXi-8.0U2-depot.zip</code></div>
+              <div class="summary"><span>下一步动作</span><strong>进入预检校验</strong></div>
+              <div class="summary"><span>提示</span><strong>usb-nic-fling 可选，不影响继续</strong></div>
+            </div>
+          </aside>
+        </section>
+
+        <footer class="bottom-bar">
+          <span>已选择 3 个驱动，预检前仍可返回修改。</span>
+          <div>
+            <button class="button">上一步</button>
+            <button class="button primary">继续预检</button>
+          </div>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

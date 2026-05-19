@@ -7,6 +7,7 @@ export interface CreateBuildPayload {
   depot_path: string
   driver_paths: string[]
   custom_iso_name?: string
+  image_profile?: string
 }
 
 export interface PaginatedBuilds {

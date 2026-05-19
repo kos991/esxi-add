@@ -48,6 +48,7 @@ func TestWorkerClaimDownloadAndUploadArtifactForLocalBucket(t *testing.T) {
 		DepotPath:       "depot/6x/ESXi650.zip",
 		Drivers:         `["driver/6x/net.vib"]`,
 		CustomISOName:   "custom.iso",
+		ImageProfile:    "ESXi-6.5.0-standard",
 	}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatalf("create task: %v", err)
@@ -75,6 +76,7 @@ func TestWorkerClaimDownloadAndUploadArtifactForLocalBucket(t *testing.T) {
 			BucketID      uint     `json:"bucket_id"`
 			DepotPath     string   `json:"depot_path"`
 			DriverPaths   []string `json:"driver_paths"`
+			ImageProfile  string   `json:"image_profile"`
 			OutputISOName string   `json:"output_iso_name"`
 		} `json:"data"`
 	}
@@ -86,6 +88,7 @@ func TestWorkerClaimDownloadAndUploadArtifactForLocalBucket(t *testing.T) {
 		claim.Data.BucketID != bucket.ID ||
 		claim.Data.DepotPath != "depot/6x/ESXi650.zip" ||
 		len(claim.Data.DriverPaths) != 1 ||
+		claim.Data.ImageProfile != "ESXi-6.5.0-standard" ||
 		claim.Data.OutputISOName != "custom.iso" {
 		t.Fatalf("unexpected claim: %+v", claim)
 	}

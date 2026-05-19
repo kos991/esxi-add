@@ -48,6 +48,7 @@ export interface BuildTask {
   depot_path: string
   drivers: string
   custom_iso_name?: string
+  image_profile?: string
   progress: number
   log_output?: string
   output_iso?: string
@@ -73,12 +74,22 @@ export interface BuildPreflightFile {
   message?: string
 }
 
+export interface ImageProfile {
+  name: string
+  vendor?: string
+  acceptance_level?: string
+  creation_time?: string
+  modified_time?: string
+}
+
 export interface BuildPreflight {
   id: string
   status: BuildPreflightStatus
   progress: number
   message?: string
   files: BuildPreflightFile[]
+  image_profiles?: ImageProfile[]
+  selected_image_profile?: string
   created_at: string
   updated_at: string
 }

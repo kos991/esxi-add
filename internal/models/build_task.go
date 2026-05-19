@@ -19,6 +19,7 @@ type BuildTask struct {
 	DepotPath       string         `json:"depot_path"`
 	Drivers         string         `gorm:"type:text" json:"drivers"`
 	CustomISOName   string         `json:"custom_iso_name"`
+	ImageProfile    string         `json:"image_profile"`
 	Progress        int            `gorm:"default:0" json:"progress"`
 	LogOutput       string         `gorm:"type:text" json:"log_output"`
 	OutputISO       string         `gorm:"column:output_iso" json:"output_iso"`

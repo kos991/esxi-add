@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ESXi ISO Builder - shadcn theme concept</title>
+    <style>
+      :root {
+        --background: #f8fafc;
+        --foreground: #09090b;
+        --card: #ffffff;
+        --card-foreground: #09090b;
+        --popover: #ffffff;
+        --primary: #18181b;
+        --primary-foreground: #fafafa;
+        --secondary: #f4f4f5;
+        --secondary-foreground: #18181b;
+        --muted: #f4f4f5;
+        --muted-foreground: #71717a;
+        --accent: #eff6ff;
+        --accent-foreground: #1d4ed8;
+        --destructive: #dc2626;
+        --border: #e4e4e7;
+        --input: #e4e4e7;
+        --ring: #2563eb;
+        --sidebar: #ffffff;
+        --sidebar-foreground: #27272a;
+        --sidebar-accent: #f4f4f5;
+        --sidebar-primary: #18181b;
+        --chart-1: #2563eb;
+        --chart-2: #10b981;
+        --chart-3: #f59e0b;
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--foreground);
+        font-family:
+          Inter, "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", "Segoe UI",
+          sans-serif;
+      }
+
+      .shell {
+        display: grid;
+        min-height: 100vh;
+        grid-template-columns: 248px 1fr;
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--border);
+        background: var(--sidebar);
+      }
+
+      .brand {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        height: 64px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .mark {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border-radius: var(--radius);
+        background: var(--primary);
+        color: var(--primary-foreground);
+        font-weight: 800;
+      }
+
+      .brand-title {
+        color: var(--sidebar-foreground);
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .brand-subtitle {
+        margin-top: 2px;
+        color: var(--muted-foreground);
+        font-size: 12px;
+      }
+
+      .section-label {
+        padding: 18px 18px 8px;
+        color: var(--muted-foreground);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .nav {
+        display: grid;
+        gap: 3px;
+        padding: 0 10px;
+      }
+
+      .nav-item {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        height: 36px;
+        padding: 0 10px;
+        border-radius: 7px;
+        color: var(--sidebar-foreground);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .nav-item.active {
+        background: var(--accent);
+        color: var(--accent-foreground);
+      }
+
+      .content {
+        padding: 18px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        height: 24px;
+        align-items: center;
+        padding: 0 8px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--card);
+        color: var(--muted-foreground);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      h1 {
+        margin: 9px 0 4px;
+        color: var(--foreground);
+        font-size: 24px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      .topbar p {
+        margin: 0;
+        color: var(--muted-foreground);
+        font-size: 13px;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 8px;
+      }
+
+      .btn {
+        display: inline-flex;
+        gap: 7px;
+        align-items: center;
+        height: 34px;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--card);
+        color: var(--foreground);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .btn.primary {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: var(--primary-foreground);
+      }
+
+      .grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .metrics {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--card);
+        color: var(--card-foreground);
+      }
+
+      .metric {
+        min-height: 88px;
+        padding: 14px;
+      }
+
+      .metric-label {
+        color: var(--muted-foreground);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .metric-value {
+        margin-top: 8px;
+        color: var(--foreground);
+        font-size: 27px;
+        line-height: 1;
+        font-weight: 760;
+      }
+
+      .metric-note {
+        margin-top: 7px;
+        color: var(--muted-foreground);
+        font-size: 12px;
+      }
+
+      .main-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        align-items: start;
+        margin-top: 12px;
+      }
+
+      .workflow {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-bottom: 12px;
+      }
+
+      .step {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        height: 38px;
+        padding: 0 11px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--card);
+        color: var(--muted-foreground);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .step.active {
+        border-color: #bfdbfe;
+        background: var(--accent);
+        color: var(--accent-foreground);
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 44px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .card-header strong {
+        font-size: 14px;
+      }
+
+      .card-body {
+        padding: 14px;
+      }
+
+      .notice {
+        margin-bottom: 13px;
+        padding: 9px 10px;
+        border: 1px solid #bfdbfe;
+        border-radius: 7px;
+        background: #eff6ff;
+        color: #1e40af;
+        font-size: 12px;
+      }
+
+      .form {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 220px 1fr;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--foreground);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .control {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 36px;
+        padding: 0 10px;
+        border: 1px solid var(--input);
+        border-radius: 7px;
+        background: var(--background);
+        color: var(--foreground);
+        font-size: 13px;
+      }
+
+      .card-footer {
+        display: flex;
+        justify-content: flex-end;
+        padding: 0 14px 14px;
+      }
+
+      .badge {
+        display: inline-flex;
+        width: max-content;
+        align-items: center;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: var(--secondary);
+        color: var(--secondary-foreground);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .badge.ok {
+        background: #dcfce7;
+        color: #166534;
+      }
+
+      .summary {
+        position: sticky;
+        top: 18px;
+      }
+
+      .summary-list {
+        display: grid;
+      }
+
+      .summary-row {
+        display: grid;
+        gap: 5px;
+        padding: 11px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .summary-row:first-child {
+        padding-top: 0;
+      }
+
+      .summary-row:last-child {
+        border-bottom: 0;
+      }
+
+      .summary-row span {
+        color: var(--muted-foreground);
+        font-size: 12px;
+      }
+
+      .summary-row strong,
+      .summary-row code {
+        overflow: hidden;
+        color: var(--foreground);
+        font-size: 13px;
+        font-weight: 700;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th {
+        padding: 8px 10px;
+        background: var(--muted);
+        color: var(--muted-foreground);
+        text-align: left;
+        font-weight: 700;
+      }
+
+      td {
+        padding: 10px;
+        border-top: 1px solid var(--border);
+        color: #3f3f46;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">E</div>
+          <div>
+            <div class="brand-title">ESXi ISO Builder</div>
+            <div class="brand-subtitle">internal build console</div>
+          </div>
+        </div>
+        <div class="section-label">Platform</div>
+        <nav class="nav">
+          <div class="nav-item active">⌂ <span>总览</span></div>
+          <div class="nav-item">▣ <span>存储节点</span></div>
+          <div class="nav-item">▤ <span>文件库</span></div>
+          <div class="nav-item">▦ <span>自定义构建</span></div>
+          <div class="nav-item">◷ <span>任务日志</span></div>
+        </nav>
+      </aside>
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">Local Storage · ESXi 8.0</div>
+            <h1>自定义 ESXi ISO 构建</h1>
+            <p>使用 Depot、驱动包和预检流程生成可下载的自定义镜像。</p>
+          </div>
+          <div class="toolbar">
+            <div class="btn">刷新</div>
+            <div class="btn primary">创建构建</div>
+          </div>
+        </header>
+
+        <section class="grid metrics">
+          <div class="card metric">
+            <div class="metric-label">运行状态</div>
+            <div class="metric-value">正常</div>
+            <div class="metric-note">API / 存储 / Worker 已连接</div>
+          </div>
+          <div class="card metric">
+            <div class="metric-label">构建任务</div>
+            <div class="metric-value">24</div>
+            <div class="metric-note">最近 7 天</div>
+          </div>
+          <div class="card metric">
+            <div class="metric-label">成功率</div>
+            <div class="metric-value">91%</div>
+            <div class="metric-note">22 / 24 completed</div>
+          </div>
+          <div class="card metric">
+            <div class="metric-label">缓存命中</div>
+            <div class="metric-value">18</div>
+            <div class="metric-note">Depot 与驱动文件</div>
+          </div>
+        </section>
+
+        <section class="main-grid">
+          <div>
+            <div class="workflow">
+              <div class="step active">1 选择源文件</div>
+              <div class="step">2 驱动注入</div>
+              <div class="step">3 下载校验</div>
+              <div class="step">4 输出设置</div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <strong>源文件</strong>
+                <span class="badge ok">Local Storage</span>
+              </div>
+              <div class="card-body">
+                <div class="notice">从存储节点中选择与 ESXi 版本匹配的 Depot 文件。</div>
+                <div class="form">
+                  <div>
+                    <label>ESXi 基础版本</label>
+                    <div class="control">ESXi 8.0 <span>⌄</span></div>
+                  </div>
+                  <div>
+                    <label>Depot 源文件</label>
+                    <div class="control">depot/8x/ESXi-8.0U2-depot.zip <span>⌄</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="card-footer">
+                <div class="btn primary">下一步</div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 12px">
+              <div class="card-header">
+                <strong>最近构建</strong>
+                <span style="color: var(--muted-foreground); font-size: 12px">实时刷新</span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务 ID</th>
+                    <th>ESXi</th>
+                    <th>状态</th>
+                    <th>进度</th>
+                    <th>创建时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>build-20260519-001</td>
+                    <td>8.0</td>
+                    <td><span class="badge ok">completed</span></td>
+                    <td>100%</td>
+                    <td>00:42</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside class="card summary">
+            <div class="card-header">
+              <strong>构建摘要</strong>
+            </div>
+            <div class="card-body summary-list">
+              <div class="summary-row">
+                <span>存储节点</span>
+                <strong>Local Storage</strong>
+              </div>
+              <div class="summary-row">
+                <span>Depot</span>
+                <code>ESXi-8.0U2-depot.zip</code>
+              </div>
+              <div class="summary-row">
+                <span>驱动</span>
+                <strong>3 个待注入</strong>
+              </div>
+              <div class="summary-row">
+                <span>预检</span>
+                <span class="badge ok">ready</span>
+              </div>
+              <div class="summary-row">
+                <span>输出</span>
+                <code>custom-esxi-8u2.iso</code>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

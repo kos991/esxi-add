@@ -14,6 +14,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"gorm.io/gorm"
 
+	"github.com/esxi-builder/esxi-iso-builder/internal/builder"
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
 	"github.com/esxi-builder/esxi-iso-builder/internal/queue"
 	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
@@ -35,13 +36,15 @@ const (
 )
 
 type BuildPreflight struct {
-	ID        string          `json:"id"`
-	Status    string          `json:"status"`
-	Progress  int             `json:"progress"`
-	Message   string          `json:"message,omitempty"`
-	Files     []PreflightFile `json:"files"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID                   string                 `json:"id"`
+	Status               string                 `json:"status"`
+	Progress             int                    `json:"progress"`
+	Message              string                 `json:"message,omitempty"`
+	Files                []PreflightFile        `json:"files"`
+	ImageProfiles        []builder.ImageProfile `json:"image_profiles,omitempty"`
+	SelectedImageProfile string                 `json:"selected_image_profile,omitempty"`
+	CreatedAt            time.Time              `json:"created_at"`
+	UpdatedAt            time.Time              `json:"updated_at"`
 }
 
 type PreflightFile struct {
@@ -58,6 +61,14 @@ type buildPreflightRequest struct {
 	BucketID    uint     `json:"bucket_id"`
 	DepotPath   string   `json:"depot_path"`
 	DriverPaths []string `json:"driver_paths"`
+}
+
+type imageProfileInspector interface {
+	InspectImageProfiles(ctx context.Context, depotPath string) ([]builder.ImageProfile, error)
+}
+
+func (h *BuildHandler) SetImageProfileInspector(inspector imageProfileInspector) {
+	h.imageProfileInspector = inspector
 }
 
 func (h *BuildHandler) StartPreflight(c *fiber.Ctx) error {
@@ -227,9 +238,32 @@ func (h *BuildHandler) runPreflight(ctx context.Context, id string, req buildPre
 			item.Cached = true
 			item.Message = "ready"
 		})
+
+		if i == 0 && h.imageProfileInspector != nil {
+			profiles, err := h.imageProfileInspector.InspectImageProfiles(ctx, localPath)
+			if err != nil {
+				h.updatePreflightFile(id, i, func(item *PreflightFile) {
+					item.Message = "ready; image profile inspection failed: " + err.Error()
+				})
+			} else {
+				h.updatePreflightImageProfiles(id, profiles)
+			}
+		}
 	}
 
 	h.finishPreflight(id, PreflightStatusReady, "all files are cached and valid")
+}
+
+func selectDefaultImageProfile(profiles []builder.ImageProfile) string {
+	if len(profiles) == 0 {
+		return ""
+	}
+	for _, profile := range profiles {
+		if strings.Contains(strings.ToLower(profile.Name), "standard") {
+			return profile.Name
+		}
+	}
+	return profiles[0].Name
 }
 
 type preflightFileResolver interface {
@@ -402,6 +436,18 @@ func (h *BuildHandler) finishPreflight(id, status, message string) {
 	preflight.UpdatedAt = time.Now()
 }
 
+func (h *BuildHandler) updatePreflightImageProfiles(id string, profiles []builder.ImageProfile) {
+	h.preflightMu.Lock()
+	defer h.preflightMu.Unlock()
+	preflight, ok := h.preflights[id]
+	if !ok {
+		return
+	}
+	preflight.ImageProfiles = append([]builder.ImageProfile(nil), profiles...)
+	preflight.SelectedImageProfile = selectDefaultImageProfile(profiles)
+	preflight.UpdatedAt = time.Now()
+}
+
 func (p *BuildPreflight) calculateProgress() int {
 	if p == nil || len(p.Files) == 0 {
 		return 100
@@ -419,5 +465,6 @@ func (p *BuildPreflight) clone() *BuildPreflight {
 	}
 	copyValue := *p
 	copyValue.Files = append([]PreflightFile(nil), p.Files...)
+	copyValue.ImageProfiles = append([]builder.ImageProfile(nil), p.ImageProfiles...)
 	return &copyValue
 }

@@ -125,7 +125,7 @@ export default function BucketsPage() {
       title: '名称',
       dataIndex: 'name',
       render: (value: string, bucket) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Typography.Text strong>{value}</Typography.Text>
           {bucket.is_default && <Tag color="success">默认</Tag>}
         </Space>
@@ -176,17 +176,9 @@ export default function BucketsPage() {
   ]
 
   return (
-    <PageContainer
-      title="存储挂载"
-      subTitle="管理 S3/R2 兼容对象存储与容器本地目录"
-      extra={[
-        <Button key="add" type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建存储
-        </Button>,
-      ]}
-    >
+    <PageContainer title="存储挂载" subTitle="管理 S3/R2 兼容对象存储与容器本地目录">
       {contextHolder}
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <StatisticCard.Group>
           <StatisticCard statistic={{ title: '存储节点', value: sortedBuckets.length, icon: <DatabaseOutlined /> }} />
           <StatisticCard statistic={{ title: '默认节点', value: defaultBucket?.name ?? '未设置', icon: <CloudOutlined /> }} />
@@ -198,9 +190,14 @@ export default function BucketsPage() {
           bordered
           headerBordered
           extra={
-            <Button icon={<ReloadOutlined />} onClick={() => bucketsQuery.refetch()} loading={bucketsQuery.isFetching}>
-              刷新
-            </Button>
+            <Space wrap className="card-toolbar">
+              <Button icon={<ReloadOutlined />} onClick={() => bucketsQuery.refetch()} loading={bucketsQuery.isFetching}>
+                刷新
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                新建存储
+              </Button>
+            </Space>
           }
         >
           <Table

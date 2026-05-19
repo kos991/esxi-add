@@ -19,6 +19,7 @@ type BuildISOPayload struct {
 	DriverPaths   []string `json:"driver_paths"`
 	ESXiVersion   string   `json:"esxi_version"`
 	CustomISOName string   `json:"custom_iso_name"`
+	ImageProfile  string   `json:"image_profile"`
 }
 
 func NewBuildISOTask(p *BuildISOPayload) (*asynq.Task, error) {

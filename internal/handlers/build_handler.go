@@ -24,15 +24,16 @@ import (
 )
 
 type BuildHandler struct {
-	db               *gorm.DB
-	taskClient       *asynq.Client
-	buildMode        string
-	workDir          string
-	preflightMu      sync.RWMutex
-	preflights       map[string]*BuildPreflight
-	maxPreflights    int
-	preflightTTL     time.Duration
-	preflightTimeout time.Duration
+	db                    *gorm.DB
+	taskClient            *asynq.Client
+	buildMode             string
+	workDir               string
+	preflightMu           sync.RWMutex
+	preflights            map[string]*BuildPreflight
+	maxPreflights         int
+	preflightTTL          time.Duration
+	preflightTimeout      time.Duration
+	imageProfileInspector imageProfileInspector
 }
 
 type createBuildRequest struct {
@@ -41,6 +42,7 @@ type createBuildRequest struct {
 	DepotPath     string   `json:"depot_path"`
 	DriverPaths   []string `json:"driver_paths"`
 	CustomISOName string   `json:"custom_iso_name"`
+	ImageProfile  string   `json:"image_profile"`
 }
 
 func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
@@ -88,6 +90,7 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		DepotPath:       req.DepotPath,
 		Drivers:         string(driversJSON),
 		CustomISOName:   req.CustomISOName,
+		ImageProfile:    req.ImageProfile,
 		Progress:        0,
 	}
 
@@ -106,6 +109,7 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		DriverPaths:   req.DriverPaths,
 		ESXiVersion:   req.ESXiVersion,
 		CustomISOName: req.CustomISOName,
+		ImageProfile:  req.ImageProfile,
 	})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
@@ -309,5 +313,6 @@ func validateCreateBuildRequest(req *createBuildRequest) error {
 		req.DriverPaths[i] = strings.TrimSpace(driverPath)
 	}
 	req.CustomISOName = strings.TrimSpace(req.CustomISOName)
+	req.ImageProfile = strings.TrimSpace(req.ImageProfile)
 	return nil
 }

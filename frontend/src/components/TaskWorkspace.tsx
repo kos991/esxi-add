@@ -153,7 +153,7 @@ export function TaskWorkspace({ initialTaskId }: { initialTaskId?: string }) {
           }
         >
           {selectedTask ? (
-            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Space orientation="vertical" size={12} style={{ width: '100%' }}>
               <Descriptions column={2} size="small" bordered className="task-info-list">
                 <Descriptions.Item label="任务 ID" span={2}>
                   <Typography.Text className="mono table-path" copyable>
@@ -173,10 +173,10 @@ export function TaskWorkspace({ initialTaskId }: { initialTaskId?: string }) {
                 </Descriptions.Item>
               </Descriptions>
 
-              {selectedTask.status === 'failed' && selectedTask.error_message && <Alert type="error" showIcon message="构建失败" description={selectedTask.error_message} />}
+              {selectedTask.status === 'failed' && selectedTask.error_message && <Alert type="error" showIcon title="构建失败" description={selectedTask.error_message} />}
 
               {selectedTask.status === 'completed' && selectedTask.output_iso ? (
-                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                <Space orientation="vertical" size={6} style={{ width: '100%' }}>
                   <Space wrap>
                     <Button icon={<DownloadOutlined />} onClick={() => downloadArtifact(selectedTask)}>
                       本地下载

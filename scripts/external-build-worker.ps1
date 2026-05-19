@@ -68,7 +68,8 @@ function Invoke-BuildProcess([string]$TaskId, [object]$Task, [string]$TaskDir) {
         "-DriverPaths", ($driverLocals -join ","),
         "-OutputPath", $outputPath,
         "-ESXiVersion", $Task.esxi_version,
-        "-WorkDir", $buildDir
+        "-WorkDir", $buildDir,
+        "-ImageProfileName", $Task.image_profile
     )
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()

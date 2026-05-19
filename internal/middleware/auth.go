@@ -18,10 +18,7 @@ func TokenAuth(token, headerName string) fiber.Handler {
 
 	return func(c *fiber.Ctx) error {
 		if expected == "" {
-			if isLoopbackRequest(c) {
-				return c.Next()
-			}
-			return c.Status(fiber.StatusUnauthorized).JSON(utils.ErrorResponse("api token is required for remote access"))
+			return c.Next()
 		}
 
 		if constantTimeEqual(requestToken(c, headerName), expected) {

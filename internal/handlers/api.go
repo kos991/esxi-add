@@ -6,6 +6,7 @@ import (
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 
+	"github.com/esxi-builder/esxi-iso-builder/internal/builder"
 	appconfig "github.com/esxi-builder/esxi-iso-builder/internal/config"
 	"github.com/esxi-builder/esxi-iso-builder/internal/middleware"
 	"github.com/esxi-builder/esxi-iso-builder/internal/services"
@@ -22,6 +23,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 
 	buildHandler := NewBuildHandler(db, taskClient, cfg.Build.Mode)
 	buildHandler.SetWorkDir(cfg.Build.WorkDir)
+	buildHandler.SetImageProfileInspector(builder.NewPowerShellExecutor(cfg.Build.PowerShellPath, cfg.Build.ScriptPath))
 	workerHandler := NewWorkerHandler(db, cfg.Build.WorkerToken)
 	wsHandler := NewWebSocketHandler(db, wsManager)
 

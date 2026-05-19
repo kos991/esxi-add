@@ -130,7 +130,7 @@ export default function FilesPage() {
     {
       title: '资产',
       render: (_, file) => (
-        <Space direction="vertical" size={2}>
+        <Space orientation="vertical" size={2}>
           <Typography.Text strong>{assetTitle(file)}</Typography.Text>
           <Typography.Text type="secondary" className="mono" style={{ fontSize: 12 }}>
             MD5: {file.md5 || '-'}
@@ -191,27 +191,29 @@ export default function FilesPage() {
   )
 
   return (
-    <PageContainer
-      title="文件库"
-      subTitle="管理 Depot、驱动包与 ISO 产物"
-      extra={[
-        <Select
-          key="bucket"
-          style={{ width: 260 }}
-          placeholder="选择存储节点"
-          value={selectedBucketId}
-          onChange={setBucketId}
-          options={(bucketsQuery.data ?? []).map((bucket) => ({ value: bucket.id, label: `${bucket.name}${bucket.is_default ? '（默认）' : ''}` }))}
-        />,
-        <Button key="refresh" icon={<ReloadOutlined />} onClick={() => refreshMutation.mutate()} loading={refreshMutation.isPending} disabled={!selectedBucketId}>
-          刷新元数据
-        </Button>,
-      ]}
-    >
+    <PageContainer title="文件库" subTitle="管理 Depot、驱动包与 ISO 产物">
       {contextHolder}
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
-        <ProCard bordered headerBordered title="当前存储">
-          <Space direction="vertical" size={4}>
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+        <ProCard
+          bordered
+          headerBordered
+          title="当前存储"
+          extra={
+            <Space wrap className="card-toolbar">
+              <Select
+                style={{ width: 260 }}
+                placeholder="选择存储节点"
+                value={selectedBucketId}
+                onChange={setBucketId}
+                options={(bucketsQuery.data ?? []).map((bucket) => ({ value: bucket.id, label: `${bucket.name}${bucket.is_default ? '（默认）' : ''}` }))}
+              />
+              <Button icon={<ReloadOutlined />} onClick={() => refreshMutation.mutate()} loading={refreshMutation.isPending} disabled={!selectedBucketId}>
+                刷新元数据
+              </Button>
+            </Space>
+          }
+        >
+          <Space orientation="vertical" size={4}>
             <Space>
               <Typography.Text strong>{selectedBucket?.name ?? '未选择'}</Typography.Text>
               <Tag color={bucketType(selectedBucket) === 'local' ? 'purple' : 'blue'}>{bucketType(selectedBucket).toUpperCase()}</Tag>
@@ -253,7 +255,7 @@ export default function FilesPage() {
           </Space>
         </ProCard>
 
-        <ProCard bordered headerBordered bodyStyle={{ padding: 0 }} className="asset-table-card">
+        <ProCard bordered headerBordered styles={{ body: { padding: 0 } }} className="asset-table-card">
           <Tabs
             items={[
               { key: 'all', label: `全部资产 (${allAssets.length})`, children: renderTable(allAssets, depotsQuery.isLoading || allDriversQuery.isLoading || isoQuery.isLoading, '暂无资产') },

@@ -144,11 +144,12 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		}
 	}()
 	err = h.executor.ExecuteBuild(ctx, &builder.BuildParams{
-		DepotPath:   depotLocal,
-		DriverPaths: driverLocals,
-		OutputPath:  outputLocalPath,
-		ESXiVersion: payload.ESXiVersion,
-		WorkDir:     taskWorkDir,
+		DepotPath:    depotLocal,
+		DriverPaths:  driverLocals,
+		OutputPath:   outputLocalPath,
+		ESXiVersion:  payload.ESXiVersion,
+		WorkDir:      taskWorkDir,
+		ImageProfile: payload.ImageProfile,
 	}, progressChan)
 	wg.Wait()
 	if err != nil {

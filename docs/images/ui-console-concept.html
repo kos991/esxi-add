@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ESXi ISO Builder UI Concept</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #eef2f6;
+        color: #172033;
+        font-family:
+          Inter, "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", "Segoe UI",
+          sans-serif;
+      }
+
+      .frame {
+        display: grid;
+        min-height: 100vh;
+        grid-template-columns: 216px 1fr;
+      }
+
+      .nav {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #dbe2eb;
+        background: #f8fafc;
+      }
+
+      .brand {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        height: 66px;
+        padding: 0 20px;
+        border-bottom: 1px solid #e3e8ef;
+      }
+
+      .logo {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #ff8a00, #ff5a1f 58%, #156bff);
+        color: #fff;
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .brand strong {
+        display: block;
+        font-size: 14px;
+        line-height: 1.1;
+      }
+
+      .brand span {
+        color: #6a7587;
+        font-size: 11px;
+      }
+
+      .nav-list {
+        display: grid;
+        gap: 4px;
+        padding: 14px 12px;
+      }
+
+      .nav-item {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        gap: 10px;
+        align-items: center;
+        height: 38px;
+        padding: 0 12px;
+        border-radius: 7px;
+        color: #405068;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .nav-item.active {
+        background: #e7f0ff;
+        color: #145ce6;
+      }
+
+      .main {
+        padding: 18px 22px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      .title h1 {
+        margin: 0;
+        color: #101828;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+
+      .title p {
+        margin: 5px 0 0;
+        color: #667085;
+        font-size: 13px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .button {
+        display: inline-flex;
+        gap: 7px;
+        align-items: center;
+        height: 34px;
+        padding: 0 12px;
+        border: 1px solid #cfd7e3;
+        border-radius: 7px;
+        background: #fff;
+        color: #263348;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .button.primary {
+        border-color: #155eef;
+        background: #155eef;
+        color: #fff;
+      }
+
+      .status-strip {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 1.2fr 1fr 1fr 1fr;
+        margin-bottom: 14px;
+      }
+
+      .metric,
+      .panel {
+        border: 1px solid #dbe3ee;
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .metric {
+        min-height: 76px;
+        padding: 14px 16px;
+      }
+
+      .metric span {
+        color: #667085;
+        font-size: 12px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 6px;
+        color: #101828;
+        font-size: 23px;
+        line-height: 1;
+      }
+
+      .metric small {
+        color: #8792a4;
+        font-size: 11px;
+      }
+
+      .workspace {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        align-items: start;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 44px;
+        padding: 0 16px;
+        border-bottom: 1px solid #e5eaf1;
+      }
+
+      .panel-header strong {
+        font-size: 14px;
+      }
+
+      .panel-body {
+        padding: 14px 16px;
+      }
+
+      .workflow {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(4, 1fr);
+        margin-bottom: 14px;
+      }
+
+      .step {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        height: 40px;
+        padding: 0 12px;
+        border: 1px solid #d7dfea;
+        border-radius: 7px;
+        background: #f8fafc;
+        color: #607088;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .step.active {
+        border-color: #b9d1ff;
+        background: #eef5ff;
+        color: #155eef;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 220px 1fr;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        color: #344054;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .input {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 36px;
+        padding: 0 11px;
+        border: 1px solid #cfd7e3;
+        border-radius: 7px;
+        background: #fff;
+        color: #182437;
+        font-size: 13px;
+      }
+
+      .hint {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+        padding: 9px 11px;
+        border: 1px solid #b8d4ff;
+        border-radius: 7px;
+        background: #eef6ff;
+        color: #245092;
+        font-size: 12px;
+      }
+
+      .bottom-actions {
+        display: flex;
+        justify-content: flex-end;
+        padding-top: 14px;
+      }
+
+      .summary-row {
+        display: grid;
+        gap: 5px;
+        padding: 11px 0;
+        border-bottom: 1px solid #edf1f6;
+      }
+
+      .summary-row:last-child {
+        border-bottom: 0;
+      }
+
+      .summary-row span {
+        color: #778399;
+        font-size: 12px;
+      }
+
+      .summary-row strong,
+      .summary-row code {
+        overflow: hidden;
+        color: #101828;
+        font-size: 13px;
+        font-weight: 700;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pill {
+        display: inline-flex;
+        width: max-content;
+        align-items: center;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: #ecfdf3;
+        color: #027a48;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .table th {
+        padding: 8px 10px;
+        background: #f5f7fa;
+        color: #475467;
+        text-align: left;
+      }
+
+      .table td {
+        padding: 10px;
+        border-top: 1px solid #edf1f6;
+        color: #667085;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <aside class="nav">
+        <div class="brand">
+          <div class="logo">E</div>
+          <div>
+            <strong>ESXi Builder</strong>
+            <span>ISO 控制台</span>
+          </div>
+        </div>
+        <div class="nav-list">
+          <div class="nav-item active">⌂ <span>总览</span></div>
+          <div class="nav-item">▣ <span>存储</span></div>
+          <div class="nav-item">▤ <span>文件库</span></div>
+          <div class="nav-item">▦ <span>构建</span></div>
+          <div class="nav-item">◷ <span>任务日志</span></div>
+        </div>
+      </aside>
+      <main class="main">
+        <div class="topbar">
+          <div class="title">
+            <h1>自定义 ESXi ISO 构建</h1>
+            <p>选择 Depot、驱动包并完成预检后创建构建任务</p>
+          </div>
+          <div class="actions">
+            <div class="button">刷新</div>
+            <div class="button primary">创建构建</div>
+          </div>
+        </div>
+
+        <section class="status-strip">
+          <div class="metric">
+            <span>运行状态</span>
+            <strong>正常</strong>
+            <small>API / 存储 / Worker 已连接</small>
+          </div>
+          <div class="metric">
+            <span>构建总数</span>
+            <strong>24</strong>
+            <small>最近 7 天</small>
+          </div>
+          <div class="metric">
+            <span>成功率</span>
+            <strong>91%</strong>
+            <small>22 / 24</small>
+          </div>
+          <div class="metric">
+            <span>缓存命中</span>
+            <strong>18</strong>
+            <small>Depot 与驱动文件</small>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <div>
+            <div class="workflow">
+              <div class="step active">1 选择源文件</div>
+              <div class="step">2 驱动注入</div>
+              <div class="step">3 下载校验</div>
+              <div class="step">4 输出设置</div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <strong>源文件</strong>
+                <span class="pill">Local Storage</span>
+              </div>
+              <div class="panel-body">
+                <div class="hint">● 从所有存储节点中选择与 ESXi 版本匹配的 Depot 文件。</div>
+                <div class="form-grid">
+                  <div>
+                    <label>ESXi 基础版本</label>
+                    <div class="input">ESXi 8.0 <span>⌄</span></div>
+                  </div>
+                  <div>
+                    <label>Depot 源文件</label>
+                    <div class="input">depot/8x/ESXi-8.0U2-depot.zip <span>⌄</span></div>
+                  </div>
+                </div>
+                <div class="bottom-actions">
+                  <div class="button primary">下一步</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel" style="margin-top: 14px">
+              <div class="panel-header">
+                <strong>最近构建</strong>
+                <span style="color: #778399; font-size: 12px">实时刷新</span>
+              </div>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>任务 ID</th>
+                    <th>ESXi</th>
+                    <th>状态</th>
+                    <th>进度</th>
+                    <th>创建时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>build-20260519-001</td>
+                    <td>8.0</td>
+                    <td><span class="pill">completed</span></td>
+                    <td>100%</td>
+                    <td>00:42</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside class="panel">
+            <div class="panel-header">
+              <strong>构建摘要</strong>
+            </div>
+            <div class="panel-body">
+              <div class="summary-row">
+                <span>存储节点</span>
+                <strong>Local Storage</strong>
+              </div>
+              <div class="summary-row">
+                <span>Depot</span>
+                <code>ESXi-8.0U2-depot.zip</code>
+              </div>
+              <div class="summary-row">
+                <span>驱动</span>
+                <strong>3 个待注入</strong>
+              </div>
+              <div class="summary-row">
+                <span>预检</span>
+                <span class="pill">ready</span>
+              </div>
+              <div class="summary-row">
+                <span>输出</span>
+                <code>custom-esxi-8u2.iso</code>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

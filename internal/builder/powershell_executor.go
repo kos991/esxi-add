@@ -3,6 +3,7 @@ package builder
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -18,11 +19,12 @@ type PowerShellExecutor struct {
 }
 
 type BuildParams struct {
-	DepotPath   string
-	DriverPaths []string
-	OutputPath  string
-	ESXiVersion string
-	WorkDir     string
+	DepotPath    string
+	DriverPaths  []string
+	OutputPath   string
+	ESXiVersion  string
+	WorkDir      string
+	ImageProfile string
 }
 
 type BuildProgress struct {
@@ -55,6 +57,7 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		"-OutputPath", params.OutputPath,
 		"-ESXiVersion", params.ESXiVersion,
 		"-WorkDir", params.WorkDir,
+		"-ImageProfileName", params.ImageProfile,
 	)
 
 	stdout, err := cmd.StdoutPipe()
@@ -92,6 +95,42 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 	}
 
 	return nil
+}
+
+type ImageProfile struct {
+	Name            string `json:"name"`
+	Vendor          string `json:"vendor"`
+	AcceptanceLevel string `json:"acceptance_level"`
+	CreationTime    string `json:"creation_time"`
+	ModifiedTime    string `json:"modified_time"`
+}
+
+func (e *PowerShellExecutor) InspectImageProfiles(ctx context.Context, depotPath string) ([]ImageProfile, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		e.pwshPath,
+		"-File", e.scriptPath,
+		"-Mode", "InspectProfiles",
+		"-DepotPath", depotPath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("inspect image profiles: %w", err)
+	}
+
+	var profiles []ImageProfile
+	if err := json.Unmarshal(output, &profiles); err == nil {
+		return profiles, nil
+	}
+
+	var single ImageProfile
+	if err := json.Unmarshal(output, &single); err != nil {
+		return nil, fmt.Errorf("parse image profiles: %w", err)
+	}
+	if single.Name == "" {
+		return []ImageProfile{}, nil
+	}
+	return []ImageProfile{single}, nil
 }
 
 func scanOutput(reader io.Reader, progressChan chan<- BuildProgress, stderr bool) {

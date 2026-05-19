@@ -1,44 +1,83 @@
 import { Card, Statistic, Space } from 'antd'
+import type { CardProps } from 'antd'
 import React from 'react'
+
+type CardSemanticClassNames = {
+  root?: string
+  header?: string
+  body?: string
+  extra?: string
+  title?: string
+  actions?: string
+  cover?: string
+}
+
+type CardSemanticStyles = {
+  root?: React.CSSProperties
+  header?: React.CSSProperties
+  body?: React.CSSProperties
+  extra?: React.CSSProperties
+  title?: React.CSSProperties
+  actions?: React.CSSProperties
+  cover?: React.CSSProperties
+}
 
 interface ProCardProps {
   title?: React.ReactNode
   extra?: React.ReactNode
+  variant?: CardProps['variant']
   bordered?: boolean
   ghost?: boolean
   headerBordered?: boolean
   bodyStyle?: React.CSSProperties
   className?: string
-  size?: 'default' | 'small'
+  classNames?: CardSemanticClassNames
+  size?: CardProps['size']
   children?: React.ReactNode
   style?: React.CSSProperties
+  styles?: CardSemanticStyles
   split?: 'vertical' | 'horizontal'
   colSpan?: string | number
+}
+
+function mergeClassNames(...names: Array<string | undefined>) {
+  return names.filter(Boolean).join(' ')
+}
+
+function mergeStyles(...styles: Array<React.CSSProperties | undefined>) {
+  const merged = Object.assign({}, ...styles.filter(Boolean))
+  return Object.keys(merged).length > 0 ? merged : undefined
 }
 
 export const ProCard: React.FC<ProCardProps> & { Group: React.FC<{ children: React.ReactNode; className?: string }> } = ({
   title,
   extra,
+  variant,
   bordered = true,
   ghost = false,
   headerBordered = false,
   bodyStyle,
   className = '',
+  classNames,
   size,
   children,
   style,
+  styles,
   split,
   colSpan,
 }) => {
   const cardStyle: React.CSSProperties = { ...style }
+  const bodyStyles = mergeStyles(bodyStyle, styles?.body)
+  const headerStyles = mergeStyles(styles?.header, headerBordered ? { borderBottom: '1px solid #edf0f5' } : undefined)
+
   if (colSpan) {
     cardStyle.flex = typeof colSpan === 'string' && colSpan.endsWith('%') ? `0 0 ${colSpan}` : colSpan
   }
 
   if (ghost) {
     return (
-      <div className={`ant-pro-card ${className}`} style={cardStyle}>
-        <div className="ant-pro-card-body" style={bodyStyle}>
+      <div className={mergeClassNames('ant-pro-card', className, classNames?.root)} style={cardStyle}>
+        <div className={mergeClassNames('ant-pro-card-body', classNames?.body)} style={bodyStyles}>
           {children}
         </div>
       </div>
@@ -57,17 +96,21 @@ export const ProCard: React.FC<ProCardProps> & { Group: React.FC<{ children: Rea
     <Card
       title={title}
       extra={extra}
-      bordered={bordered}
-      bodyStyle={bodyStyle}
+      variant={variant ?? (bordered ? 'outlined' : 'borderless')}
       className={`ant-pro-card ${className} ${headerBordered ? 'ant-pro-card-header-bordered' : ''}`}
       classNames={{
-        body: 'ant-pro-card-body',
-        header: 'ant-pro-card-header',
-        title: 'ant-pro-card-title',
+        ...classNames,
+        body: mergeClassNames('ant-pro-card-body', classNames?.body),
+        header: mergeClassNames('ant-pro-card-header', classNames?.header),
+        title: mergeClassNames('ant-pro-card-title', classNames?.title),
       }}
       size={size}
       style={cardStyle}
-      headStyle={headerBordered ? { borderBottom: '1px solid #edf0f5' } : undefined}
+      styles={{
+        ...styles,
+        body: bodyStyles,
+        header: headerStyles,
+      }}
     >
       {children}
     </Card>

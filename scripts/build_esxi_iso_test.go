@@ -86,6 +86,51 @@ func TestBuildScriptUsesBundleFirstExportForEsxi67(t *testing.T) {
 	}
 }
 
+func TestBuildScriptUsesBundleFirstExportForEsxi7UsbNicFling(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	requiredSnippets := []string{
+		"function Test-ShouldUseBundleFirstExport",
+		"[string]$BundleFirst = \"auto\"",
+		"$ESXiVersion -match '^7\\.'",
+		"$name -like '*vmkusb*' -or $name -like '*fling*'",
+		"$useBundleFirstExport = Test-ShouldUseBundleFirstExport -ESXiVersion $ESXiVersion -DriverPaths $DriverPaths -BundleFirst $BundleFirst",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("build script must contain %q so ESXi 7 USB NIC/Fling builds export via bundle-first in auto mode", snippet)
+		}
+	}
+}
+
+func TestBuildScriptSupportsExplicitImageProfileAndInspectionMode(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	requiredSnippets := []string{
+		"[string]$Mode = \"Build\"",
+		"[string]$ImageProfileName = \"\"",
+		"function Get-DepotImageProfiles",
+		"if ($Mode -eq \"InspectProfiles\")",
+		"ConvertTo-Json -Compress",
+		"Get-EsxImageProfile -Name $ImageProfileName",
+		"Using image profile: $($profile.Name)",
+		"Export strategy:",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("build script must contain %q so callers can inspect and select depot image profiles", snippet)
+		}
+	}
+}
+
 func TestBuildScriptDetectsPowerCliPythonPath(t *testing.T) {
 	content, err := os.ReadFile("build-esxi-iso.ps1")
 	if err != nil {

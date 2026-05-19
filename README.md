@@ -6,9 +6,15 @@ ESXi ISO Builder 是一个用于内网自动化构建 ESXi 自定义 ISO 的单�
 
 ![总览](docs/images/overview.png)
 
-![自定义构建](docs/images/build.png)
+![存储节点](docs/images/buckets.png)
 
 ![文件库](docs/images/files.png)
+
+![自定义构建](docs/images/build.png)
+
+![任务日志](docs/images/tasks.png)
+
+![任务详情](docs/images/task-detail.png)
 
 ## 功能
 

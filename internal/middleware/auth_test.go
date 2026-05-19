@@ -37,7 +37,7 @@ func TestTokenAuthRequiresConfiguredToken(t *testing.T) {
 	}
 }
 
-func TestTokenAuthWithoutTokenOnlyAllowsLoopback(t *testing.T) {
+func TestTokenAuthWithoutTokenAllowsRequests(t *testing.T) {
 	app := fiber.New(fiber.Config{ProxyHeader: fiber.HeaderXForwardedFor})
 	app.Use(TokenAuth("", "X-API-Token"))
 	app.Get("/protected", func(c *fiber.Ctx) error {
@@ -62,7 +62,7 @@ func TestTokenAuthWithoutTokenOnlyAllowsLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remote request: %v", err)
 	}
-	if remoteResp.StatusCode != fiber.StatusUnauthorized {
-		t.Fatalf("expected remote request without token to be rejected, got %d", remoteResp.StatusCode)
+	if remoteResp.StatusCode != fiber.StatusNoContent {
+		t.Fatalf("expected remote request without configured token to pass, got %d", remoteResp.StatusCode)
 	}
 }

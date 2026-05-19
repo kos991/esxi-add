@@ -4,9 +4,6 @@ import {
   ClockCircleOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
-  GithubOutlined,
-  LinkOutlined,
-  ReloadOutlined,
   RocketOutlined,
 } from '@ant-design/icons'
 import { PageContainer, ProCard, StatisticCard } from '../components/pro-compat'
@@ -20,8 +17,6 @@ import { getSystemStatus } from '../api/system'
 import type { BuildTask } from '../types'
 import { formatBytes, formatDate } from '../utils'
 import { BuildStatusTag } from './pageUtils'
-
-const repositoryUrl = 'https://github.com/kos991/esxi-add'
 
 export default function OverviewPage() {
   const buildsQuery = useQuery({ queryKey: ['overview-builds'], queryFn: () => listBuilds(1, 20), refetchInterval: 10000 })
@@ -62,19 +57,8 @@ export default function OverviewPage() {
   ]
 
   return (
-    <PageContainer
-      title="总览"
-      subTitle="项目运行参数、仓库入口和最近构建状态"
-      extra={[
-        <Button key="repo" href={repositoryUrl} target="_blank" icon={<GithubOutlined />}>
-          GitHub 仓库
-        </Button>,
-        <Button key="refresh" icon={<ReloadOutlined />} onClick={() => buildsQuery.refetch()} loading={buildsQuery.isFetching}>
-          刷新
-        </Button>,
-      ]}
-    >
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <PageContainer title="总览" subTitle="项目运行参数、仓库入口和最近构建状态">
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <ProCard className="overview-hero-card" bordered>
           <div className="overview-hero">
             <div className="overview-hero-main">
@@ -104,46 +88,30 @@ export default function OverviewPage() {
           <StatisticCard statistic={{ title: '存储节点', value: stats.buckets, icon: <DatabaseOutlined /> }} />
         </StatisticCard.Group>
 
-        <ProCard split="vertical" bordered headerBordered className="overview-subpage-card">
-          <ProCard title="本机运行状态" colSpan="65%">
-            <div className="runtime-status-grid">
-              <RuntimeStatusCard
-                type="cpu"
-                title="CPU"
-                value={formatPercent(systemQuery.data?.cpu.usage_percent)}
-                detail={systemQuery.data ? `${systemQuery.data.cpu.cores} 核心` : '等待采集'}
-                percent={systemQuery.data?.cpu.usage_percent ?? 0}
-              />
-              <RuntimeStatusCard
-                type="memory"
-                title="内存"
-                value={formatPercent(systemQuery.data?.memory.usage_percent)}
-                detail={systemQuery.data ? `${formatBytes(systemQuery.data.memory.used_bytes)} / ${formatBytes(systemQuery.data.memory.total_bytes)}` : '等待采集'}
-                percent={systemQuery.data?.memory.usage_percent ?? 0}
-              />
-              <RuntimeStatusCard
-                type="network"
-                title="网络"
-                value={systemQuery.data ? `${formatBytes(systemQuery.data.network.rx_bytes_per_sec + systemQuery.data.network.tx_bytes_per_sec)}/s` : '-'}
-                detail={systemQuery.data ? `下行 ${formatBytes(systemQuery.data.network.rx_bytes_per_sec)}/s · 上行 ${formatBytes(systemQuery.data.network.tx_bytes_per_sec)}/s` : '等待采集'}
-                percent={networkPercent(systemQuery.data?.network.rx_bytes_per_sec ?? 0, systemQuery.data?.network.tx_bytes_per_sec ?? 0)}
-              />
-            </div>
-          </ProCard>
-          <ProCard title="仓库链接">
-            <Space direction="vertical" size={12} className="overview-link-list">
-              <a href={repositoryUrl} target="_blank" rel="noreferrer">
-                <GithubOutlined />
-                <span>GitHub 项目仓库</span>
-                <Typography.Text type="secondary">kos991/esxi-add</Typography.Text>
-              </a>
-              <a href="https://github.com/esxi-builder/esxi-iso-builder" target="_blank" rel="noreferrer">
-                <LinkOutlined />
-                <span>Go Module</span>
-                <Typography.Text type="secondary">esxi-iso-builder</Typography.Text>
-              </a>
-            </Space>
-          </ProCard>
+        <ProCard title="本机运行状态" bordered headerBordered>
+          <div className="runtime-status-grid">
+            <RuntimeStatusCard
+              type="cpu"
+              title="CPU"
+              value={formatPercent(systemQuery.data?.cpu.usage_percent)}
+              detail={systemQuery.data ? `${systemQuery.data.cpu.cores} 核心` : '等待采集'}
+              percent={systemQuery.data?.cpu.usage_percent ?? 0}
+            />
+            <RuntimeStatusCard
+              type="memory"
+              title="内存"
+              value={formatPercent(systemQuery.data?.memory.usage_percent)}
+              detail={systemQuery.data ? `${formatBytes(systemQuery.data.memory.used_bytes)} / ${formatBytes(systemQuery.data.memory.total_bytes)}` : '等待采集'}
+              percent={systemQuery.data?.memory.usage_percent ?? 0}
+            />
+            <RuntimeStatusCard
+              type="network"
+              title="网络"
+              value={systemQuery.data ? `${formatBytes(systemQuery.data.network.rx_bytes_per_sec + systemQuery.data.network.tx_bytes_per_sec)}/s` : '-'}
+              detail={systemQuery.data ? `下行 ${formatBytes(systemQuery.data.network.rx_bytes_per_sec)}/s · 上行 ${formatBytes(systemQuery.data.network.tx_bytes_per_sec)}/s` : '等待采集'}
+              percent={networkPercent(systemQuery.data?.network.rx_bytes_per_sec ?? 0, systemQuery.data?.network.tx_bytes_per_sec ?? 0)}
+            />
+          </div>
         </ProCard>
 
         <ProCard title="最近构建" bordered headerBordered>

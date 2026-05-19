@@ -19,6 +19,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"gorm.io/gorm"
 
+	"github.com/esxi-builder/esxi-iso-builder/internal/builder"
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
 	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 )
@@ -69,7 +70,7 @@ func TestCreateBuildExternalModeDoesNotRequireQueue(t *testing.T) {
 	app := fiber.New()
 	app.Post("/builds", NewBuildHandler(db, nil, "external").Create)
 
-	req := httptest.NewRequest(http.MethodPost, "/builds", strings.NewReader(`{"bucket_id":2,"esxi_version":"6.5","depot_path":"depot/6x/ESXi650.zip","driver_paths":["driver/6x/net.vib"],"custom_iso_name":"custom.iso"}`))
+	req := httptest.NewRequest(http.MethodPost, "/builds", strings.NewReader(`{"bucket_id":2,"esxi_version":"6.5","depot_path":"depot/6x/ESXi650.zip","driver_paths":["driver/6x/net.vib"],"custom_iso_name":"custom.iso","image_profile":"ESXi-6.5.0-standard"}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
@@ -89,6 +90,9 @@ func TestCreateBuildExternalModeDoesNotRequireQueue(t *testing.T) {
 	}
 	if !response.Success || response.Data.Status != models.BuildTaskStatusPending {
 		t.Fatalf("unexpected response: %+v", response)
+	}
+	if response.Data.ImageProfile != "ESXi-6.5.0-standard" {
+		t.Fatalf("expected image profile to be stored, got %q", response.Data.ImageProfile)
 	}
 }
 
@@ -263,6 +267,60 @@ func TestBuildPreflightLocalFilesReportsReadyAndInvalidInputs(t *testing.T) {
 	}
 	if status.Data.Files[1].Status != PreflightFileStatusInvalid || status.Data.Files[1].Message == "" {
 		t.Fatalf("expected driver invalid with message, got %+v", status.Data.Files[1])
+	}
+}
+
+func TestBuildPreflightReportsDepotImageProfiles(t *testing.T) {
+	localRoot := t.TempDir()
+	buildWorkDir := t.TempDir()
+	db, bucketID := newBuildHandlerLocalBucketTestDB(t, localRoot)
+
+	depotPath := "depot/8x/ESXi-8.0.zip"
+	writeBuildHandlerLocalObject(t, localRoot, depotPath, []byte("PK\x03\x04depot"))
+	if err := db.Create(&models.FileMetadata{
+		StorageBucketID: bucketID,
+		Path:            depotPath,
+		Type:            models.FileTypeDepot,
+		ESXiVersion:     "8.0",
+	}).Error; err != nil {
+		t.Fatalf("create file metadata: %v", err)
+	}
+
+	app := fiber.New()
+	handler := NewBuildHandler(db, nil, "external")
+	handler.SetWorkDir(buildWorkDir)
+	handler.SetImageProfileInspector(fakeImageProfileInspector{profiles: []builder.ImageProfile{
+		{Name: "ESXi-8.0U3-standard", Vendor: "VMware", AcceptanceLevel: "PartnerSupported"},
+		{Name: "ESXi-8.0U3-no-tools", Vendor: "VMware", AcceptanceLevel: "PartnerSupported"},
+	}})
+	app.Post("/builds/preflight", handler.StartPreflight)
+	app.Get("/builds/preflight/:id", handler.GetPreflight)
+
+	body := `{"bucket_id":` + strconv.FormatUint(uint64(bucketID), 10) + `,"depot_path":"` + depotPath + `","driver_paths":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/builds/preflight", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("start preflight request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusAccepted {
+		t.Fatalf("expected status 202, got %d", resp.StatusCode)
+	}
+
+	var started struct {
+		Success bool           `json:"success"`
+		Data    BuildPreflight `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&started); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+
+	status := waitForBuildPreflightStatus(t, app, started.Data.ID)
+	if len(status.Data.ImageProfiles) != 2 {
+		t.Fatalf("expected image profiles in preflight response, got %+v", status.Data.ImageProfiles)
+	}
+	if status.Data.SelectedImageProfile != "ESXi-8.0U3-standard" {
+		t.Fatalf("expected standard profile to be selected, got %q", status.Data.SelectedImageProfile)
 	}
 }
 
@@ -463,6 +521,15 @@ type fakePreflightS3Client struct {
 	infoByPath map[string]minio.ObjectInfo
 	bodyByPath map[string]string
 	onDownload func()
+}
+
+type fakeImageProfileInspector struct {
+	profiles []builder.ImageProfile
+	err      error
+}
+
+func (f fakeImageProfileInspector) InspectImageProfiles(ctx context.Context, depotPath string) ([]builder.ImageProfile, error) {
+	return f.profiles, f.err
 }
 
 func (f fakePreflightS3Client) GetObjectInfo(ctx context.Context, objectPath string) (minio.ObjectInfo, error) {

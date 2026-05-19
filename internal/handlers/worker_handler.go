@@ -37,6 +37,7 @@ type workerClaimResponse struct {
 	DepotPath     string   `json:"depot_path"`
 	DriverPaths   []string `json:"driver_paths"`
 	CustomISOName string   `json:"custom_iso_name"`
+	ImageProfile  string   `json:"image_profile"`
 	OutputISOName string   `json:"output_iso_name"`
 }
 
@@ -111,6 +112,7 @@ func (h *WorkerHandler) ClaimBuild(c *fiber.Ctx) error {
 		DepotPath:     claimed.DepotPath,
 		DriverPaths:   driverPaths,
 		CustomISOName: claimed.CustomISOName,
+		ImageProfile:  claimed.ImageProfile,
 		OutputISOName: taskqueue.BuildOutputFileName(claimed.CustomISOName, claimed.ESXiVersion),
 	}))
 }
