@@ -54,9 +54,9 @@ docker compose -p esxi-source-cleanup-20261112 up -d --pull never
 
 尚未使用真实 Depot/驱动输入执行 ISO 端到端构建，模块存在和 HTTP 健康不等同于 ISO 产物验证。远端存储延迟明显，可能影响后续构建速度。
 
-## 2026-11-13 可追溯交付复核（进行中）
+## 可追溯交付复核
 
-- 当前基线 `903e993`；审核此前死代码清理、Docker 缓存优化、worker 下载优化及测试，准备本地提交。未推送。
+- 初始基线 `903e993`；已审核并本地提交此前死代码清理、Docker 缓存优化、worker 下载优化及测试，源码提交 `c9fe5bf5c5200c1d0704606d5edd663ec9296e2c`。未推送。
 - 本地 Git 跟踪的 cmd/internal/scripts/docker/configs/frontend 以及 Dockerfile、go.mod/go.sum、Compose、.dockerignore，逐文件 SHA-256 与远端 source 比较全部通过。此证据结合既有构建日志关联源码与镜像；不是镜像可重现构建证明。
 - 重新执行 `scripts/external-build-worker_test.ps1` 通过，实际 mock 负载 3 次引用只下载 2 次；`git diff --check` 通过。Go/前端完整测试沿用已核查的远端 `tests-final.log`，本轮未重新执行。
 - 当前标签和运行容器 Image 均为 `sha256:e1ef98a5b17a8ab5190b9e1c77c049d5ff987de8456cb4dd14fec0dcdd061a8d`。
@@ -65,6 +65,24 @@ docker compose -p esxi-source-cleanup-20261112 up -d --pull never
 - **真实 ISO 端到端阻塞在提交前的输入准备阶段**：缺少合法可用 ESXi offline Depot ZIP。没有创建虚假输入作业，无 job ID。输入下载、worker 消费、PowerCLI 导出、上传/持久化、产物下载及 ISO 签名/大小均未验证，不能判定端到端成功。项目本地存储模式不需要 S3 凭据，不能将缺 S3 凭据当成当前阻塞。后续需要导入真实 Depot ZIP，再通过 `/api/builds` 提交最小无额外驱动作业；本地存储直接读取输入，下载阶段应据此标注不适用，不能冒称完成远端下载。
 - 本轮旧 veladns 完整 ID：`3bf2b83337350b24db9988ce86750a201cce60fe493c094506b69f8fabc54205`，StartedAt `2026-11-12T12:39:42.167110775Z`，与前次记录一致。未操作旧服务。
 - 当前 API 可无 token 访问（本轮 GET 已验证），隔离网段之外不宜直接发布；本轮未更改现有认证配置。
+
+## 稳定标签与回滚
+
+已创建并验证 `esxi-source-cleanup:stable-c9fe5bf`，其镜像 ID 与运行容器的 Image 完全一致：`sha256:e1ef98a5b17a8ab5190b9e1c77c049d5ff987de8456cb4dd14fec0dcdd061a8d`。容器 Config.Image 仍为原部署标签 `esxi-source-cleanup:20261112`；没有为修改显示名称重建健康容器，身份通过不可变 Image ID 确定。
+
+远端已写入 `compose.stable-c9fe5bf.yaml`（仅覆盖 app.image），执行合并配置 `config --images` 返回稳定标签。此标签是本次健康服务的回滚锚点，不是虚构的历史 app 版本。恢复命令如下，适用于本次 Compose 与数据结构未发生不兼容修改的情况：
+
+```sh
+cd /opt/esxi-source-cleanup-20261112
+# 校验成功后才继续；标签缺失或指向改变时中止。
+test "$(docker image inspect esxi-source-cleanup:stable-c9fe5bf --format '{{.Id}}')" = 'sha256:e1ef98a5b17a8ab5190b9e1c77c049d5ff987de8456cb4dd14fec0dcdd061a8d' || exit 1
+docker compose -p esxi-source-cleanup-20261112 -f compose.yaml -f compose.stable-c9fe5bf.yaml up -d --no-deps --pull never app
+curl --fail http://127.0.0.1:8080/health
+```
+
+配置合并、标签和 Image ID 已实测；未人为破坏服务再演练恢复，不宣称完整回滚演练成功。命令保留现有数据卷且只管理 app；镜像回滚不会恢复数据库。保留上述镜像、Compose 和数据卷，不执行全局 prune 或 down -v。
+
+最终再次验证 app 为 healthy；旧 veladns ID 与 StartedAt 与本轮起始记录逐值一致。没有提交 ISO 作业，真实构建验证仍为明确阻塞，服务保留。
 
 ## 证据与维护
 
