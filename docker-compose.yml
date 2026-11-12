@@ -12,12 +12,15 @@ services:
       DB_PATH: ${DB_PATH:-/data/db/esxi-builder.db}
       STORAGE_TYPE: ${STORAGE_TYPE:-local}
       STORAGE_PATH: ${STORAGE_PATH:-/data/storage}
-      CACHE_DIR: ${CACHE_DIR:-/data/builds}
+      CACHE_DIR: ${CACHE_DIR:-/tmp/builds}
+      TMPDIR: ${TMPDIR:-/tmp}
       BUILD_MODE: ${BUILD_MODE:-local}
       WORKER_TOKEN: ${WORKER_TOKEN:-}
       FRONTEND_DIST_DIR: ${FRONTEND_DIST_DIR:-/app/frontend/dist}
     volumes:
       - esxi-data:/data
+    tmpfs:
+      - /tmp:size=3G,mode=1777
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
       interval: 30s

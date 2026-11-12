@@ -1,7 +1,7 @@
-import { DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ClockCircleOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
 import { PageContainer, ProCard } from './pro-compat'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Descriptions, Empty, Popconfirm, Progress, Space, Table, Typography, message } from 'antd'
+import { Alert, Button, Descriptions, Empty, Popconfirm, Progress, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { listBuckets } from '../api/buckets'
@@ -10,6 +10,214 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { BuildStatusTag } from '../pages/pageUtils'
 import type { BuildTask } from '../types'
 import { buildPublicObjectUrl, formatDate, parseDrivers } from '../utils'
+
+export interface TimingPhaseItem {
+  key: string
+  label: string
+  color: string
+  desc: string
+  ms: number
+  seconds: string
+  percent: number
+}
+
+export const TIMING_PHASE_DEFS: { key: string; label: string; color: string; desc: string }[] = [
+  { key: 'input_prepare_ms', label: '输入准备', color: '#13c2c2', desc: '文件定位与哈希校验' },
+  { key: 'powercli_load_ms', label: 'PowerCLI 初始化', color: '#1677ff', desc: 'ImageBuilder 模块加载' },
+  { key: 'depot_profile_ms', label: 'Depot & Profile', color: '#722ed1', desc: '加载 Depot 与克隆 Profile' },
+  { key: 'driver_injection_ms', label: '驱动注入', color: '#fa8c16', desc: '注入社区驱动包 (VIB/ZIP)' },
+  { key: 'iso_export_ms', label: 'ISO 镜像导出', color: '#eb2f96', desc: 'ImageBuilder 打包 ISO9660 镜像' },
+  { key: 'artifact_persist_ms', label: '产物持久化', color: '#52c41a', desc: '流式 SHA256 校验与入库持久化' },
+]
+
+export function parseTimingMetrics(logs: string[]): Record<string, number> {
+  const metrics: Record<string, number> = {}
+  for (const line of logs) {
+    const match = line.match(/\[TIMING\]\s+([a-zA-Z0-9_]+)=(\d+)/)
+    if (match) {
+      metrics[match[1]] = parseInt(match[2], 10)
+    }
+  }
+  return metrics
+}
+
+export function PhaseTimingBreakdown({
+  logs,
+  buildDuration,
+  isCompleted,
+}: {
+  logs: string[]
+  buildDuration?: number
+  isCompleted?: boolean
+}) {
+  const metrics = useMemo(() => parseTimingMetrics(logs), [logs])
+
+  const phases = useMemo(() => {
+    const present: TimingPhaseItem[] = []
+    let sumMs = 0
+
+    for (const def of TIMING_PHASE_DEFS) {
+      if (typeof metrics[def.key] === 'number') {
+        const ms = metrics[def.key]
+        sumMs += ms
+        present.push({
+          key: def.key,
+          label: def.label,
+          color: def.color,
+          desc: def.desc,
+          ms,
+          seconds: (ms / 1000).toFixed(2),
+          percent: 0,
+        })
+      }
+    }
+
+    const baseMs = sumMs > 0 ? sumMs : 1
+    for (const p of present) {
+      p.percent = Math.min(100, Math.round((p.ms / baseMs) * 1000) / 10)
+    }
+
+    return {
+      items: present,
+      sumMs,
+      totalSeconds: (sumMs / 1000).toFixed(2),
+      hasMetrics: present.length > 0,
+    }
+  }, [metrics])
+
+  if (!phases.hasMetrics && !isCompleted) {
+    return null
+  }
+
+  return (
+    <div
+      className="phase-timing-card"
+      data-testid="phase-timing-card"
+      style={{
+        background: '#ffffff',
+        border: '1px solid #e8e8e8',
+        borderRadius: 8,
+        padding: '14px 16px',
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Space size={8} align="center">
+          <ClockCircleOutlined style={{ color: '#1677ff', fontSize: 15 }} />
+          <Typography.Text strong style={{ fontSize: 14 }}>
+            阶段耗时分解
+          </Typography.Text>
+          {phases.hasMetrics && (
+            <Tag color="blue" style={{ borderRadius: 10, padding: '0 8px', fontSize: 11 }}>
+              {phases.items.length} 阶段已记录
+            </Tag>
+          )}
+        </Space>
+        <Space size={8}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            阶段累计：
+            <Typography.Text strong className="mono" style={{ color: '#1f2329' }}>
+              {phases.totalSeconds}s
+            </Typography.Text>
+          </Typography.Text>
+          {typeof buildDuration === 'number' && buildDuration > 0 && (
+            <Tag color="cyan" style={{ borderRadius: 10, padding: '0 8px', fontSize: 11 }}>
+              任务总耗时：{buildDuration}s
+            </Tag>
+          )}
+        </Space>
+      </div>
+
+      {phases.hasMetrics ? (
+        <>
+          {/* Multi-segment stacked overview progress bar */}
+          <div
+            style={{
+              display: 'flex',
+              height: 10,
+              borderRadius: 5,
+              overflow: 'hidden',
+              background: '#f0f2f5',
+              marginBottom: 14,
+              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)',
+            }}
+          >
+            {phases.items.map((phase) => (
+              <Tooltip
+                key={phase.key}
+                title={`${phase.label} (${phase.desc}): ${phase.seconds}s (${phase.percent}%)`}
+              >
+                <div
+                  style={{
+                    width: `${phase.percent}%`,
+                    backgroundColor: phase.color,
+                    transition: 'width 0.4s ease',
+                    minWidth: phase.percent > 0 ? 3 : 0,
+                  }}
+                />
+              </Tooltip>
+            ))}
+          </div>
+
+          {/* Phase items rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {phases.items.map((phase) => (
+              <div
+                key={phase.key}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  fontSize: 12,
+                  padding: '2px 0',
+                }}
+              >
+                <div style={{ width: 140, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      backgroundColor: phase.color,
+                      display: 'inline-block',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Typography.Text style={{ fontSize: 12, fontWeight: 500 }}>
+                    {phase.label}
+                  </Typography.Text>
+                </div>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <Progress
+                    percent={phase.percent}
+                    strokeColor={phase.color}
+                    size="small"
+                    showInfo={false}
+                    trailColor="#f0f2f5"
+                  />
+                </div>
+                <div style={{ width: 75, textAlign: 'right', flexShrink: 0 }}>
+                  <Typography.Text className="mono" style={{ fontSize: 12, fontWeight: 600 }}>
+                    {phase.seconds}s
+                  </Typography.Text>
+                </div>
+                <div style={{ width: 55, textAlign: 'right', flexShrink: 0 }}>
+                  <Typography.Text type="secondary" className="mono" style={{ fontSize: 11 }}>
+                    {phase.percent}%
+                  </Typography.Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          该任务未记录阶段细分耗时指标（构建总耗时：{buildDuration ?? 0} 秒）
+        </Typography.Text>
+      )}
+    </div>
+  )
+}
 
 function LogLine({ line }: { line: string }) {
   const lower = line.toLowerCase()
@@ -200,6 +408,12 @@ export function TaskWorkspace({ initialTaskId }: { initialTaskId?: string }) {
                   )}
                 </Space>
               ) : null}
+
+              <PhaseTimingBreakdown
+                logs={logs}
+                buildDuration={selectedTask.build_duration}
+                isCompleted={selectedTask.status === 'completed'}
+              />
 
               <div ref={logRef} className="log-console">
                 {logs.length > 0 ? logs.map((line, index) => <LogLine key={`${index}-${line}`} line={line} />) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="等待日志输出" />}

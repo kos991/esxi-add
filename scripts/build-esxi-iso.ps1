@@ -11,6 +11,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if (-not $env:TMPDIR -and (Test-Path "/tmp")) {
+    $env:TMPDIR = "/tmp"
+}
+
 function Initialize-PowerCliRuntime {
     Import-Module VMware.ImageBuilder -ErrorAction SilentlyContinue
 

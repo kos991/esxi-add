@@ -1,0 +1,25 @@
+[TIMING] input_prepare_ms=0
+[33;1mWARNING: Please consider joining the VMware Customer Experience Improvement Program, so you can help us make PowerCLI a better product. You can join using the following command:
+Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $true
+VMware's Customer Experience Improvement Program ("CEIP") provides VMware with information that enables VMware to improve its products and services, to fix problems, and to advise you on how best to deploy and use our products.  As part of the CEIP, VMware collects technical information about your organization’s use of VMware products and services on a regular basis in association with your organization’s VMware license key(s).  This information does not personally identify any individual.
+For more details: type "help about_ceip" to see the related help article.
+To disable this warning and set your preference use the following command and restart PowerShell:
+Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $true or $false.[0m
+[TIMING] powercli_load_ms=7210
+Starting build...
+Loading ESXi depot...
+Getting image profile...
+Cloning profile: ESXi-8.0U3k-25595708-no-tools
+Using image profile: ESXi-8.0U3k-25595708-no-tools
+[TIMING] depot_profile_ms=3647
+Loading driver: VMware-Re-Driver_1.101.01-5vmw.800.1.0.20613240.zip
+Adding package: if-re
+[TIMING] driver_injection_ms=1342
+Exporting ISO...
+Export strategy: direct
+[TIMING] iso_export_ms=152846
+Done
+ISO created: /data/builds/dc28a628-3798-4e5d-a4fe-530b1bbc9266/ESXi-8.0U3k-25595708-e2e-realtek.iso
+[TIMING] powercli_process_ms=166019
+[TIMING] artifact_persist_ms=7246
+ISO uploaded to output/ESXi-8.0U3k-25595708-e2e-realtek.iso

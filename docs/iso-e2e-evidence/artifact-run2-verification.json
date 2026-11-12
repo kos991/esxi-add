@@ -1,0 +1,15 @@
+{
+  "task_id": "dc28a628-3798-4e5d-a4fe-530b1bbc9266",
+  "sha256": "144761b9092451b2af91eae6904e3af7c2b97f46b43afa3a954519f9cca32e59",
+  "iso_size": 488624128,
+  "build_duration_sec": 174,
+  "iso9660_valid": true,
+  "volume_id": "CUSTOM-8.0-20261112-171003",
+  "el_torito_catalog_checksum_valid": true,
+  "bios_bootable": true,
+  "efi_bootable": true,
+  "driver_payload_matches_source": true,
+  "driver_payload_sha256": "9b82f310947d62d98f52879a2f72161ac539f516f432c4542f4bb2b277b83124",
+  "sqlite_busy_errors": 0,
+  "file_already_closed_errors": 0
+}

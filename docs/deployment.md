@@ -21,7 +21,7 @@
 APP_IMAGE=ghcr.io/kos991/esxi-add:latest
 APP_PORT=8080
 DB_PATH=/data/db/esxi-builder.db
-CACHE_DIR=/data/builds
+CACHE_DIR=/tmp/builds
 STORAGE_TYPE=local
 STORAGE_PATH=/data/storage
 BUILD_MODE=local

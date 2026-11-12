@@ -10,12 +10,13 @@ export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 export DB_PATH="${DB_PATH:-/data/db/esxi-builder.db}"
 export STORAGE_TYPE="${STORAGE_TYPE:-local}"
 export STORAGE_PATH="${STORAGE_PATH:-/data/storage}"
-export CACHE_DIR="${CACHE_DIR:-/data/builds}"
+export CACHE_DIR="${CACHE_DIR:-/tmp/builds}"
+export TMPDIR="${TMPDIR:-/tmp}"
 export BUILD_MODE="${BUILD_MODE:-local}"
 export WORKER_TOKEN="${WORKER_TOKEN:-}"
 export FRONTEND_DIST_DIR="${FRONTEND_DIST_DIR:-/app/frontend/dist}"
 
-mkdir -p /data/db /data/storage /data/builds /data/redis
+mkdir -p /data/db /data/storage /data/redis "${CACHE_DIR}"
 
 redis_pid=""
 server_pid=""

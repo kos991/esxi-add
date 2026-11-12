@@ -100,3 +100,20 @@ docker compose -p esxi-source-cleanup-20261112 up -d --pull never
 ```
 
 不要添加 `down -v`，不要清理旧服务或其数据。构建缓存保留供后续复用。
+
+## 2026-11-13 运行时修复与全链路验证结果 (runtime-20261113)
+
+- 镜像标签：esxi-source-cleanup:runtime-20261113
+- 镜像 ID：sha256:e1e0b59e4ecdbb89c968bbd400f68e7b91247a5d2295f01a6867d6181dddda69
+- 容器：esxi-source-cleanup-20261112-app-1（重启次数 0，持续 healthy）
+- 回滚锚点：/opt/esxi-source-cleanup-20261112/releases/runtime-20261113/rollback.sh（回滚至 esxi-source-cleanup:stable-c9fe5bf / sha256:e1ef98a5b17a...）
+- 真实构建验证：
+  - 作业 ID：dc28a628-3798-4e5d-a4fe-530b1bbc9266（ESXi 8.0U3k + Realtek 驱动，no-tools）
+  - 终态：completed，100%，无报错，总耗时 174 秒（较基准 273 秒缩短 99 秒，提升 36.3%）
+  - 阶段结构化耗时：输入准备 0ms，PowerCLI初始化 7,210ms，Depot加载 3,647ms，驱动注入 1,342ms，ISO导出 152,846ms，进程总耗时 166,019ms，持久化 7,246ms
+  - 锁与管道问题核验：SQLITE_BUSY 0 次；ile already closed 0 次
+- 产物核验：
+  - 产物文件大小 488,624,128 字节，SHA256 144761b9092451b2af91eae6904e3af7c2b97f46b43afa3a954519f9cca32e59
+  - ISO9660 / El Torito BIOS & EFI 双引导目录及签名校验通过
+  - Injected 驱动载荷 IFRE.V00 SHA256 为 9b82f310947d62d98f52879a2f72161ac539f516f432c4542f4bb2b277b83124，与源驱动逐字节匹配
+- 旧容器状态：eladns（3bf2b8333735）持续 healthy，StartedAt 维持 2026-11-12T12:39:42Z，未受任何影响
