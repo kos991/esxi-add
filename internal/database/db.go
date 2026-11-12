@@ -20,9 +20,37 @@ func InitDB(path string) (*gorm.DB, error) {
 		}
 	}
 
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	// go-sqlite applies _pragma on every new connection, including replacements.
+	// Keep one connection per process: SQLite has one writer, and migrations
+	// temporarily change connection-local foreign_keys outside transactions.
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	dsn := path + separator + "_pragma=busy_timeout(10000)&_txlock=immediate"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	ready := false
+	defer func() {
+		if !ready {
+			_ = sqlDB.Close()
+		}
+	}()
+	// WAL is persistent for file databases; memory databases report "memory".
+	var journalMode string
+	if err := db.Raw("PRAGMA journal_mode = WAL").Scan(&journalMode).Error; err != nil {
+		return nil, fmt.Errorf("configure sqlite journal: %w", err)
+	}
+	if journalMode != "wal" && journalMode != "memory" {
+		return nil, fmt.Errorf("unexpected sqlite journal mode: %s", journalMode)
 	}
 
 	if err := migrateLegacyColumns(db); err != nil {
@@ -50,6 +78,7 @@ func InitDB(path string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("auto migrate database: %w", err)
 	}
 
+	ready = true
 	return db, nil
 }
 

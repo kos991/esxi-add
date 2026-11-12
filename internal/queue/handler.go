@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,7 +64,7 @@ func NewBuildTaskHandler(db *gorm.DB, executor *builder.PowerShellExecutor, work
 	}
 }
 
-func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task) error {
+func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task) (resultErr error) {
 	if h.executor == nil {
 		return fmt.Errorf("powershell executor is not configured")
 	}
@@ -72,6 +73,17 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("unmarshal build payload: %w", err)
 	}
+
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := h.updateError(persistCtx, payload.TaskID, resultErr.Error()); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("persist failed task: %w", err))
+		}
+	}()
 
 	startedAt := time.Now()
 	if err := h.db.WithContext(ctx).Model(&models.BuildTask{}).Where("task_id = ?", payload.TaskID).Updates(map[string]any{
@@ -82,27 +94,24 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		return fmt.Errorf("mark build task as running: %w", err)
 	}
 
+	inputStarted := time.Now()
 	taskWorkDir := filepath.Join(h.workDir, payload.TaskID)
 	defer os.RemoveAll(taskWorkDir)
 
 	if err := os.MkdirAll(taskWorkDir, 0o755); err != nil {
-		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return fmt.Errorf("create task work directory: %w", err)
 	}
 
 	buildStore, err := h.resolveStorage(ctx, payload.BucketID)
 	if err != nil {
-		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
 	depotLocal, err := buildStore.EnsureFile(ctx, payload.DepotPath)
 	if err != nil {
-		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return fmt.Errorf("cache depot: %w", err)
 	}
 	if err := ValidateBuildInputFile(depotLocal, payload.DepotPath); err != nil {
-		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
@@ -110,11 +119,9 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	for _, driverPath := range payload.DriverPaths {
 		localPath, err := buildStore.EnsureFile(ctx, driverPath)
 		if err != nil {
-			_ = h.updateError(ctx, payload.TaskID, err.Error())
 			return fmt.Errorf("cache driver %s: %w", driverPath, err)
 		}
 		if err := ValidateBuildInputFile(localPath, driverPath); err != nil {
-			_ = h.updateError(ctx, payload.TaskID, err.Error())
 			return err
 		}
 		driverLocals = append(driverLocals, localPath)
@@ -124,25 +131,15 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	outputLocalPath := filepath.Join(taskWorkDir, outputFileName)
 
 	progressChan := make(chan builder.BuildProgress, 32)
+	progressChan <- builder.BuildProgress{Percentage: -1, Message: fmt.Sprintf("[TIMING] input_prepare_ms=%d", time.Since(inputStarted).Milliseconds())}
+	var progressErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for progress := range progressChan {
-			if progress.Message != "" {
-				_ = h.appendLog(ctx, payload.TaskID, progress.Message)
-				if h.wsManager != nil {
-					h.wsManager.BroadcastLog(payload.TaskID, progress.Message)
-				}
-			}
-			if progress.Percentage >= 0 {
-				_ = h.updateStatus(ctx, payload.TaskID, models.BuildTaskStatusRunning, progress.Percentage)
-				if h.wsManager != nil {
-					h.wsManager.BroadcastProgress(payload.TaskID, progress.Percentage)
-				}
-			}
-		}
+		progressErr = h.consumeProgress(ctx, payload.TaskID, progressChan)
 	}()
+	powerCLIStarted := time.Now()
 	err = h.executor.ExecuteBuild(ctx, &builder.BuildParams{
 		DepotPath:    depotLocal,
 		DriverPaths:  driverLocals,
@@ -151,15 +148,18 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		WorkDir:      taskWorkDir,
 		ImageProfile: payload.ImageProfile,
 	}, progressChan)
+	powerCLIDuration := time.Since(powerCLIStarted)
 	wg.Wait()
+	if err == nil {
+		err = progressErr
+	}
 	if err != nil {
-		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
+	persistStarted := time.Now()
 	outputObjectPath, shaValue, outputSize, err := storeBuildOutput(ctx, buildStore, outputLocalPath, outputFileName)
 	if err != nil {
-		_ = h.updateError(ctx, payload.TaskID, err.Error())
 		return err
 	}
 
@@ -173,12 +173,12 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		"completed_at":      completedAt,
 		"build_duration":    int(completedAt.Sub(startedAt).Seconds()),
 		"error_message":     "",
+		"log_output":        gorm.Expr("COALESCE(log_output, '') || ?", fmt.Sprintf("[TIMING] powercli_process_ms=%d\n[TIMING] artifact_persist_ms=%d\nISO uploaded to %s\n", powerCLIDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), outputObjectPath)),
 	}
 	if err := h.db.WithContext(ctx).Model(&models.BuildTask{}).Where("task_id = ?", payload.TaskID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("finalize build task: %w", err)
 	}
 
-	_ = h.appendLog(ctx, payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 	if h.wsManager != nil {
 		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
 		h.wsManager.BroadcastProgress(payload.TaskID, 100)

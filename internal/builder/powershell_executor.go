@@ -74,24 +74,41 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		return fmt.Errorf("start powershell build: %w", err)
 	}
 
+	// Cancellation must also release readers when a descendant inherits a pipe.
+	readDone := make(chan struct{})
+	defer close(readDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = stdout.Close()
+			_ = stderr.Close()
+		case <-readDone:
+		}
+	}()
+
+	var stdoutErr, stderrErr error
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		scanOutput(stdout, progressChan, false)
+		stdoutErr = scanOutputContext(ctx, stdout, progressChan, false)
 	}()
 
 	go func() {
 		defer wg.Done()
-		scanOutput(stderr, progressChan, true)
+		stderrErr = scanOutputContext(ctx, stderr, progressChan, true)
 	}()
 
-	waitErr := cmd.Wait()
+	// Wait closes StdoutPipe/StderrPipe. Drain both readers before calling it.
 	wg.Wait()
+	waitErr := cmd.Wait()
 
 	if waitErr != nil {
 		return fmt.Errorf("powershell build failed: %w", waitErr)
+	}
+	if stdoutErr != nil || stderrErr != nil {
+		return fmt.Errorf("read powershell output: stdout=%v stderr=%v", stdoutErr, stderrErr)
 	}
 
 	return nil
@@ -133,7 +150,11 @@ func (e *PowerShellExecutor) InspectImageProfiles(ctx context.Context, depotPath
 	return []ImageProfile{single}, nil
 }
 
-func scanOutput(reader io.Reader, progressChan chan<- BuildProgress, stderr bool) {
+func scanOutput(reader io.Reader, progressChan chan<- BuildProgress, stderr bool) error {
+	return scanOutputContext(context.Background(), reader, progressChan, stderr)
+}
+
+func scanOutputContext(ctx context.Context, reader io.Reader, progressChan chan<- BuildProgress, stderr bool) error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -143,17 +164,28 @@ func scanOutput(reader io.Reader, progressChan chan<- BuildProgress, stderr bool
 			continue
 		}
 
+		event := parseProgressLine(line)
 		if stderr {
-			progressChan <- BuildProgress{Percentage: -1, Message: line, IsError: true}
-			continue
+			event = BuildProgress{Percentage: -1, Message: line, IsError: true}
 		}
-
-		progressChan <- parseProgressLine(line)
+		select {
+		case progressChan <- event:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		progressChan <- BuildProgress{Percentage: -1, Message: err.Error(), IsError: true}
+		select {
+		case progressChan <- BuildProgress{Percentage: -1, Message: err.Error(), IsError: true}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		// A too-long line must not leave the child blocked on a full pipe.
+		_, _ = io.Copy(io.Discard, reader)
+		return err
 	}
+	return nil
 }
 
 func parseProgressLine(line string) BuildProgress {

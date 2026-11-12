@@ -87,12 +87,16 @@ export default function FilesPage() {
       if (!selectedBucketId || !file) throw new Error('请选择存储节点和文件')
       return uploadFile(selectedBucketId, uploadType, file, uploadType === 'iso' ? undefined : version, uploadType === 'driver' ? category : undefined)
     },
+    retry: false,
     onSuccess: async () => {
       messageApi.success('文件已上传')
       setFileList([])
       await invalidateFiles()
     },
-    onError: (error) => messageApi.error(String(error)),
+    onError: async (error) => {
+      messageApi.warning(`上传未获确认，文件可能已保存。请先检查资产列表；若列表中没有，请点击刷新元数据核对，勿直接重复上传。详情：${String(error)}`, 12)
+      await invalidateFiles()
+    },
   })
 
   const deleteMutation = useMutation({

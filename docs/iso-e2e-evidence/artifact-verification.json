@@ -1,0 +1,9 @@
+﻿{
+    "driver_payload_matches_source":  true,
+    "el_torito_catalog_checksum_valid":  true,
+    "sha256":  "147130365439CF23AC7D850CE6D3FB2373BDD16EA3832228D6D7006D04D5672E",
+    "boot_test_performed":  false,
+    "driver_payload_sha256":  "9b82f310947d62d98f52879a2f72161ac539f516f432c4542f4bb2b277b83124",
+    "iso_size":  488624128,
+    "modules_verified":  113
+}

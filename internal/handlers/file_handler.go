@@ -87,6 +87,19 @@ func (h *FileHandler) UploadFile(c *fiber.Ctx) error {
 		fileHeader.Size,
 	)
 	if err != nil {
+		if errors.Is(err, services.ErrUploadConflict) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"success": false, "error": err.Error(), "code": "upload_in_progress",
+				"data": fiber.Map{"stored": false, "metadata_confirmed": false},
+			})
+		}
+		var stored *services.StoredUploadError
+		if errors.As(err, &stored) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"success": false, "error": stored.Error(), "code": "upload_stored_metadata_pending",
+				"data": fiber.Map{"stored": true, "metadata_confirmed": false, "file": stored.Metadata},
+			})
+		}
 		status := fiber.StatusInternalServerError
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			status = fiber.StatusNotFound

@@ -144,7 +144,11 @@ try {
         throw "DepotPath is required"
     }
 
+    $runtimeTimer = [System.Diagnostics.Stopwatch]::StartNew()
     Initialize-PowerCliRuntime
+    if ($Mode -ne "InspectProfiles") {
+        Write-Host "[TIMING] powercli_load_ms=$($runtimeTimer.ElapsedMilliseconds)"
+    }
 
     if ($Mode -eq "InspectProfiles") {
         $profiles = @(Get-DepotImageProfiles -DepotPath $DepotPath)
@@ -166,6 +170,7 @@ try {
 
     New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 
+    $depotTimer = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "[PROGRESS] 10 Loading ESXi depot..."
     Add-EsxSoftwareDepot -DepotUrl $DepotPath | Out-Null
 
@@ -194,6 +199,8 @@ try {
         $drivers = @($DriverPaths -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
     }
 
+    Write-Host "[TIMING] depot_profile_ms=$($depotTimer.ElapsedMilliseconds)"
+    $injectionTimer = [System.Diagnostics.Stopwatch]::StartNew()
     $i = 0
     foreach ($d in $drivers) {
         $i++
@@ -202,6 +209,8 @@ try {
         Add-DriverSoftwarePackages -ImageProfile $custom.Name -DriverPath $d | Out-Null
     }
 
+    Write-Host "[TIMING] driver_injection_ms=$($injectionTimer.ElapsedMilliseconds)"
+    $exportTimer = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "[PROGRESS] 85 Exporting ISO..."
     Export-CustomImageProfile -ImageProfile $custom.Name -OutputPath $OutputPath -ESXiVersion $ESXiVersion -WorkDir $WorkDir -DriverPaths $drivers -BundleFirst $BundleFirst
 
@@ -209,6 +218,7 @@ try {
         throw "ISO export did not create output file: $OutputPath"
     }
 
+    Write-Host "[TIMING] iso_export_ms=$($exportTimer.ElapsedMilliseconds)"
     Write-Host "[PROGRESS] 100 Done"
     Write-Host "[SUCCESS] ISO created: $OutputPath"
 } catch {

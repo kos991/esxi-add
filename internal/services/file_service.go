@@ -5,12 +5,15 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"gorm.io/gorm"
@@ -20,11 +23,29 @@ import (
 	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 )
 
+// The supported deployment has one API process. Hold ownership through indexing
+// so concurrent uploads cannot pair one request's hashes with another's bytes.
+var activeUploads sync.Map
+var ErrUploadConflict = errors.New("an upload to this bucket/path is already in progress")
+
 type FileService struct {
 	db        *gorm.DB
 	s3Client  *storage.S3Client
 	cacheRoot string
 }
+
+// StoredUploadError means the bytes have been committed but metadata could not
+// be confirmed. Retrying the upload is not required; refresh/reconcile first.
+type StoredUploadError struct {
+	Metadata *models.FileMetadata
+	Err      error
+}
+
+func (e *StoredUploadError) Error() string {
+	return fmt.Sprintf("file stored at %s; metadata confirmation pending; refresh files before retrying: %v", e.Metadata.Path, e.Err)
+}
+
+func (e *StoredUploadError) Unwrap() error { return e.Err }
 
 func NewFileService(db *gorm.DB, s3 *storage.S3Client) *FileService {
 	return &FileService{db: db, s3Client: s3}
@@ -91,6 +112,12 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		return nil, err
 	}
 
+	uploadKey := fmt.Sprintf("%d:%s", bucketID, objectPath)
+	if _, loaded := activeUploads.LoadOrStore(uploadKey, struct{}{}); loaded {
+		return nil, ErrUploadConflict
+	}
+	defer activeUploads.Delete(uploadKey)
+
 	shaHasher := sha256.New()
 	md5Hasher := md5.New()
 	hashingReader := io.TeeReader(reader, io.MultiWriter(shaHasher, md5Hasher))
@@ -150,7 +177,11 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		metadata.LastModified = &lastModified
 	}
 
-	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+	// Once storage succeeds, a disconnected request must not cancel indexing.
+	// Keep the completion attempt bounded; expose partial success on failure.
+	metadataCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := s.db.WithContext(metadataCtx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"deleted_at",
@@ -172,13 +203,13 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 			"updated_at",
 		}),
 	}).Create(metadata).Error; err != nil {
-		return nil, fmt.Errorf("upsert file metadata: %w", err)
+		return metadata, &StoredUploadError{Metadata: metadata, Err: fmt.Errorf("upsert file metadata: %w", err)}
 	}
 
-	if err := s.db.WithContext(ctx).
+	if err := s.db.WithContext(metadataCtx).
 		Where("storage_bucket_id = ? AND path = ?", bucket.ID, objectPath).
 		First(metadata).Error; err != nil {
-		return nil, fmt.Errorf("find file metadata: %w", err)
+		return metadata, &StoredUploadError{Metadata: metadata, Err: fmt.Errorf("find file metadata: %w", err)}
 	}
 
 	return metadata, nil

@@ -43,11 +43,11 @@ func (s *LocalStore) Upload(ctx context.Context, objectName string, reader io.Re
 		return fmt.Errorf("create local object directory: %w", err)
 	}
 
-	tempPath := localPath + ".tmp"
-	out, err := os.Create(tempPath)
+	out, err := os.CreateTemp(filepath.Dir(localPath), ".upload-*")
 	if err != nil {
 		return fmt.Errorf("create local temp object: %w", err)
 	}
+	tempPath := out.Name()
 	copyErr := func() error {
 		defer out.Close()
 		if _, err := io.Copy(out, reader); err != nil {
@@ -57,7 +57,7 @@ func (s *LocalStore) Upload(ctx context.Context, objectName string, reader io.Re
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			return nil
+			return out.Close()
 		}
 	}()
 	if copyErr != nil {
