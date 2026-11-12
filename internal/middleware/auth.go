@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"crypto/subtle"
-	"net"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -46,35 +45,4 @@ func constantTimeEqual(actual, expected string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
-}
-
-func isLoopbackRequest(c *fiber.Ctx) bool {
-	peerIP := c.Context().RemoteIP()
-	if (peerIP == nil || peerIP.IsLoopback() || peerIP.IsUnspecified()) && strings.TrimSpace(c.Get(fiber.HeaderXForwardedFor)) != "" {
-		if forwardedIP := parseForwardedFor(c.Get(fiber.HeaderXForwardedFor)); forwardedIP != nil {
-			return forwardedIP.IsLoopback()
-		}
-	}
-	if peerIP != nil && peerIP.IsLoopback() {
-		return true
-	}
-
-	host, _, err := net.SplitHostPort(c.Context().RemoteAddr().String())
-	if err == nil {
-		if ip := net.ParseIP(host); ip != nil {
-			return ip.IsLoopback()
-		}
-	}
-	if ip := net.ParseIP(c.IP()); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
-}
-
-func parseForwardedFor(value string) net.IP {
-	first := strings.TrimSpace(strings.Split(value, ",")[0])
-	if first == "" {
-		return nil
-	}
-	return net.ParseIP(first)
 }

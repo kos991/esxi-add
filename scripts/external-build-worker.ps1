@@ -36,28 +36,65 @@ function Send-Progress([string]$TaskId, [int]$Progress, [string]$Log, [string]$S
     Invoke-RestMethod -Method Post -Uri (Join-ApiUrl "/api/worker/builds/$TaskId/progress") -Headers (Get-WorkerHeaders) -ContentType "application/json" -Body $body | Out-Null
 }
 
-function Save-WorkerFile([uint32]$BucketId, [string]$ObjectPath, [string]$DestinationRoot) {
+function Save-WorkerFile([uint32]$BucketId, [string]$ObjectPath, [string]$DestinationRoot, [hashtable]$DownloadedFiles) {
+    # Reuse only within this build invocation: the API supplies no immutable version/ETag.
+    $key = "$BucketId`n$ObjectPath"
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($key))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    if ($null -ne $DownloadedFiles -and $DownloadedFiles.ContainsKey($digest)) {
+        return $DownloadedFiles[$digest]
+    }
     $fileName = Split-Path $ObjectPath -Leaf
-    $destination = Join-Path $DestinationRoot $fileName
+    if ([string]::IsNullOrWhiteSpace($fileName) -or $fileName -eq "." -or $fileName -eq "..") {
+        throw "invalid worker input filename"
+    }
+    # Preserve the filename for ImageBuilder's extension and bundle-first detection.
+    $objectDir = Join-Path $DestinationRoot $digest
+    New-Item -ItemType Directory -Force -Path $objectDir | Out-Null
+    $destination = Join-Path $objectDir $fileName
     $encodedPath = [System.Uri]::EscapeDataString($ObjectPath)
     $url = Join-ApiUrl "/api/worker/files?bucket_id=$BucketId&path=$encodedPath"
-    Invoke-WebRequest -Uri $url -Headers (Get-WorkerHeaders) -OutFile $destination
-    return $destination
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $partial = Join-Path $objectDir ([Guid]::NewGuid().ToString("N") + ".partial")
+        try {
+            Invoke-WebRequest -Uri $url -Headers (Get-WorkerHeaders) -OutFile $partial -TimeoutSec 1800
+            if ((Get-Item -LiteralPath $partial).Length -eq 0) {
+                throw "downloaded worker input is empty"
+            }
+            Move-Item -LiteralPath $partial -Destination $destination -Force
+            if ($null -ne $DownloadedFiles) {
+                $DownloadedFiles[$digest] = $destination
+            }
+            return $destination
+        } catch {
+            if ($attempt -eq 3) { throw }
+            Start-Sleep -Seconds $attempt
+        } finally {
+            if (Test-Path -LiteralPath $partial) {
+                Remove-Item -LiteralPath $partial -Force
+            }
+        }
+    }
 }
 
 function Invoke-BuildProcess([string]$TaskId, [object]$Task, [string]$TaskDir) {
-    $inputDir = Join-Path $TaskDir "input"
+    $inputDir = Join-Path $TaskDir ("input-" + [Guid]::NewGuid().ToString("N"))
+    $downloadedFiles = @{}
     $buildDir = Join-Path $TaskDir "build"
     $outputPath = Join-Path $TaskDir $Task.output_iso_name
     New-Item -ItemType Directory -Force -Path $inputDir, $buildDir | Out-Null
 
     Send-Progress -TaskId $TaskId -Progress 5 -Log "Downloading depot: $($Task.depot_path)"
-    $depotLocal = Save-WorkerFile -BucketId $Task.bucket_id -ObjectPath $Task.depot_path -DestinationRoot $inputDir
+    $depotLocal = Save-WorkerFile -BucketId $Task.bucket_id -ObjectPath $Task.depot_path -DestinationRoot $inputDir -DownloadedFiles $downloadedFiles
 
     $driverLocals = @()
     foreach ($driverPath in @($Task.driver_paths)) {
         Send-Progress -TaskId $TaskId -Progress 10 -Log "Downloading driver: $driverPath"
-        $driverLocals += Save-WorkerFile -BucketId $Task.bucket_id -ObjectPath $driverPath -DestinationRoot $inputDir
+        $driverLocals += Save-WorkerFile -BucketId $Task.bucket_id -ObjectPath $driverPath -DestinationRoot $inputDir -DownloadedFiles $downloadedFiles
     }
 
     $arguments = @(

@@ -1,8 +1,9 @@
+# syntax=docker/dockerfile:1
 # Frontend build stage
 FROM node:20-bookworm-slim AS frontend-builder
 WORKDIR /frontend
-COPY frontend/package*.json ./
-RUN npm ci
+COPY frontend/package.json frontend/package-lock.json ./
+RUN --mount=type=cache,id=esxi-npm,target=/root/.npm,sharing=locked npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
@@ -10,10 +11,13 @@ RUN npm run build
 FROM golang:1.21-bookworm AS backend-builder
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
+RUN --mount=type=cache,id=esxi-go-mod,target=/go/pkg/mod,sharing=locked go mod download
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/server ./cmd/server
+RUN --mount=type=cache,id=esxi-go-mod,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=esxi-go-build,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o /out/server ./cmd/server
 
 # Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
 FROM vmware/powerclicore:latest

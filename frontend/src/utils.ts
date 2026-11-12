@@ -32,7 +32,3 @@ export function buildPublicObjectUrl(publicDomain?: string, objectPath?: string)
   const normalizedDomain = domain.includes('://') ? domain : `https://${domain}`
   return `${normalizedDomain.replace(/\/$/, '')}/${objectPath.trim().replace(/^\//, '')}`
 }
-
-export function cn(...values: Array<string | false | null | undefined>) {
-  return values.filter(Boolean).join(' ')
-}

@@ -33,7 +33,6 @@ export default function OverviewPage() {
 
     return {
       total: buildsQuery.data?.total ?? tasks.length,
-      completed,
       running,
       successRate,
       buckets: bucketsQuery.data?.length ?? 0,

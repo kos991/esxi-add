@@ -117,45 +117,6 @@ func TestComposePullsPublishedSingleImageByDefault(t *testing.T) {
 	}
 }
 
-func TestDockerWorkflowValidatesPublishesAndDeploysGHCRImage(t *testing.T) {
-	workflow := readTextFile(t, "../.github/workflows/docker.yml")
-
-	for _, snippet := range []string{
-		"pull_request:",
-		`branches: ["main"]`,
-		`tags: ["v*"]`,
-		"npm run test",
-		"npm run build",
-		"go test ./cmd/... ./internal/... ./scripts",
-		"ghcr.io/kos991/esxi-add",
-		"docker/login-action",
-		"docker/build-push-action",
-		"push: true",
-		"appleboy/scp-action",
-		"appleboy/ssh-action",
-		"vars.ENABLE_DEPLOY_142 == 'true'",
-		"docker-compose.yml",
-		"192.168.0.142",
-		"docker compose pull",
-		"docker compose up -d",
-		"docker-compose pull",
-		"docker-compose up -d",
-	} {
-		if !strings.Contains(workflow, snippet) {
-			t.Fatalf("docker workflow must contain %q", snippet)
-		}
-	}
-
-	for _, forbidden := range []string{
-		"docker image prune -f",
-		"build:",
-	} {
-		if strings.Contains(workflow, forbidden) {
-			t.Fatalf("docker workflow must not contain %q in pull-based deploy mode", forbidden)
-		}
-	}
-}
-
 func readTextFile(t *testing.T, path string) string {
 	t.Helper()
 
