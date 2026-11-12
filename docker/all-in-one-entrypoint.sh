@@ -55,8 +55,9 @@ log "starting redis"
 redis-server \
 	--bind 127.0.0.1 \
 	--port 6379 \
-	--dir /data/redis \
-	--appendonly yes \
+	--dir /tmp/redis \
+	--appendonly no \
+	--save "" \
 	--protected-mode no &
 redis_pid="$!"
 
