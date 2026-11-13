@@ -5,6 +5,7 @@ log() {
 	printf '%s %s\n' "$(date -Iseconds)" "$*"
 }
 
+export SERVER_HOST="${SERVER_HOST:-0.0.0.0}"
 export PORT="${PORT:-8080}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 export DB_PATH="${DB_PATH:-/data/db/esxi-builder.db}"
@@ -16,7 +17,8 @@ export BUILD_MODE="${BUILD_MODE:-local}"
 export WORKER_TOKEN="${WORKER_TOKEN:-}"
 export FRONTEND_DIST_DIR="${FRONTEND_DIST_DIR:-/app/frontend/dist}"
 
-mkdir -p /data/db /data/storage /data/redis "${CACHE_DIR}"
+REDIS_DIR="${REDIS_DIR:-/tmp/redis}"
+mkdir -p /data/db /data/storage "${CACHE_DIR}" "${REDIS_DIR}"
 
 redis_pid=""
 server_pid=""
@@ -55,7 +57,7 @@ log "starting redis"
 redis-server \
 	--bind 127.0.0.1 \
 	--port 6379 \
-	--dir /tmp/redis \
+	--dir "${REDIS_DIR}" \
 	--appendonly no \
 	--save "" \
 	--protected-mode no &

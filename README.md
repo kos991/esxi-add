@@ -1,78 +1,39 @@
 # ESXi ISO Builder
 
-ESXi ISO Builder 是一个用于内网自动化构建 ESXi 自定义 ISO 的单容器平台。它提供文件管理、存储节点、构建向导、任务进度和实时日志，后端使用 Go，前端使用 React + Ant Design。
+一键部署的 ESXi 自定义 ISO 构建平台。Linux 原生 xorriso 重封装，5~10 秒出 ISO；PowerCLI 作为备用引擎。
 
-## 界面预览
+## 两个页面
 
-![总览](docs/images/overview.png)
+- **构建流水线**：上方编排「基础镜像 → 社区驱动 → 安装参数 → 执行」，下方实时输出中文构建日志、阶段耗时和成品下载。
+- **存储与挂载**：本地目录与 S3 / MinIO / R2 / OSS 多盘挂载，盘内按「基础镜像 / 驱动包 / 构建产出」管理，支持拖拽上传，S3 保存前可测试连通性。
 
-![存储节点](docs/images/buckets.png)
-
-![文件库](docs/images/files.png)
-
-![自定义构建](docs/images/build.png)
-
-![任务日志](docs/images/tasks.png)
-
-![任务详情](docs/images/task-detail.png)
-
-## 功能
-
-- 管理 Depot、驱动包和 ISO 构建产物。
-- 支持本地存储和 S3/R2 兼容存储。
-- 构建前下载并校验 Depot、ZIP、VIB 文件。
-- 支持构建任务进度、日志、历史记录和产物下载。
-- 支持 API Token、Worker Token 和可配置 CORS。
-
-## 快速启动
+## 一键部署
 
 ```bash
-docker-compose pull
-docker-compose up -d
+# 方式一：在线（需要能访问 ghcr.io）
+curl -fsSL https://raw.githubusercontent.com/kos991/esxi-add/main/install.sh | sh
+
+# 方式二：离线镜像包
+docker load -i esxi-iso-builder.tar.gz && ./install.sh
+
+# 方式三：compose
+docker compose up -d
 ```
 
-访问：
+浏览器访问 `http://<服务器IP>:8080`。数据保存在 `esxi-data` 数据卷，升级镜像不会丢。
 
-```text
-http://localhost:8080
-```
+## 配置
 
-常用 `.env`：
+复制 `.env.example` 为 `.env` 后修改：`APP_PORT`、`API_TOKEN`（设置后接口需带 `X-API-Token`）、`APP_IMAGE`。
 
-```env
-APP_IMAGE=ghcr.io/kos991/esxi-add:latest
-APP_PORT=8080
-SERVER_HOST=0.0.0.0
-BUILD_MODE=local
-WORKER_TOKEN=change-this-worker-token
-```
-
-## 本地开发
-
-后端：
+## 自行构建镜像
 
 ```bash
-go test ./...
-go run ./cmd/server
+docker build -t esxi-iso-builder:local --build-arg APP_VERSION=$(cat VERSION) .
+APP_IMAGE=esxi-iso-builder:local ./install.sh
 ```
 
-前端：
+## 分支
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-前端验证：
-
-```bash
-npm run test
-npm run build
-```
-
-## 更多文档
-
-- [使用说明](docs/usage.md)
-- [部署说明](docs/deployment.md)
-- [更新记录](CHANGELOG.md)
+- `main`：当前版本（本分支）。
+- `archive/*`：历史版本归档，只读保留。

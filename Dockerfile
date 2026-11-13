@@ -8,7 +8,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Backend build stage
-FROM golang:1.21-bookworm AS backend-builder
+FROM golang:1.22-bookworm AS backend-builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN --mount=type=cache,id=esxi-go-mod,target=/go/pkg/mod,sharing=locked go mod download
