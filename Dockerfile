@@ -29,7 +29,7 @@ LABEL org.opencontainers.image.title="ESXi ISO Builder" \
 
 RUN if command -v apt-get >/dev/null 2>&1; then \
         apt-get update \
-        && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata \
+        && apt-get install -y --no-install-recommends ca-certificates curl redis-server tzdata xorriso p7zip-full \
         && rm -rf /var/lib/apt/lists/*; \
     elif command -v tdnf >/dev/null 2>&1; then \
         tdnf install -y ca-certificates curl python3-pip redis tzdata \

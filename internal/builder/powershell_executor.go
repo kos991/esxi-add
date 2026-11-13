@@ -48,17 +48,33 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		return fmt.Errorf("build params are required")
 	}
 
-	cmd := exec.CommandContext(
-		ctx,
-		e.pwshPath,
-		"-File", e.scriptPath,
-		"-DepotPath", params.DepotPath,
-		"-DriverPaths", strings.Join(params.DriverPaths, ","),
-		"-OutputPath", params.OutputPath,
-		"-ESXiVersion", params.ESXiVersion,
-		"-WorkDir", params.WorkDir,
-		"-ImageProfileName", params.ImageProfile,
-	)
+	var cmd *exec.Cmd
+	if strings.HasSuffix(strings.ToLower(e.scriptPath), ".sh") {
+		args := []string{
+			e.scriptPath,
+			"--depot-path", params.DepotPath,
+			"--driver-paths", strings.Join(params.DriverPaths, ","),
+			"--output-path", params.OutputPath,
+			"--esxi-version", params.ESXiVersion,
+			"--work-dir", params.WorkDir,
+		}
+		if params.ImageProfile != "" {
+			args = append(args, "--image-profile", params.ImageProfile)
+		}
+		cmd = exec.CommandContext(ctx, "bash", args...)
+	} else {
+		cmd = exec.CommandContext(
+			ctx,
+			e.pwshPath,
+			"-File", e.scriptPath,
+			"-DepotPath", params.DepotPath,
+			"-DriverPaths", strings.Join(params.DriverPaths, ","),
+			"-OutputPath", params.OutputPath,
+			"-ESXiVersion", params.ESXiVersion,
+			"-WorkDir", params.WorkDir,
+			"-ImageProfileName", params.ImageProfile,
+		)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
