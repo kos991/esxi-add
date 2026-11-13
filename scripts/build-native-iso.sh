@@ -125,7 +125,7 @@ ISO_ROOT="$WORK_DIR/iso_root"
 mkdir -p "$ISO_ROOT"
 
 cleanup() {
-    rm -rf "$WORK_DIR"
+    rm -rf "$ISO_ROOT"
 }
 trap cleanup EXIT
 
