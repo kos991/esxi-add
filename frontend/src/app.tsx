@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import Layout from './layouts'
 import BuildPage from './pages/BuildPage'
-import OverviewPage from './pages/OverviewPage'
 import StorageFilesPage from './pages/StorageFilesPage'
 
 import 'antd/dist/reset.css'
@@ -29,15 +28,19 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<OverviewPage />} />
-            <Route path="storage" element={<StorageFilesPage />} />
+            {/* 默认首页直接进入：构建流水线 */}
+            <Route index element={<BuildPage />} />
             <Route path="build" element={<BuildPage />} />
-            {/* 兼容历史旧路径，统一收敛至 3 大核心页面 */}
-            <Route path="buckets" element={<Navigate to="/storage?focus=nodes" replace />} />
-            <Route path="files" element={<Navigate to="/storage" replace />} />
+            <Route path="storage" element={<StorageFilesPage />} />
+
+            {/* 历史旧路由平滑过渡 */}
+            <Route path="pipeline" element={<Navigate to="/build" replace />} />
+            <Route path="overview" element={<Navigate to="/build" replace />} />
             <Route path="tasks" element={<Navigate to="/build" replace />} />
             <Route path="tasks/:taskId" element={<TaskDetailRedirect />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="buckets" element={<Navigate to="/storage" replace />} />
+            <Route path="files" element={<Navigate to="/storage" replace />} />
+            <Route path="*" element={<Navigate to="/build" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>

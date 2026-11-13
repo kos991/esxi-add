@@ -35,6 +35,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	protectedAPI.Get("/system/status", systemStatusHandler.Get)
 
 	protectedAPI.Get("/buckets", bucketHandler.List)
+	protectedAPI.Post("/buckets/test-config", bucketHandler.TestConfig)
 	protectedAPI.Post("/buckets", bucketHandler.Create)
 	protectedAPI.Get("/buckets/:id", bucketHandler.Get)
 	protectedAPI.Put("/buckets/:id", bucketHandler.Update)

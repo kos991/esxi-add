@@ -1,30 +1,39 @@
 import {
   ApiOutlined,
   CheckCircleFilled,
+  CheckCircleOutlined,
   CloudServerOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
+  FolderOpenOutlined,
   HddOutlined,
   InboxOutlined,
+  LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
   RocketOutlined,
   SearchOutlined,
+  StarFilled,
   StarOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Alert,
   Badge,
   Button,
+  Card,
   Drawer,
   Empty,
   Form,
   Input,
   Modal,
   Popconfirm,
+  Progress,
+  Radio,
   Segmented,
   Select,
   Space,
@@ -46,6 +55,7 @@ import {
   deleteBucket,
   listBuckets,
   setDefaultBucket,
+  testBucketConfig,
   testBucketConnection,
   updateBucket,
 } from '../api/buckets'
@@ -58,7 +68,7 @@ import {
   renameFile,
   uploadFile,
 } from '../api/files'
-import { PageContainer, ProCard } from '../components/pro-compat'
+import { PageContainer } from '../components/pro-compat'
 import type { FileMetadata, StorageBucket } from '../types'
 import { buildPublicObjectUrl, formatDate } from '../utils'
 import {
@@ -70,10 +80,11 @@ import {
   cacheStatusText,
   compactSize,
   esxiVersions,
-} from './pageUtils'
+  fileName,
+} from './pipelineUtils'
 
 type UploadType = 'depot' | 'driver' | 'iso'
-type AssetCategoryTab = 'all' | 'depot' | 'driver' | 'iso'
+type AssetCategoryTab = 'depot' | 'driver' | 'iso'
 
 const defaultBucketPayload: BucketPayload = {
   name: '',
@@ -91,9 +102,27 @@ const defaultBucketPayload: BucketPayload = {
 
 const driverCategories = [
   { value: 'network', label: '网卡驱动 (Network)' },
-  { value: 'storage', label: '存储控制 (Storage)' },
-  { value: 'raid', label: '阵列卡 (RAID)' },
+  { value: 'storage', label: '存储控制器 (Storage)' },
+  { value: 'raid', label: 'RAID 阵列卡 (RAID)' },
   { value: 'other', label: '其他驱动 (Other)' },
+]
+
+interface CloudProviderPreset {
+  key: string
+  name: string
+  label: string
+  endpoint: string
+  region: string
+  useSSL: boolean
+}
+
+const S3_PRESETS: CloudProviderPreset[] = [
+  { key: 'minio', name: 'MinIO 集群', label: 'MinIO (私有部署)', endpoint: '192.168.0.10:9000', region: 'us-east-1', useSSL: false },
+  { key: 'aws', name: 'AWS S3', label: 'Amazon S3', endpoint: 's3.us-east-1.amazonaws.com', region: 'us-east-1', useSSL: true },
+  { key: 'r2', name: 'Cloudflare R2', label: 'Cloudflare R2', endpoint: '<account-id>.r2.cloudflarestorage.com', region: 'auto', useSSL: true },
+  { key: 'aliyun', name: '阿里云 OSS', label: 'Aliyun OSS', endpoint: 'oss-cn-hangzhou.aliyuncs.com', region: 'oss-cn-hangzhou', useSSL: true },
+  { key: 'tencent', name: '腾讯云 COS', label: 'Tencent COS', endpoint: 'cos.ap-guangzhou.myqcloud.com', region: 'ap-guangzhou', useSSL: true },
+  { key: 'custom', name: 'S3 兼容存储', label: '通用 S3 兼容', endpoint: '', region: 'us-east-1', useSSL: true },
 ]
 
 export default function StorageFilesPage() {
@@ -102,28 +131,27 @@ export default function StorageFilesPage() {
   const inRouter = useInRouterContext()
   const routerNavigate = inRouter ? useNavigate() : null
   const go = (path: string) => {
-    if (routerNavigate) {
-      routerNavigate(path)
-    } else {
-      window.location.assign(path)
-    }
+    if (routerNavigate) routerNavigate(path)
+    else window.location.assign(path)
   }
 
-  // Storage Node Drawer State
-  const [bucketForm] = Form.useForm<BucketPayload>()
-  const [bucketDrawerOpen, setBucketDrawerOpen] = useState(false)
+  // Mount S3/Local Drawer State
+  const [mountForm] = Form.useForm<BucketPayload>()
+  const [mountDrawerOpen, setMountDrawerOpen] = useState(false)
   const [editingBucket, setEditingBucket] = useState<StorageBucket | null>(null)
   const [storageType, setStorageType] = useState<'s3' | 'local'>('s3')
+  const [testingConfigLoading, setTestingConfigLoading] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [testingNodeId, setTestingNodeId] = useState<number | null>(null)
 
-  // Asset Workspace State
+  // Current Active Storage Mount
   const [bucketId, setBucketId] = useState<number | undefined>()
-  const [assetTab, setAssetTab] = useState<AssetCategoryTab>('all')
+  const [categoryTab, setCategoryTab] = useState<AssetCategoryTab>('depot')
   const [searchKeyword, setSearchKeyword] = useState('')
   const [versionFilter, setVersionFilter] = useState<string>('all')
 
-  // Upload Panel State
-  const [uploadExpanded, setUploadExpanded] = useState(true)
+  // Upload Area State
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false)
   const [uploadType, setUploadType] = useState<UploadType>('depot')
   const [uploadVersion, setUploadVersion] = useState('8.0')
   const [uploadCategory, setUploadCategory] = useState('network')
@@ -133,27 +161,29 @@ export default function StorageFilesPage() {
   const [renaming, setRenaming] = useState<FileMetadata | null>(null)
   const [renameForm] = Form.useForm<{ new_name: string }>()
 
+  // Query: Storage Buckets
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
-  const sortedBuckets = useMemo(
-    () => [...(bucketsQuery.data ?? [])].sort((a, b) => Number(b.is_default) - Number(a.is_default)),
-    [bucketsQuery.data]
-  )
+  const buckets = useMemo(() => {
+    const list = bucketsQuery.data ?? []
+    return [...list].sort((a, b) => Number(b.is_default) - Number(a.is_default))
+  }, [bucketsQuery.data])
 
   const selectedBucketId = useMemo(
-    () => bucketId ?? sortedBuckets.find((b) => b.is_default)?.id ?? sortedBuckets[0]?.id,
-    [bucketId, sortedBuckets]
+    () => bucketId ?? buckets.find((b) => b.is_default)?.id ?? buckets[0]?.id,
+    [bucketId, buckets]
   )
   const selectedBucket = useMemo(
-    () => sortedBuckets.find((b) => b.id === selectedBucketId),
-    [sortedBuckets, selectedBucketId]
+    () => buckets.find((b) => b.id === selectedBucketId),
+    [buckets, selectedBucketId]
   )
 
+  // Query Files in active bucket
   const depotsQuery = useQuery({
     queryKey: ['depots', selectedBucketId],
     queryFn: () => listDepots(selectedBucketId as number),
     enabled: Boolean(selectedBucketId),
   })
-  const allDriversQuery = useQuery({
+  const driversQuery = useQuery({
     queryKey: ['drivers', selectedBucketId, 'all'],
     queryFn: () => listDrivers(selectedBucketId as number),
     enabled: Boolean(selectedBucketId),
@@ -165,38 +195,22 @@ export default function StorageFilesPage() {
   })
 
   const depots = depotsQuery.data ?? []
-  const drivers = allDriversQuery.data ?? []
+  const drivers = driversQuery.data ?? []
   const isos = isoQuery.data ?? []
 
-  const allAssets = useMemo(() => {
-    const map = new Map<number, FileMetadata>()
-    for (const item of [...depots, ...drivers, ...isos]) {
-      map.set(item.id, item)
-    }
-    return Array.from(map.values())
-  }, [depots, drivers, isos])
-
-  const filteredAssets = useMemo(() => {
-    const source =
-      assetTab === 'depot'
-        ? depots
-        : assetTab === 'driver'
-          ? drivers
-          : assetTab === 'iso'
-            ? isos
-            : allAssets
-
+  const currentCategoryFiles = useMemo(() => {
+    const source = categoryTab === 'depot' ? depots : categoryTab === 'driver' ? drivers : isos
     const kw = searchKeyword.trim().toLowerCase()
     return source.filter((item) => {
-      const matchVersion = versionFilter === 'all' || item.esxi_version === versionFilter
-      const matchKeyword =
+      const matchVer = versionFilter === 'all' || item.esxi_version === versionFilter
+      const matchKw =
         !kw ||
         item.path.toLowerCase().includes(kw) ||
         (item.driver_name && item.driver_name.toLowerCase().includes(kw)) ||
         (item.driver_description && item.driver_description.toLowerCase().includes(kw))
-      return matchVersion && matchKeyword
+      return matchVer && matchKw
     })
-  }, [assetTab, depots, drivers, isos, allAssets, searchKeyword, versionFilter])
+  }, [categoryTab, depots, drivers, isos, searchKeyword, versionFilter])
 
   const invalidateFiles = async () => {
     await Promise.all([
@@ -212,40 +226,98 @@ export default function StorageFilesPage() {
     await queryClient.invalidateQueries({ queryKey: ['buckets'] })
   }
 
-  const closeBucketDrawer = () => {
-    setBucketDrawerOpen(false)
+  // Mount Drawer Helpers
+  const closeMountDrawer = () => {
+    setMountDrawerOpen(false)
     setEditingBucket(null)
     setStorageType('s3')
-    bucketForm.resetFields()
+    setTestResult(null)
+    mountForm.resetFields()
   }
 
-  const openCreateBucket = () => {
+  const openMountS3 = () => {
+    setEditingBucket(null)
+    setStorageType('s3')
+    setTestResult(null)
+    mountForm.setFieldsValue({
+      ...defaultBucketPayload,
+      type: 's3',
+      name: 'MinIO 集群',
+      endpoint: '192.168.0.10:9000',
+      region: 'us-east-1',
+      use_ssl: false,
+    })
+    setMountDrawerOpen(true)
+  }
+
+  const openMountLocal = () => {
     setEditingBucket(null)
     setStorageType('local')
-    bucketForm.setFieldsValue({ ...defaultBucketPayload, type: 'local', local_path: '/data/storage' })
-    setBucketDrawerOpen(true)
-  }
-
-  const openEditBucket = (bucket: StorageBucket) => {
-    const nextType = bucket.type === 'local' ? 'local' : 's3'
-    setEditingBucket(bucket)
-    setStorageType(nextType)
-    bucketForm.setFieldsValue({
-      name: bucket.name,
-      type: nextType,
-      endpoint: bucket.endpoint,
-      access_key: bucket.access_key,
-      secret_key: '',
-      bucket_name: bucket.bucket_name,
-      region: bucket.region,
-      use_ssl: bucket.use_ssl,
-      public_domain: bucket.public_domain,
-      local_path: bucket.local_path,
-      is_default: bucket.is_default,
+    setTestResult(null)
+    mountForm.setFieldsValue({
+      ...defaultBucketPayload,
+      type: 'local',
+      name: '本地专用挂载盘',
+      local_path: '/data/storage',
+      use_ssl: true,
     })
-    setBucketDrawerOpen(true)
+    setMountDrawerOpen(true)
   }
 
+  const openEditMount = (b: StorageBucket) => {
+    const nextType = b.type === 'local' ? 'local' : 's3'
+    setEditingBucket(b)
+    setStorageType(nextType)
+    setTestResult(null)
+    mountForm.setFieldsValue({
+      name: b.name,
+      type: nextType,
+      endpoint: b.endpoint,
+      access_key: b.access_key,
+      secret_key: '',
+      bucket_name: b.bucket_name,
+      region: b.region,
+      use_ssl: b.use_ssl,
+      public_domain: b.public_domain,
+      local_path: b.local_path,
+      is_default: b.is_default,
+    })
+    setMountDrawerOpen(true)
+  }
+
+  const applyPreset = (preset: CloudProviderPreset) => {
+    mountForm.setFieldsValue({
+      name: preset.name,
+      endpoint: preset.endpoint,
+      region: preset.region,
+      use_ssl: preset.useSSL,
+    })
+  }
+
+  // Pre-test S3 connection
+  const handleTestMountConfig = async () => {
+    try {
+      const values = await mountForm.validateFields()
+      setTestingConfigLoading(true)
+      setTestResult(null)
+      const res = await testBucketConfig(values)
+      if (res.connected) {
+        setTestResult({ ok: true, msg: '连通性测试通过！该 S3 存储可正常读写与挂载。' })
+        messageApi.success('S3 连接测试成功')
+      } else {
+        setTestResult({ ok: false, msg: '无法连接到该 S3 端点，请核对 Endpoint、Bucket 或密钥' })
+        messageApi.error('连接失败')
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || String(err)
+      setTestResult({ ok: false, msg: `测试连接失败：${msg}` })
+      messageApi.error(`连接失败：${msg}`)
+    } finally {
+      setTestingConfigLoading(false)
+    }
+  }
+
+  // Mutations
   const saveBucketMutation = useMutation({
     mutationFn: (payload: BucketPayload) => {
       const normalized: BucketPayload =
@@ -270,18 +342,22 @@ export default function StorageFilesPage() {
             }
       return editingBucket ? updateBucket(editingBucket.id, normalized) : createBucket(normalized)
     },
-    onSuccess: async () => {
-      messageApi.success(editingBucket ? '存储节点已更新' : '存储节点已创建')
-      closeBucketDrawer()
+    onSuccess: async (data) => {
+      messageApi.success(editingBucket ? '存储节点配置已更新' : 'S3 存储节点挂载成功')
+      setBucketId(data.id)
+      closeMountDrawer()
       await invalidateBuckets()
     },
-    onError: (err) => messageApi.error(String(err)),
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || err?.message || String(err)
+      messageApi.error(`保存失败：${msg}`)
+    },
   })
 
   const deleteBucketMutation = useMutation({
     mutationFn: deleteBucket,
     onSuccess: async (_, deletedId) => {
-      messageApi.success('存储节点已移除')
+      messageApi.success('存储挂载已解除')
       if (bucketId === deletedId) setBucketId(undefined)
       await invalidateBuckets()
     },
@@ -307,13 +383,13 @@ export default function StorageFilesPage() {
       }
     },
     onSuccess: (res) => {
-      if (res.connected) {
-        messageApi.success('节点连通性测试通过')
-      } else {
-        messageApi.error('节点连接测试失败，请检查路径或密钥配置')
-      }
+      if (res.connected) messageApi.success('节点连通性正常 🟢')
+      else messageApi.error('连接失败，请检查 S3 服务或网络 🔴')
     },
-    onError: (err) => messageApi.error(String(err)),
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || String(err)
+      messageApi.error(`测试异常：${msg}`)
+    },
   })
 
   const uploadMutation = useMutation({
@@ -329,11 +405,15 @@ export default function StorageFilesPage() {
       )
     },
     onSuccess: async () => {
-      messageApi.success('资产上传成功，已自动同步列表')
+      messageApi.success('文件已上传并入库')
       setFileList([])
+      setUploadDrawerOpen(false)
       await invalidateFiles()
     },
-    onError: (err) => messageApi.error(String(err)),
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || String(err)
+      messageApi.error(`上传失败：${msg}`)
+    },
   })
 
   const deleteFileMutation = useMutation({
@@ -348,7 +428,7 @@ export default function StorageFilesPage() {
   const renameMutation = useMutation({
     mutationFn: ({ fileId, newName }: { fileId: number; newName: string }) => renameFile(fileId, newName),
     onSuccess: async () => {
-      messageApi.success('文件重命名成功')
+      messageApi.success('重命名成功')
       setRenaming(null)
       renameForm.resetFields()
       await invalidateFiles()
@@ -359,13 +439,14 @@ export default function StorageFilesPage() {
   const refreshMutation = useMutation({
     mutationFn: () => refreshFiles(selectedBucketId as number),
     onSuccess: async () => {
-      messageApi.success('已重新扫描并刷新节点资产元数据')
+      messageApi.success('存储元数据已重新扫描刷新')
       await invalidateFiles()
     },
     onError: (err) => messageApi.error(String(err)),
   })
 
-  const handleSmartFilePick = (nextList: UploadFile[]) => {
+  // Smart upload file selection
+  const handleFileDrop = (nextList: UploadFile[]) => {
     setFileList(nextList)
     if (nextList.length > 0) {
       const lower = (nextList[0].name || '').toLowerCase()
@@ -373,80 +454,66 @@ export default function StorageFilesPage() {
         setUploadType('driver')
       } else if (lower.includes('depot') && lower.endsWith('.zip')) {
         setUploadType('depot')
+      } else if (lower.endsWith('.iso')) {
+        setUploadType(categoryTab === 'iso' ? 'iso' : 'depot')
       }
-      const verMatch = lower.match(/(6\.5|6\.7|7\.0|8\.0|9\.0)/)
-      if (verMatch) {
-        setUploadVersion(verMatch[1])
-      }
+      const match = lower.match(/(6\.5|6\.7|7\.0|8\.0|9\.0)/)
+      if (match) setUploadVersion(match[1])
     }
   }
 
   const columns: ColumnsType<FileMetadata> = [
     {
-      title: '资产名称与存储路径',
-      key: 'path',
+      title: '资产名称与路径',
+      key: 'name',
       render: (_, file) => (
         <div className="table-cell-stack">
           <Space size={6} wrap>
             <Typography.Text strong>{assetTitle(file)}</Typography.Text>
             {file.driver_version && <Tag style={{ marginInlineEnd: 0 }}>v{file.driver_version}</Tag>}
           </Space>
-          <Typography.Text className="mono table-path" type="secondary" copyable ellipsis style={{ maxWidth: 420, fontSize: 12 }}>
+          <Typography.Text className="mono table-path" type="secondary" copyable ellipsis style={{ maxWidth: 460, fontSize: 11 }}>
             {file.path}
           </Typography.Text>
         </div>
       ),
     },
     {
-      title: '类型',
-      key: 'type',
-      width: 96,
-      render: (_, file) => {
-        const label = assetTypeText(file)
-        const color = file.type === 'depot' ? 'blue' : file.type === 'driver' ? 'cyan' : 'purple'
-        return <Tag color={color}>{label}</Tag>
-      },
-    },
-    {
       title: '适用版本',
       dataIndex: 'esxi_version',
-      width: 96,
-      render: (val: string | undefined) => (val ? <Tag color="geekblue">ESXi {val}</Tag> : <Tag>通用</Tag>),
+      width: 100,
+      render: (v) => (v ? <Tag color="geekblue">ESXi {v}</Tag> : <Tag>通用</Tag>),
     },
     {
       title: '大小',
       dataIndex: 'size',
-      width: 105,
-      render: (val: number | undefined) => <span className="mono tabular-nums">{compactSize(val)}</span>,
+      width: 110,
+      render: (v) => <span className="mono tabular-nums">{compactSize(v)}</span>,
     },
     {
-      title: '缓存状态',
+      title: '缓存就绪',
       key: 'cache',
-      width: 108,
+      width: 110,
       render: (_, file) => (
         <Tag color={cacheStatusColor(file, selectedBucket)}>{cacheStatusText(file, selectedBucket)}</Tag>
       ),
     },
     {
-      title: '最近修改',
+      title: '修改时间',
       dataIndex: 'last_modified',
       width: 165,
-      render: (val: string | undefined) => (
-        <span className="tabular-nums" style={{ color: '#64748b', fontSize: 12 }}>
-          {formatDate(val || '')}
-        </span>
-      ),
+      render: (v) => <span className="tabular-nums" style={{ fontSize: 12, color: '#64748b' }}>{formatDate(v || '')}</span>,
     },
     {
       title: '操作',
       key: 'actions',
-      width: 215,
+      width: 220,
       render: (_, file) => {
         const canUseAsBase = file.type === 'depot' || (file.type === 'iso' && !file.path.toLowerCase().startsWith('output/'))
         return (
           <Space size={4} wrap>
-            {canUseAsBase && selectedBucketId && (
-              <Tooltip title="将此镜像作为基础源带入构建工作台">
+            {canUseAsBase && (
+              <Tooltip title="一键带入构建流水线">
                 <Button
                   size="small"
                   type="primary"
@@ -465,40 +532,41 @@ export default function StorageFilesPage() {
                 </Button>
               </Tooltip>
             )}
+
             {selectedBucket?.public_domain && (
-              <Tooltip title="复制公网下载直链">
+              <Tooltip title="复制 S3 公网直链">
                 <Button
                   size="small"
-                  icon={<CopyOutlined />}
-                  aria-label="复制直链"
+                  icon={<LinkOutlined />}
                   onClick={() => {
                     const url = buildPublicObjectUrl(selectedBucket.public_domain, file.path || '')
                     if (url) {
                       navigator.clipboard.writeText(url)
-                      messageApi.success('已复制公网直链')
+                      messageApi.success('已复制 S3 公网下载直链')
                     }
                   }}
                 />
               </Tooltip>
             )}
+
             <Tooltip title="重命名">
               <Button
                 size="small"
                 icon={<EditOutlined />}
-                aria-label="重命名文件"
                 onClick={() => {
                   setRenaming(file)
-                  renameForm.setFieldsValue({ new_name: file.path.split('/').pop() || assetTitle(file) })
+                  renameForm.setFieldsValue({ new_name: fileName(file) })
                 }}
               />
             </Tooltip>
+
             <Popconfirm
-              title="确认从文件库删除该资产？"
+              title="确认从存储中删除该文件？"
               onConfirm={() => deleteFileMutation.mutate(file.id)}
               okText="删除"
               cancelText="取消"
             >
-              <Button size="small" danger icon={<DeleteOutlined />} aria-label="删除文件" />
+              <Button size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>
           </Space>
         )
@@ -506,172 +574,157 @@ export default function StorageFilesPage() {
     },
   ]
 
-  const assetsLoading = depotsQuery.isLoading || allDriversQuery.isLoading || isoQuery.isLoading
+  const filesLoading = depotsQuery.isLoading || driversQuery.isLoading || isoQuery.isLoading
 
   return (
     <PageContainer
-      title="存储挂载与文件库"
-      subTitle="左侧切换管理本地/S3 存储节点，右侧拖拽上传并管理基础镜像、驱动包与 ISO 产物"
+      title="存储与挂载管理"
+      subTitle="支持本地磁盘目录与 S3 / MinIO 对象存储多盘挂载，自由在各盘中管理基础镜像、驱动与构建产出"
       extra={[
-        <Button key="new-node" icon={<PlusOutlined />} onClick={openCreateBucket}>
-          新建存储节点
+        <Button key="mount-local" icon={<HddOutlined />} onClick={openMountLocal}>
+          挂载本地目录
         </Button>,
-        <Button key="go-build" type="primary" icon={<RocketOutlined />} onClick={() => go('/build')}>
-          前往构建工作台
+        <Button key="mount-s3" type="primary" icon={<CloudServerOutlined />} onClick={openMountS3}>
+          ➕ 挂载 S3 对象存储
+        </Button>,
+        <Button key="to-pipeline" icon={<RocketOutlined />} onClick={() => go('/build')}>
+          前往构建流水线
         </Button>,
       ]}
     >
       {contextHolder}
 
-      <div className="storage-master-detail">
-        {/* Left Rail: Storage Mount Nodes */}
-        <aside className="storage-nodes-rail" aria-label="存储挂载节点列表">
-          <ProCard
-            title={
-              <Space size={6}>
-                <DatabaseOutlined style={{ color: '#2563eb' }} />
-                <span>存储节点 ({sortedBuckets.length})</span>
-              </Space>
-            }
-            bordered
-            headerBordered
-            extra={
-              <Tooltip title="刷新存储节点">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  loading={bucketsQuery.isFetching}
-                  onClick={() => bucketsQuery.refetch()}
-                  aria-label="刷新存储节点"
-                />
-              </Tooltip>
-            }
-          >
-            {sortedBuckets.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无存储节点">
-                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreateBucket}>
-                  添加首个存储
-                </Button>
-              </Empty>
-            ) : (
-              <div className="node-card-list">
-                {sortedBuckets.map((node) => {
-                  const active = node.id === selectedBucketId
-                  const isLocal = bucketType(node) === 'local'
-                  return (
-                    <div
-                      key={node.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-pressed={active}
-                      className={`node-item-card ${active ? 'node-item-card-active' : ''}`}
-                      onClick={() => setBucketId(node.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          setBucketId(node.id)
-                        }
-                      }}
-                    >
-                      <div className="node-item-header">
-                        <Space size={6} wrap>
-                          {isLocal ? <HddOutlined /> : <CloudServerOutlined />}
-                          <Typography.Text strong>{node.name}</Typography.Text>
-                        </Space>
-                        <Space size={4}>
-                          <Tag color={isLocal ? 'purple' : 'blue'} style={{ marginInlineEnd: 0 }}>
-                            {isLocal ? 'LOCAL' : 'S3'}
-                          </Tag>
-                          {node.is_default && (
-                            <Tag color="success" style={{ marginInlineEnd: 0 }}>
-                              默认
-                            </Tag>
-                          )}
-                        </Space>
-                      </div>
+      <div className="storage-management-layout">
+        {/* ========================================================
+            TOP SECTION: MOUNTED DRIVE CARDS (挂载盘卡片组)
+            ======================================================== */}
+        <section className="mounted-drives-section" aria-label="挂载存储盘列表">
+          <div className="section-head-title">
+            <Space size={6}>
+              <DatabaseOutlined style={{ color: '#2563eb' }} />
+              <strong>当前挂载存储盘 ({buckets.length})</strong>
+            </Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              点击卡片切换当前操作盘，支持本地目录直通与各主流 S3 云对象存储
+            </Typography.Text>
+          </div>
 
-                      <Typography.Text
-                        type="secondary"
-                        className="mono node-item-path"
-                        ellipsis={{ tooltip: bucketLocation(node) }}
+          <div className="drive-cards-strip">
+            {buckets.map((b) => {
+              const active = b.id === selectedBucketId
+              const isLocal = bucketType(b) === 'local'
+              return (
+                <div
+                  key={b.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={active}
+                  className={`drive-card ${active ? 'drive-card-active' : ''}`}
+                  onClick={() => setBucketId(b.id)}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setBucketId(b.id)}
+                >
+                  <div className="drive-card-top">
+                    <div className="drive-icon-box">
+                      {isLocal ? <HddOutlined /> : <CloudServerOutlined />}
+                    </div>
+                    <div className="drive-titles">
+                      <strong className="drive-name" title={b.name}>{b.name}</strong>
+                      <span className="drive-type-label">
+                        {isLocal ? '本地存储直通' : 'S3 / MinIO 兼容'}
+                      </span>
+                    </div>
+                    <div className="drive-badges">
+                      {b.is_default && (
+                        <Tag color="success" className="mini-tag">
+                          默认
+                        </Tag>
+                      )}
+                      <Tag color={isLocal ? 'purple' : 'blue'} className="mini-tag">
+                        {isLocal ? 'LOCAL' : 'S3'}
+                      </Tag>
+                    </div>
+                  </div>
+
+                  <div className="drive-card-meta">
+                    <Typography.Text className="mono drive-location-text" ellipsis={{ tooltip: bucketLocation(b) }}>
+                      {bucketLocation(b)}
+                    </Typography.Text>
+                  </div>
+
+                  <div className="drive-card-actions" onClick={(e) => e.stopPropagation()}>
+                    <Tooltip title="连通性测活">
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<ApiOutlined />}
+                        loading={testingNodeId === b.id}
+                        onClick={() => testConnectionMutation.mutate(b.id)}
                       >
-                        {bucketLocation(node)}
-                      </Typography.Text>
-
-                      <div className="node-item-actions" onClick={(e) => e.stopPropagation()}>
-                        <Tooltip title="测试连通性">
-                          <Button
-                            size="small"
-                            type="text"
-                            icon={<ApiOutlined />}
-                            loading={testingNodeId === node.id}
-                            onClick={() => testConnectionMutation.mutate(node.id)}
-                          >
-                            测速
-                          </Button>
-                        </Tooltip>
-                        {!node.is_default && (
-                          <Tooltip title="设为系统默认节点">
-                            <Button
-                              size="small"
-                              type="text"
-                              icon={<StarOutlined />}
-                              onClick={() => setDefaultMutation.mutate(node.id)}
-                            >
-                              默认
-                            </Button>
-                          </Tooltip>
-                        )}
+                        测速
+                      </Button>
+                    </Tooltip>
+                    {!b.is_default && (
+                      <Tooltip title="设为默认存储">
                         <Button
                           size="small"
                           type="text"
-                          icon={<EditOutlined />}
-                          onClick={() => openEditBucket(node)}
+                          icon={<StarOutlined />}
+                          onClick={() => setDefaultMutation.mutate(b.id)}
                         >
-                          编辑
+                          默认
                         </Button>
-                        <Popconfirm
-                          title="移除此存储挂载？"
-                          description="仅解除挂载配置，不会删除磁盘或远端桶内真实文件。"
-                          onConfirm={() => deleteBucketMutation.mutate(node.id)}
-                          okText="移除"
-                          cancelText="取消"
-                        >
-                          <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={`删除节点 ${node.name}`} />
-                        </Popconfirm>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </ProCard>
-        </aside>
+                      </Tooltip>
+                    )}
+                    <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEditMount(b)}>
+                      配置
+                    </Button>
+                    {!b.is_default && (
+                      <Popconfirm
+                        title="解除此存储盘挂载？"
+                        description="仅解除在系统中的挂载关联，不会删除磁盘或对象存储上的真实文件。"
+                        onConfirm={() => deleteBucketMutation.mutate(b.id)}
+                        okText="解除"
+                        cancelText="取消"
+                      >
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
 
-        {/* Right Main Workspace: Asset Upload & Repository */}
-        <div className="storage-assets-main">
-          {/* Active Node Banner & Quick Upload Drawer/Panel */}
-          <ProCard
+            {/* Quick Add S3 Card */}
+            <div className="drive-card drive-card-add" onClick={openMountS3}>
+              <PlusOutlined style={{ fontSize: 24, color: '#2563eb' }} />
+              <strong>挂载新 S3 存储</strong>
+              <span>MinIO / AWS / R2 / OSS</span>
+            </div>
+          </div>
+        </section>
+
+        {/* ========================================================
+            BOTTOM SECTION: FILE REPOSITORY IN ACTIVE DRIVE (盘内文件管理)
+            ======================================================== */}
+        <section className="drive-assets-section" aria-label="存储盘资产文件库">
+          <Card
             bordered
-            headerBordered
             title={
               selectedBucket ? (
-                <Space size={8} wrap>
+                <Space size={10} wrap align="center">
                   <Badge status="processing" />
-                  <Typography.Text strong>当前浏览：{selectedBucket.name}</Typography.Text>
-                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-                    基础源 {depots.length}
+                  <Typography.Text strong style={{ fontSize: 15 }}>
+                    盘内资产：{selectedBucket.name}
+                  </Typography.Text>
+                  <Tag color={selectedBucket.type === 'local' ? 'purple' : 'blue'}>
+                    {bucketLocation(selectedBucket)}
                   </Tag>
-                  <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
-                    驱动 {drivers.length}
-                  </Tag>
-                  <Tag color="purple" style={{ marginInlineEnd: 0 }}>
-                    ISO {isos.length}
-                  </Tag>
+                  <Tag color="cyan">基础源 {depots.length}</Tag>
+                  <Tag color="blue">驱动 {drivers.length}</Tag>
+                  <Tag color="purple">产物 {isos.length}</Tag>
                 </Space>
               ) : (
-                '请先选择或创建存储节点'
+                '请选择存储挂载盘'
               )
             }
             extra={
@@ -679,115 +732,40 @@ export default function StorageFilesPage() {
                 <Button
                   size="small"
                   icon={<ReloadOutlined />}
-                  disabled={!selectedBucketId}
                   loading={refreshMutation.isPending}
                   onClick={() => refreshMutation.mutate()}
                 >
-                  重新扫描目录
+                  刷新元数据
                 </Button>
                 <Button
+                  type="primary"
                   size="small"
-                  type={uploadExpanded ? 'default' : 'primary'}
                   icon={<CloudUploadOutlined />}
-                  onClick={() => setUploadExpanded(!uploadExpanded)}
+                  onClick={() => {
+                    setUploadType(categoryTab)
+                    setUploadDrawerOpen(true)
+                  }}
                 >
-                  {uploadExpanded ? '收起上传区' : '展开上传区'}
+                  上传资产入库
                 </Button>
               </Space>
             }
           >
-            {uploadExpanded && (
-              <div className="smart-upload-panel">
-                <div className="smart-upload-controls">
-                  <div className="smart-upload-field">
-                    <span className="field-caption">1. 资产归类用途</span>
-                    <Segmented<UploadType>
-                      block
-                      value={uploadType}
-                      onChange={setUploadType}
-                      options={[
-                        { value: 'depot', label: '基础源 (ISO / Depot)' },
-                        { value: 'driver', label: '驱动包 (VIB / ZIP)' },
-                        { value: 'iso', label: '普通 ISO 归档' },
-                      ]}
-                    />
-                  </div>
-
-                  {uploadType !== 'iso' && (
-                    <div className="smart-upload-field" style={{ minWidth: 136 }}>
-                      <span className="field-caption">2. 目标 ESXi 版本</span>
-                      <Select
-                        style={{ width: '100%' }}
-                        value={uploadVersion}
-                        onChange={setUploadVersion}
-                        options={esxiVersions.map((item) => ({ value: item, label: `ESXi ${item}` }))}
-                      />
-                    </div>
-                  )}
-
-                  {uploadType === 'driver' && (
-                    <div className="smart-upload-field" style={{ minWidth: 170 }}>
-                      <span className="field-caption">3. 驱动硬件分类</span>
-                      <Select
-                        style={{ width: '100%' }}
-                        value={uploadCategory}
-                        onChange={setUploadCategory}
-                        options={driverCategories}
-                      />
-                    </div>
-                  )}
-
-                  <div className="smart-upload-submit">
-                    <Button
-                      type="primary"
-                      icon={<CloudUploadOutlined />}
-                      loading={uploadMutation.isPending}
-                      disabled={!selectedBucketId || fileList.length === 0}
-                      onClick={() => uploadMutation.mutate()}
-                    >
-                      立即上传入库
-                    </Button>
-                  </div>
-                </div>
-
-                <Upload.Dragger
-                  multiple={false}
-                  maxCount={1}
-                  accept=".iso,.zip,.vib"
-                  beforeUpload={() => false}
-                  fileList={fileList}
-                  onChange={({ fileList: next }) => handleSmartFilePick(next)}
-                  className="compact-dragger"
-                >
-                  <p className="ant-upload-drag-icon" style={{ marginBottom: 6 }}>
-                    <InboxOutlined style={{ fontSize: 28, color: '#2563eb' }} />
-                  </p>
-                  <p className="ant-upload-text" style={{ fontSize: 13, marginBottom: 2 }}>
-                    点击或将 <strong>.iso / .zip / .vib</strong> 文件拖拽到此处（自动识别驱动与版本号）
-                  </p>
-                  <p className="ant-upload-hint" style={{ fontSize: 12 }}>
-                    提示：用于定制注入的原版 ESXi 安装镜像请选择「基础源 (ISO / Depot)」，上传后即可在构建工作台选用。
-                  </p>
-                </Upload.Dragger>
-              </div>
-            )}
-
-            {/* Filter Toolbar */}
-            <div className="asset-filter-bar">
+            {/* Asset Category Segmented Switcher & Search Bar */}
+            <div className="asset-top-filter-bar">
               <Segmented<AssetCategoryTab>
-                value={assetTab}
-                onChange={setAssetTab}
+                value={categoryTab}
+                onChange={setCategoryTab}
                 options={[
-                  { value: 'all', label: `全部 (${allAssets.length})` },
-                  { value: 'depot', label: `基础源 (${depots.length})` },
-                  { value: 'driver', label: `驱动包 (${drivers.length})` },
-                  { value: 'iso', label: `ISO 镜像 (${isos.length})` },
+                  { value: 'depot', label: `📦 基础镜像源 (${depots.length})` },
+                  { value: 'driver', label: `🧩 社区驱动包 (${drivers.length})` },
+                  { value: 'iso', label: `💿 构建产出 ISO (${isos.length})` },
                 ]}
               />
 
-              <Space size={8} wrap>
+              <Space size={10} wrap>
                 <Select
-                  style={{ width: 128 }}
+                  style={{ width: 120 }}
                   value={versionFilter}
                   onChange={setVersionFilter}
                   options={[
@@ -798,126 +776,328 @@ export default function StorageFilesPage() {
                 <Input
                   allowClear
                   prefix={<SearchOutlined />}
-                  placeholder="搜索文件名、驱动名或描述..."
-                  style={{ width: 230 }}
+                  placeholder="搜索文件名、驱动名..."
+                  style={{ width: 220 }}
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
                 />
               </Space>
             </div>
 
+            {/* Quick Drop Area Inside Table Header */}
+            <div className="quick-drag-banner">
+              <Upload.Dragger
+                multiple={false}
+                maxCount={1}
+                accept=".iso,.zip,.vib"
+                beforeUpload={() => false}
+                fileList={fileList}
+                onChange={({ fileList: next }) => handleFileDrop(next)}
+                className="mini-dragger"
+              >
+                <p className="ant-upload-drag-icon" style={{ margin: '2px 0' }}>
+                  <InboxOutlined style={{ fontSize: 24, color: '#2563eb' }} />
+                </p>
+                <p className="ant-upload-text" style={{ fontSize: 12, margin: '2px 0' }}>
+                  拖拽 <strong>.iso / .zip / .vib</strong> 文件到此直接上传到「{selectedBucket?.name}」盘
+                </p>
+              </Upload.Dragger>
+              {fileList.length > 0 && (
+                <div className="file-ready-submit-bar">
+                  <Space size={10}>
+                    <span>已选待传：<strong>{fileList[0].name}</strong> ({compactSize(fileList[0].size)})</span>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<CloudUploadOutlined />}
+                      loading={uploadMutation.isPending}
+                      onClick={() => uploadMutation.mutate()}
+                    >
+                      开始上传
+                    </Button>
+                    <Button size="small" onClick={() => setFileList([])}>取消</Button>
+                  </Space>
+                </div>
+              )}
+            </div>
+
+            {/* Assets Table */}
             <Table
-              rowKey="id"
               size="middle"
+              rowKey="id"
               columns={columns}
-              dataSource={filteredAssets}
-              loading={assetsLoading}
+              dataSource={currentCategoryFiles}
+              loading={filesLoading}
               pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
               scroll={{ x: 880 }}
               locale={{
                 emptyText: (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={searchKeyword || versionFilter !== 'all' ? '没有符合筛选条件的文件' : '当前存储节点暂无文件，请通过上方拖拽区上传'}
+                    description="当前目录下暂无文件，请通过上方拖拽或右上角上传按钮存入文件"
                   />
                 ),
               }}
             />
-          </ProCard>
-        </div>
+          </Card>
+        </section>
       </div>
 
-      {/* Node Create / Edit Drawer */}
+      {/* ========================================================
+          S3 / LOCAL STORAGE MOUNT DRAWER (S3 挂载接口向导)
+          ======================================================== */}
       <Drawer
-        title={editingBucket ? `编辑存储节点 · ${editingBucket.name}` : '新建存储挂载节点'}
-        open={bucketDrawerOpen}
-        onClose={closeBucketDrawer}
-        width={460}
+        title={
+          <Space size={8}>
+            {storageType === 'local' ? <HddOutlined /> : <CloudServerOutlined style={{ color: '#2563eb' }} />}
+            <span>{editingBucket ? `配置存储挂载 · ${editingBucket.name}` : storageType === 'local' ? '挂载本地目录' : '挂载 S3 对象存储'}</span>
+          </Space>
+        }
+        open={mountDrawerOpen}
+        onClose={closeMountDrawer}
+        width={480}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={closeBucketDrawer}>取消</Button>
+            <Button onClick={closeMountDrawer}>取消</Button>
             <Button
               type="primary"
               icon={<CheckCircleFilled />}
               loading={saveBucketMutation.isPending}
-              onClick={() => bucketForm.submit()}
+              onClick={() => mountForm.submit()}
             >
-              保存节点
+              {editingBucket ? '保存修改' : '确认挂载'}
             </Button>
           </Space>
         }
       >
         <Form
-          form={bucketForm}
+          form={mountForm}
           layout="vertical"
           initialValues={defaultBucketPayload}
           onFinish={(values) => saveBucketMutation.mutate(values)}
         >
-          <Form.Item name="type" label="存储后端类型" rules={[{ required: true }]}>
+          {/* Storage Type Toggle */}
+          <Form.Item name="type" label="存储类型" style={{ marginBottom: 12 }}>
             <Segmented
               block
-              onChange={(val) => setStorageType(val as 's3' | 'local')}
+              value={storageType}
+              onChange={(val) => {
+                setStorageType(val as 's3' | 'local')
+                setTestResult(null)
+              }}
               options={[
-                { value: 'local', label: '容器本地目录 (Local)' },
-                { value: 's3', label: 'S3 / MinIO / R2 对象存储' },
+                { value: 's3', label: '☁️ S3 / MinIO 对象存储' },
+                { value: 'local', label: '💻 容器本地目录挂载' },
               ]}
             />
           </Form.Item>
 
-          <Form.Item name="name" label="节点显示名称" rules={[{ required: true, message: '请输入存储节点名称' }]}>
-            <Input placeholder="例如：Local NVMe Storage 或 MinIO Cluster" />
+          {/* S3 Presets Fast Filler */}
+          {storageType === 's3' && (
+            <div className="s3-preset-bar">
+              <span className="preset-label">厂商快捷模板：</span>
+              <div className="preset-pills">
+                {S3_PRESETS.map((p) => (
+                  <Tag
+                    key={p.key}
+                    color="blue"
+                    className="preset-tag"
+                    onClick={() => applyPreset(p)}
+                  >
+                    {p.label}
+                  </Tag>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Form.Item name="name" label="存储挂载名称 (别名)" rules={[{ required: true, message: '请输入存储节点名称' }]}>
+            <Input placeholder="例如：MinIO-Cluster 或 Local-Storage" />
           </Form.Item>
 
           {storageType === 'local' ? (
             <Form.Item
               name="local_path"
-              label="容器内挂载路径"
-              rules={[{ required: true, message: '请输入容器内本地路径' }]}
-              extra="容器内真实读写目录，默认推荐 /data/storage"
+              label="容器内本地挂载路径"
+              rules={[{ required: true, message: '请输入本地路径' }]}
+              extra="容器内读写真实路径，默认为 /data/storage"
             >
               <Input className="mono" placeholder="/data/storage" />
             </Form.Item>
           ) : (
             <>
-              <Form.Item name="endpoint" label="Endpoint 端点地址" rules={[{ required: true, message: '请输入 S3 端点' }]}>
+              <Form.Item
+                name="endpoint"
+                label="S3 Endpoint 端点地址"
+                rules={[{ required: true, message: '请输入 S3 端点' }]}
+                extra="填写 IP:端口 或 域名（不要加 http:// 和 bucket 名）"
+              >
                 <Input className="mono" placeholder="192.168.0.10:9000 或 s3.amazonaws.com" />
               </Form.Item>
-              <Form.Item name="bucket_name" label="Bucket 桶名称" rules={[{ required: true, message: '请输入 Bucket 名' }]}>
+
+              <Form.Item
+                name="bucket_name"
+                label="Bucket 桶名称"
+                rules={[{ required: true, message: '请输入 Bucket 名' }]}
+              >
                 <Input className="mono" placeholder="esxi-assets" />
               </Form.Item>
-              <Form.Item name="region" label="Region 区域">
-                <Input className="mono" placeholder="us-east-1 或 auto" />
-              </Form.Item>
-              <Form.Item name="access_key" label="Access Key" rules={[{ required: true, message: '请输入 Access Key' }]}>
-                <Input className="mono" placeholder="Access Key ID" />
-              </Form.Item>
+
+              <div className="form-grid-2">
+                <Form.Item
+                  name="access_key"
+                  label="Access Key ID"
+                  rules={[{ required: true, message: '请输入 Access Key' }]}
+                >
+                  <Input className="mono" placeholder="AKIA..." />
+                </Form.Item>
+
+                <Form.Item
+                  name="region"
+                  label="Region 区域"
+                  extra="AWS填写区域代码，MinIO可填 us-east-1"
+                >
+                  <Input className="mono" placeholder="us-east-1" />
+                </Form.Item>
+              </div>
+
               <Form.Item
                 name="secret_key"
-                label="Secret Key"
+                label="Secret Access Key"
                 rules={[{ required: !editingBucket, message: '请输入 Secret Key' }]}
-                extra={editingBucket ? '留空表示保持原密钥不变' : undefined}
+                extra={editingBucket ? '留空表示保持原有密钥不变' : undefined}
               >
                 <Input.Password placeholder="Secret Access Key" />
               </Form.Item>
-              <Form.Item name="public_domain" label="公网访问域名 (可选)" extra="配置后支持一键复制产物公网下载直链">
-                <Input className="mono" placeholder="https://dl.example.com" />
+
+              <Form.Item
+                name="public_domain"
+                label="S3 公网下载直链域名 (可选)"
+                extra="配置后可在文件库和流水线产出一键复制公网下载直链"
+              >
+                <Input className="mono" placeholder="https://download.yourdomain.com" />
               </Form.Item>
-              <Form.Item name="use_ssl" label="启用 HTTPS (SSL)" valuePropName="checked">
+
+              <Form.Item name="use_ssl" label="启用 HTTPS (SSL)" valuePropName="checked" style={{ marginBottom: 12 }}>
                 <Switch />
               </Form.Item>
+
+              {/* Pre-mount Test Connection Button */}
+              <div className="test-mount-panel">
+                <Button
+                  block
+                  icon={<ApiOutlined />}
+                  loading={testingConfigLoading}
+                  onClick={handleTestMountConfig}
+                >
+                  ⚡ 测试 S3 连通性 (挂载前检验)
+                </Button>
+                {testResult && (
+                  <Alert
+                    style={{ marginTop: 8 }}
+                    type={testResult.ok ? 'success' : 'error'}
+                    showIcon
+                    message={testResult.msg}
+                  />
+                )}
+              </div>
             </>
           )}
 
-          <Form.Item name="is_default" label="设为默认存储节点" valuePropName="checked">
+          <Form.Item name="is_default" label="设为默认存储挂载盘" valuePropName="checked" style={{ marginTop: 12 }}>
             <Switch />
           </Form.Item>
         </Form>
       </Drawer>
 
-      {/* File Rename Modal (IME-safe Enter submit) */}
+      {/* Upload Asset Modal / Drawer */}
+      <Drawer
+        title="上传文件入库"
+        open={uploadDrawerOpen}
+        onClose={() => setUploadDrawerOpen(false)}
+        width={420}
+        destroyOnClose
+        extra={
+          <Button
+            type="primary"
+            loading={uploadMutation.isPending}
+            disabled={fileList.length === 0}
+            onClick={() => uploadMutation.mutate()}
+          >
+            开始上传
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={14} style={{ width: '100%' }}>
+          <div>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
+              1. 归类用途
+            </Typography.Text>
+            <Segmented<UploadType>
+              block
+              value={uploadType}
+              onChange={setUploadType}
+              options={[
+                { value: 'depot', label: '基础源 (Depot/ISO)' },
+                { value: 'driver', label: '驱动包 (VIB/ZIP)' },
+                { value: 'iso', label: '普通 ISO' },
+              ]}
+            />
+          </div>
+
+          {uploadType !== 'iso' && (
+            <div>
+              <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
+                2. 适用 ESXi 版本
+              </Typography.Text>
+              <Select
+                style={{ width: '100%' }}
+                value={uploadVersion}
+                onChange={setUploadVersion}
+                options={esxiVersions.map((v) => ({ value: v, label: `ESXi ${v}` }))}
+              />
+            </div>
+          )}
+
+          {uploadType === 'driver' && (
+            <div>
+              <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
+                3. 驱动硬件分类
+              </Typography.Text>
+              <Select
+                style={{ width: '100%' }}
+                value={uploadCategory}
+                onChange={setUploadCategory}
+                options={driverCategories}
+              />
+            </div>
+          )}
+
+          <div>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
+              4. 选取本地文件
+            </Typography.Text>
+            <Upload.Dragger
+              multiple={false}
+              maxCount={1}
+              accept=".iso,.zip,.vib"
+              beforeUpload={() => false}
+              fileList={fileList}
+              onChange={({ fileList: next }) => handleFileDrop(next)}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined style={{ fontSize: 32, color: '#2563eb' }} />
+              </p>
+              <p className="ant-upload-text">点击或将文件拖拽到此处</p>
+            </Upload.Dragger>
+          </div>
+        </Space>
+      </Drawer>
+
+      {/* Rename File Modal */}
       <Modal
-        title="重命名资产文件"
+        title="重命名存储文件"
         open={Boolean(renaming)}
         onCancel={() => {
           setRenaming(null)
@@ -937,20 +1117,8 @@ export default function StorageFilesPage() {
             }
           }}
         >
-          <Form.Item
-            name="new_name"
-            label="新文件名称"
-            rules={[{ required: true, message: '请输入新文件名' }]}
-          >
-            <Input
-              placeholder="输入新文件名"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  renameForm.submit()
-                }
-              }}
-            />
+          <Form.Item name="new_name" label="新文件名" rules={[{ required: true, message: '请输入新文件名' }]}>
+            <Input placeholder="输入新文件名" />
           </Form.Item>
         </Form>
       </Modal>

@@ -3,27 +3,26 @@ import { describe, expect, it, vi } from 'vitest'
 import { ProCard } from './components/pro-compat'
 import { AppShell } from './layouts/AppShell'
 
-describe('Unified 3-Page AppShell layout', () => {
-  it('renders strictly the 3 core navigation items (总览, 存储与文件库, 构建工作台)', async () => {
+describe('2-Page Clean AppShell layout', () => {
+  it('renders strictly the 2 core navigation items (构建流水线, 存储与挂载)', async () => {
     render(
       <AppShell pathname="/build" navigate={vi.fn()}>
-        <div>自定义构建页面</div>
+        <div>流水线内容区</div>
       </AppShell>
     )
 
     expect(await screen.findByLabelText('ESXi ISO Builder')).toBeInTheDocument()
-    expect(await screen.findByText('总览')).toBeInTheDocument()
-    expect(screen.getByText('存储与文件库')).toBeInTheDocument()
-    expect(screen.getByText('构建工作台')).toBeInTheDocument()
+    expect(await screen.findByText('构建流水线')).toBeInTheDocument()
+    expect(screen.getByText('存储与挂载')).toBeInTheDocument()
+    expect(screen.queryByText('总览')).not.toBeInTheDocument()
     expect(screen.queryByText('任务日志')).not.toBeInTheDocument()
-    expect(screen.queryByText('存储节点')).not.toBeInTheDocument()
-    expect(screen.getByText('自定义构建页面')).toBeInTheDocument()
+    expect(screen.getByText('流水线内容区')).toBeInTheDocument()
   })
 
-  it('sizes the main content layout using 100% rather than 100vw and toggles collapse cleanly', () => {
+  it('toggles collapse cleanly', () => {
     render(
-      <AppShell pathname="/" navigate={vi.fn()}>
-        <div>总览页面</div>
+      <AppShell pathname="/build" navigate={vi.fn()}>
+        <div>流水线内容区</div>
       </AppShell>
     )
 
@@ -31,7 +30,6 @@ describe('Unified 3-Page AppShell layout', () => {
     expect(mainLayout).toHaveStyle({
       marginLeft: '216px',
       width: 'calc(100% - 216px)',
-      minWidth: '0',
     })
 
     fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))

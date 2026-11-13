@@ -40,6 +40,11 @@ export async function testBucketConnection(id: number): Promise<{ connected: boo
   return response.data
 }
 
+export async function testBucketConfig(data: BucketPayload): Promise<{ connected: boolean }> {
+  const response = await api.post('/buckets/test-config', data)
+  return response.data
+}
+
 export async function setDefaultBucket(id: number): Promise<{ is_default: boolean; id: number }> {
   const response = await api.put(`/buckets/${id}/default`)
   return response.data

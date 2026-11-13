@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import BuildPage from './BuildPage'
 
@@ -27,7 +27,7 @@ vi.mock('../api/files', () => ({
     {
       id: 10,
       storage_bucket_id: 1,
-      path: 'depot/ESXi-8.0U2-depot.zip',
+      path: 'depots/8.0/VMware-ESXi-8.0U3k-depot.zip',
       type: 'depot',
       esxi_version: '8.0',
       cached: true,
@@ -52,16 +52,16 @@ vi.mock('../api/files', () => ({
 vi.mock('../api/builds', () => ({
   createBuild: vi.fn(async () => ({
     id: 1,
-    task_id: 'task-test-123',
+    task_id: 'task-test-pipeline',
     status: 'running',
     esxi_version: '8.0',
-    depot_path: 'depot/ESXi-8.0U2-depot.zip',
+    depot_path: 'depots/8.0/VMware-ESXi-8.0U3k-depot.zip',
     drivers: '["drivers/net-community.vib"]',
     custom_iso_name: 'ESXi-8.0-custom-test.iso',
     root_password: 'niuniu',
     install_mode: 'unattended',
     progress: 50,
-    log_output: '[TIMING] input_prepare_ms=0\n[PROGRESS] 50 building\n',
+    log_output: '[TIMING] input_prepare_ms=45\n[PROGRESS] 50 building\n',
     created_at: '2026-11-13T08:00:00Z',
   })),
   deleteBuild: vi.fn(async () => ({ deleted: true, task_id: 'task-1' })),
@@ -72,20 +72,20 @@ vi.mock('../api/builds', () => ({
     esxi_version: '8.0',
     custom_iso_name: 'ESXi-8.0-custom-test.iso',
     progress: 50,
-    log_output: '[TIMING] input_prepare_ms=0\n[PROGRESS] 50 building\n',
+    log_output: '[TIMING] input_prepare_ms=45\n[PROGRESS] 50 building\n',
     created_at: '2026-11-13T08:00:00Z',
   })),
   listBuilds: vi.fn(async () => ({
     items: [
       {
         id: 1,
-        task_id: 'task-test-123',
+        task_id: 'task-test-pipeline',
         status: 'completed',
         esxi_version: '8.0',
-        custom_iso_name: 'ESXi-8.0-custom-20261113.iso',
-        output_iso: 'output/ESXi-8.0-custom-20261113.iso',
+        custom_iso_name: 'ESXi-8.0-custom-20261114.iso',
+        output_iso: 'output/ESXi-8.0-custom-20261114.iso',
         output_iso_size: 489428992,
-        build_duration: 9,
+        build_duration: 7,
         created_at: '2026-11-13T08:00:00Z',
       },
     ],
@@ -113,48 +113,40 @@ function renderBuildPage() {
   )
 }
 
-describe('BuildPage unified workbench', () => {
-  it('renders the unified build workbench with configuration and tasks console', async () => {
+describe('BuildPage 2-stage pipeline layout', () => {
+  it('renders pipeline topology and Chinese output logs section', async () => {
     renderBuildPage()
 
-    expect(await screen.findByText('新建定制构建配置')).toBeInTheDocument()
-    expect(screen.getByText('Linux 原生极速引擎 (5~10 秒)')).toBeInTheDocument()
-    expect(screen.getByText('基础镜像源文件 (ISO / Depot)')).toBeInTheDocument()
-    expect(screen.getByText('构建任务控制台与实时日志')).toBeInTheDocument()
-    expect(screen.getByText('近期构建任务')).toBeInTheDocument()
+    expect(await screen.findByText('流水线架构构成')).toBeInTheDocument()
+    expect(screen.getByText('基础镜像源')).toBeInTheDocument()
+    expect(screen.getByText(/社区驱动注入/)).toBeInTheDocument()
+    expect(screen.getByText('安装参数与命名')).toBeInTheDocument()
+    expect(screen.getByText('执行重封装')).toBeInTheDocument()
+    expect(screen.getByText('🇨🇳 中文解析项')).toBeInTheDocument()
   })
 
-  it('keeps driver selection table with search and select-all actions', async () => {
+  it('filters drivers and handles selection toggle', async () => {
     renderBuildPage()
-
-    expect(await screen.findByText('全选当前')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('搜索驱动')).toBeInTheDocument()
 
     await waitFor(() => {
       expect(screen.getByText('net-community')).toBeInTheDocument()
     })
+
+    expect(screen.getByPlaceholderText('搜索驱动包...')).toBeInTheDocument()
   })
 
-  it('provides custom iso name placeholder and core parameter adjustments', async () => {
-    renderBuildPage()
-
-    expect(await screen.findByText(/核心安装参数调整/)).toBeInTheDocument()
-    expect(screen.getByText(/无人值守自动安装/)).toBeInTheDocument()
-    expect(screen.getByText(/交互式手动安装/)).toBeInTheDocument()
-  })
-
-  it('submits build and updates active task console', async () => {
+  it('runs pipeline and updates Chinese terminal logs', async () => {
     renderBuildPage()
 
     await waitFor(() => {
-      expect(screen.getByText('开始极速构建')).toBeInTheDocument()
+      expect(screen.getByText('🚀 运行构建流水线')).toBeInTheDocument()
     })
 
-    const submitBtn = screen.getByText('开始极速构建')
-    fireEvent.click(submitBtn)
+    const runBtn = screen.getByText('🚀 运行构建流水线')
+    fireEvent.click(runBtn)
 
     await waitFor(() => {
-      expect(screen.getByText('构建任务控制台与实时日志')).toBeInTheDocument()
+      expect(screen.getByText(/基础镜像源与输入参数校验准备完成/)).toBeInTheDocument()
     })
   })
 })

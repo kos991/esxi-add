@@ -1,5 +1,5 @@
 import {
-  DashboardOutlined,
+  CloudServerOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   GithubOutlined,
@@ -17,10 +17,10 @@ const SIDER_WIDTH = 216
 const SIDER_COLLAPSED_WIDTH = 72
 const HEADER_HEIGHT = 56
 
+// 严格精简为用户要求的 2 大核心页面
 const menuItems = [
-  { key: '/', label: '总览', icon: <DashboardOutlined /> },
-  { key: '/storage', label: '存储与文件库', icon: <DatabaseOutlined /> },
-  { key: '/build', label: '构建工作台', icon: <DeploymentUnitOutlined /> },
+  { key: '/build', label: '构建流水线', icon: <DeploymentUnitOutlined /> },
+  { key: '/storage', label: '存储与挂载', icon: <DatabaseOutlined /> },
 ]
 
 type AppShellProps = {
@@ -33,10 +33,7 @@ function resolveSelectedMenuKey(pathname: string): string {
   if (pathname.startsWith('/storage') || pathname.startsWith('/buckets') || pathname.startsWith('/files')) {
     return '/storage'
   }
-  if (pathname.startsWith('/build') || pathname.startsWith('/tasks')) {
-    return '/build'
-  }
-  return '/'
+  return '/build'
 }
 
 function AnimatedLogo({ onClick }: { onClick: () => void }) {
@@ -62,7 +59,7 @@ function AnimatedLogo({ onClick }: { onClick: () => void }) {
       </svg>
       <div className="brand-logo-text">
         <strong>ESXi ISO Builder</strong>
-        <span>Native Fast Repack</span>
+        <span>极速构建流水线</span>
       </div>
     </button>
   )
@@ -107,7 +104,7 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
           },
           Menu: {
             itemBorderRadius: 8,
-            itemHeight: 42,
+            itemHeight: 44,
             itemMarginInline: 10,
             itemSelectedBg: '#eff6ff',
             itemSelectedColor: '#1d4ed8',
@@ -133,21 +130,11 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
         style={{ minHeight: '100dvh' }}
       >
         <Header className="app-header">
-          <AnimatedLogo onClick={() => navigate('/')} />
+          <AnimatedLogo onClick={() => navigate('/build')} />
           <div className="app-header-tools">
             <Tag color="processing" className="header-engine-tag">
-              <ThunderboltOutlined /> 原生极速引擎
+              <ThunderboltOutlined /> Linux 原生重封装 (5~10 秒)
             </Tag>
-            {selectedPath !== '/build' && (
-              <Button
-                type="primary"
-                size="small"
-                icon={<DeploymentUnitOutlined />}
-                onClick={() => navigate('/build')}
-              >
-                新建构建
-              </Button>
-            )}
             <Space size={10}>
               <a
                 href="https://github.com/kos991/esxi-add"
@@ -186,7 +173,7 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
               selectedKeys={[selectedPath]}
               items={menuItems}
               onClick={({ key }) => navigate(key)}
-              style={{ borderInlineEnd: 0, paddingBlock: 10 }}
+              style={{ borderInlineEnd: 0, paddingBlock: 12 }}
             />
           </nav>
           <div className="ant-pro-model-menu-footer">
@@ -217,7 +204,7 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
             <div className="app-content">{children}</div>
           </Content>
           <Footer className="app-footer">
-            <div className="app-footer-copy">ESXi ISO Builder · 统一总览 / 存储与文件库 / 极速构建台</div>
+            <div className="app-footer-copy">ESXi ISO Builder · 构建流水线 / 本地与 S3 存储挂载</div>
           </Footer>
         </Layout>
       </Layout>

@@ -189,6 +189,17 @@ func (h *BucketHandler) TestConnection(c *fiber.Ctx) error {
 	return c.JSON(utils.SuccessResponse(fiber.Map{"connected": true}))
 }
 
+func (h *BucketHandler) TestConfig(c *fiber.Ctx) error {
+	var req bucketRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("invalid request body"))
+	}
+	if err := validateBucketRequest(c.UserContext(), &req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(fiber.Map{"connected": true}))
+}
+
 func (h *BucketHandler) SetDefault(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
