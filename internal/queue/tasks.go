@@ -20,6 +20,8 @@ type BuildISOPayload struct {
 	ESXiVersion   string   `json:"esxi_version"`
 	CustomISOName string   `json:"custom_iso_name"`
 	ImageProfile  string   `json:"image_profile"`
+	RootPassword  string   `json:"root_password,omitempty"`
+	InstallMode   string   `json:"install_mode,omitempty"`
 }
 
 func NewBuildISOTask(p *BuildISOPayload) (*asynq.Task, error) {

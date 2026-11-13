@@ -49,6 +49,8 @@ export interface BuildTask {
   drivers: string
   custom_iso_name?: string
   image_profile?: string
+  root_password?: string
+  install_mode?: string
   progress: number
   log_output?: string
   output_iso?: string

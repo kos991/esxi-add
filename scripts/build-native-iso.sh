@@ -19,6 +19,8 @@ ESXI_VERSION=""
 WORK_DIR=""
 IMAGE_PROFILE=""
 MODE="Build"
+ROOT_PASSWORD="niuniu"
+INSTALL_MODE="unattended"
 
 usage() {
     cat <<EOF
@@ -60,6 +62,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --image-profile)
             IMAGE_PROFILE="$2"
+            shift 2
+            ;;
+        --root-password)
+            ROOT_PASSWORD="$2"
+            shift 2
+            ;;
+        --install-mode)
+            INSTALL_MODE="$2"
             shift 2
             ;;
         --mode|-m)
@@ -281,11 +291,15 @@ patch_boot_cfg() {
         return
     fi
 
-    # 1. Update kernelopt: set runweasel ks=cdrom:/KS.CFG
+    # 1. Update kernelopt: set runweasel with or without ks=cdrom:/KS.CFG
+    local kernelopt_val="runweasel cdromBoot"
+    if [[ "$INSTALL_MODE" != "interactive" ]]; then
+        kernelopt_val="runweasel ks=cdrom:/KS.CFG cdromBoot"
+    fi
     if grep -qi "^kernelopt=" "$cfg_file"; then
-        sed -i -E 's|^kernelopt=.*|kernelopt=runweasel ks=cdrom:/KS.CFG|I' "$cfg_file"
+        sed -i -E "s|^kernelopt=.*|kernelopt=${kernelopt_val}|I" "$cfg_file"
     else
-        echo "kernelopt=runweasel ks=cdrom:/KS.CFG" >> "$cfg_file"
+        echo "kernelopt=${kernelopt_val}" >> "$cfg_file"
     fi
 
     # 2. Append injected .v00 modules into modules= line
@@ -315,9 +329,13 @@ fi
 
 # Step 4: Write KS.CFG with %firstboot script for reboot persistence
 KS_CFG="$ISO_ROOT/KS.CFG"
-cat <<'KSEOF' > "$KS_CFG"
+cat <<KSEOF > "$KS_CFG"
 # ESXi Kickstart Installation Script with Custom Driver Firstboot Persistence
 vmaccepteula
+rootpw ${ROOT_PASSWORD}
+clearpart --firstdisk=local --overwritevmfs
+install --firstdisk=local --overwritevmfs
+reboot
 
 %post --interpreter=busybox
 # Stage VIB packages from CD-ROM to target disk

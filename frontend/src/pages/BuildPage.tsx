@@ -1,11 +1,15 @@
-import { CheckCircleOutlined, CloudDownloadOutlined, FileZipOutlined, PlayCircleOutlined, SearchOutlined, ToolOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, ClockCircleOutlined, CloudDownloadOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, FileZipOutlined, PlayCircleOutlined, ReloadOutlined, RollbackOutlined, SearchOutlined, ToolOutlined } from '@ant-design/icons'
 import { PageContainer } from '../components/pro-compat'
-import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Descriptions, Flex, Form, Input, Progress, Select, Space, Steps, Table, Tag, Tooltip, Typography, Watermark, message } from 'antd'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, Button, Card, Collapse, Descriptions, Divider, Empty, Flex, Form, Input, Popconfirm, Progress, Radio, Select, Space, Steps, Table, Tag, Tooltip, Typography, Watermark, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { listBuckets } from '../api/buckets'
-import { createBuild, getBuildPreflight, startBuildPreflight } from '../api/builds'
+import { createBuild, deleteBuild, getBuild, getBuildArtifactUrl, getBuildPreflight, listBuilds, startBuildPreflight } from '../api/builds'
+import { useWebSocket } from '../hooks/useWebSocket'
+import { PhaseTimingBreakdown } from '../components/TaskWorkspace'
+import { BuildStatusTag } from './pageUtils'
+import { formatDate } from '../utils'
 import { listDepots, listDrivers } from '../api/files'
 import type { FileMetadata } from '../types'
 import { assetTitle, cacheStatusColor, cacheStatusText, compactSize, esxiVersions, fileName } from './pageUtils'
@@ -45,8 +49,11 @@ function EllipsisText({
 }
 
 export default function BuildPage() {
+  const queryClient = useQueryClient()
   const [messageApi, contextHolder] = message.useMessage()
   const [form] = Form.useForm()
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  const logTerminalRef = useRef<HTMLDivElement>(null)
   const [step, setStep] = useState(0)
   const [version, setVersion] = useState('8.0')
   const [bucketId, setBucketId] = useState<number | undefined>()
@@ -114,7 +121,51 @@ export default function BuildPage() {
 
   const createMutation = useMutation({
     mutationFn: createBuild,
-    onSuccess: (task) => window.location.assign(`/tasks/${task.task_id}`),
+    onSuccess: (task) => {
+      setActiveTaskId(task.task_id)
+      messageApi.success('构建任务已创建！正在极速封装中...')
+      queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+    },
+    onError: (error) => messageApi.error(String(error)),
+  })
+
+  const activeTaskQuery = useQuery({
+    queryKey: ['build-active', activeTaskId],
+    queryFn: () => getBuild(activeTaskId!),
+    enabled: Boolean(activeTaskId),
+    refetchInterval: (query) => (query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1000 : false),
+  })
+  const activeTask = activeTaskQuery.data
+  const { logs: wsLogs, progress: wsProgress } = useWebSocket(activeTaskId ?? null)
+
+  const displayLogs = useMemo(() => {
+    if (wsLogs && wsLogs.length > 0) return wsLogs
+    return activeTask?.log_output ? activeTask.log_output.split('\n').filter(Boolean) : []
+  }, [wsLogs, activeTask?.log_output])
+
+  const displayProgress = wsProgress || activeTask?.progress || 0
+
+  useEffect(() => {
+    if (logTerminalRef.current) {
+      logTerminalRef.current.scrollTop = logTerminalRef.current.scrollHeight
+    }
+  }, [displayLogs])
+
+  const recentBuildsQuery = useQuery({
+    queryKey: ['builds-recent'],
+    queryFn: () => listBuilds(1, 10),
+    refetchInterval: activeTaskId ? 2000 : 10000,
+  })
+
+  const deleteBuildMutation = useMutation({
+    mutationFn: deleteBuild,
+    onSuccess: (_, deletedTaskId) => {
+      messageApi.success('任务已删除')
+      if (activeTaskId === deletedTaskId) {
+        setActiveTaskId(null)
+      }
+      queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+    },
     onError: (error) => messageApi.error(String(error)),
   })
 
@@ -187,6 +238,8 @@ export default function BuildPage() {
       driver_paths: driverPaths,
       custom_iso_name: values.custom_iso_name || undefined,
       image_profile: imageProfile || undefined,
+      root_password: values.root_password || 'niuniu',
+      install_mode: values.install_mode || 'unattended',
     })
   }
 
@@ -447,8 +500,19 @@ export default function BuildPage() {
       )
     }
 
+    const nowTimestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+    const formulaPlaceholder = `ESXi-${version}-custom-${nowTimestamp}.iso`
+
     return (
-      <Form form={form} layout="vertical" initialValues={{ custom_iso_name: '' }}>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{
+          custom_iso_name: '',
+          root_password: 'niuniu',
+          install_mode: 'unattended',
+        }}
+      >
         <Form.Item label="Image Profile">
           <Select
             className="build-image-profile-select"
@@ -462,10 +526,57 @@ export default function BuildPage() {
             }))}
           />
         </Form.Item>
-        <Form.Item name="custom_iso_name" label="输出镜像名称">
-          <Input className="mono" placeholder="custom-esxi.iso" />
+        <Form.Item
+          name="custom_iso_name"
+          label="输出镜像名称"
+          extra="支持自定义命名。留空将自动按公式命名：ESXi-{版本}-custom-{时间戳}.iso"
+        >
+          <Input className="mono" placeholder={formulaPlaceholder} allowClear />
         </Form.Item>
-        <Alert type="success" showIcon title="配置已完成，可以提交后端创建构建任务。" />
+        <Collapse
+          defaultActiveKey={['core-params']}
+          style={{ marginBottom: 16 }}
+          items={[
+            {
+              key: 'core-params',
+              label: <Typography.Text strong>核心安装参数调整 (可选)</Typography.Text>,
+              children: (
+                <Space direction="vertical" size={14} style={{ width: '100%' }}>
+                  <Form.Item
+                    name="root_password"
+                    label="Root 初始管理密码"
+                    extra="系统安装后默认 root 登录密码，默认设为 niuniu"
+                  >
+                    <Input.Password placeholder="niuniu" />
+                  </Form.Item>
+                  <Form.Item
+                    name="install_mode"
+                    label="安装模式选择"
+                    extra="控制 ESXi 开机安装时的自动化行为"
+                  >
+                    <Radio.Group>
+                      <Space direction="vertical">
+                        <Radio value="unattended">
+                          <Typography.Text strong>⚡ 无人值守自动安装 (推荐)</Typography.Text>
+                          <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }}>
+                            开机全自动格式化第一块本地磁盘，装完自动重启并在首次开机自动注册驱动
+                          </Typography.Paragraph>
+                        </Radio>
+                        <Radio value="interactive">
+                          <Typography.Text strong>🖥️ 交互式手动安装</Typography.Text>
+                          <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }}>
+                            保留官方原厂图形安装向导，可手动选择目标磁盘和确认，驱动仍预载以通过网卡检测
+                          </Typography.Paragraph>
+                        </Radio>
+                      </Space>
+                    </Radio.Group>
+                  </Form.Item>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        <Alert type="success" showIcon title="配置已完成，点击下方按钮开始极速构建。" />
       </Form>
     )
   }
@@ -568,6 +679,239 @@ export default function BuildPage() {
             />
           </Card>
         </div>
+
+        {activeTaskId && (
+          <Card
+            style={{ marginTop: 20 }}
+            title={
+              <Space wrap>
+                <ClockCircleOutlined />
+                <Typography.Text strong>构建任务控制台</Typography.Text>
+                <Typography.Text code className="mono">{activeTaskId}</Typography.Text>
+                {activeTask?.status && <BuildStatusTag status={activeTask.status} />}
+              </Space>
+            }
+            extra={
+              <Space wrap>
+                {activeTask?.status === 'completed' && activeTask?.output_iso && (
+                  <Button
+                    type="primary"
+                    icon={<DownloadOutlined />}
+                    onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
+                  >
+                    下载定制 ISO
+                  </Button>
+                )}
+                <Button icon={<RollbackOutlined />} onClick={() => setActiveTaskId(null)}>
+                  返回新建配置
+                </Button>
+              </Space>
+            }
+          >
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Descriptions
+                size="small"
+                bordered
+                column={{ xxl: 4, xl: 4, lg: 2, md: 2, sm: 1, xs: 1 }}
+                items={[
+                  { key: 'name', label: '镜像名称', children: activeTask?.custom_iso_name || '默认公式命名' },
+                  { key: 'version', label: 'ESXi 版本', children: activeTask?.esxi_version || '-' },
+                  { key: 'duration', label: '构建总耗时', children: activeTask?.build_duration ? `${activeTask.build_duration} 秒` : '-' },
+                  { key: 'progress', label: '构建进度', children: `${displayProgress}%` },
+                ]}
+              />
+
+              <Progress
+                percent={displayProgress}
+                status={activeTask?.status === 'failed' ? 'exception' : activeTask?.status === 'completed' ? 'success' : 'active'}
+                strokeColor={{ '0%': '#108ee9', '100%': '#87d068' }}
+              />
+
+              <PhaseTimingBreakdown
+                logs={displayLogs}
+                buildDuration={activeTask?.build_duration}
+                isCompleted={activeTask?.status === 'completed'}
+              />
+
+              {activeTask?.status === 'completed' && activeTask?.output_iso && (
+                <Alert
+                  type="success"
+                  showIcon
+                  message="🎉 定制 ESXi ISO 已构建完成！"
+                  description={
+                    <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
+                      <div>
+                        <Typography.Text strong>产物文件：</Typography.Text>
+                        <Typography.Text code className="mono">{activeTask.output_iso}</Typography.Text>
+                        {activeTask.output_iso_size && (
+                          <Tag color="blue" style={{ marginLeft: 8 }}>
+                            {(activeTask.output_iso_size / 1024 / 1024).toFixed(1)} MB
+                          </Tag>
+                        )}
+                      </div>
+                      {activeTask.output_iso_sha256 && (
+                        <div>
+                          <Typography.Text strong>SHA-256：</Typography.Text>
+                          <Typography.Text code copyable className="mono">
+                            {activeTask.output_iso_sha256}
+                          </Typography.Text>
+                        </div>
+                      )}
+                      <div style={{ marginTop: 8 }}>
+                        <Button
+                          type="primary"
+                          size="large"
+                          icon={<DownloadOutlined />}
+                          onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
+                        >
+                          立即下载定制 ISO
+                        </Button>
+                      </div>
+                    </Space>
+                  }
+                />
+              )}
+
+              {activeTask?.status === 'failed' && (
+                <Alert
+                  type="error"
+                  showIcon
+                  message="构建失败"
+                  description={activeTask.error_message || '请检查日志输出获取详细失败原因'}
+                />
+              )}
+
+              <div>
+                <Typography.Text strong style={{ marginBottom: 8, display: 'block' }}>
+                  实时构建日志：
+                </Typography.Text>
+                <div
+                  ref={logTerminalRef}
+                  style={{
+                    backgroundColor: '#0f172a',
+                    color: '#e2e8f0',
+                    fontFamily: 'Consolas, Monaco, monospace',
+                    fontSize: 12,
+                    lineHeight: '1.6',
+                    padding: '12px 16px',
+                    borderRadius: 6,
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  {displayLogs.length === 0 ? (
+                    <Typography.Text type="secondary" style={{ color: '#64748b' }}>
+                      等待日志输出...
+                    </Typography.Text>
+                  ) : (
+                    displayLogs.map((log, index) => <div key={index}>{log}</div>)
+                  )}
+                </div>
+              </div>
+            </Space>
+          </Card>
+        )}
+
+        <Card
+          style={{ marginTop: 20 }}
+          title="近期构建任务"
+          extra={
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['builds-recent'] })}
+            >
+              刷新列表
+            </Button>
+          }
+        >
+          <Table
+            size="small"
+            rowKey="task_id"
+            loading={recentBuildsQuery.isLoading}
+            dataSource={recentBuildsQuery.data?.items ?? []}
+            pagination={{ pageSize: 5 }}
+            columns={[
+              {
+                title: '镜像名称 / ID',
+                key: 'name',
+                render: (_, r: any) => (
+                  <Space direction="vertical" size={0}>
+                    <Typography.Text strong ellipsis style={{ maxWidth: 260 }}>
+                      {r.custom_iso_name || `ESXi-${r.esxi_version || '8.0'}`}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" className="mono" style={{ fontSize: 11 }}>
+                      {r.task_id}
+                    </Typography.Text>
+                  </Space>
+                ),
+              },
+              {
+                title: '版本',
+                dataIndex: 'esxi_version',
+                width: 90,
+                render: (v) => <Tag color="geekblue">{v || '8.0'}</Tag>,
+              },
+              {
+                title: '状态',
+                key: 'status',
+                width: 110,
+                render: (_, r: any) => <BuildStatusTag status={r.status} />,
+              },
+              {
+                title: '耗时',
+                dataIndex: 'build_duration',
+                width: 90,
+                render: (d) => (d ? `${d} 秒` : '-'),
+              },
+              {
+                title: '创建时间',
+                dataIndex: 'created_at',
+                width: 170,
+                render: (t) => formatDate(t),
+              },
+              {
+                title: '操作',
+                key: 'actions',
+                width: 180,
+                render: (_, r: any) => (
+                  <Space wrap size={4}>
+                    <Button
+                      size="small"
+                      type={activeTaskId === r.task_id ? 'primary' : 'default'}
+                      icon={<EyeOutlined />}
+                      onClick={() => {
+                        setActiveTaskId(r.task_id)
+                        window.scrollTo({ top: 400, behavior: 'smooth' })
+                      }}
+                    >
+                      {activeTaskId === r.task_id ? '当前查看' : '查看日志'}
+                    </Button>
+                    {r.status === 'completed' && r.output_iso && (
+                      <Button
+                        size="small"
+                        icon={<DownloadOutlined />}
+                        onClick={() => window.open(getBuildArtifactUrl(r.task_id), '_blank', 'noopener,noreferrer')}
+                      >
+                        下载
+                      </Button>
+                    )}
+                    <Popconfirm
+                      title="确认删除任务记录？"
+                      onConfirm={() => deleteBuildMutation.mutate(r.task_id)}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </Card>
       </Watermark>
     </PageContainer>
   )

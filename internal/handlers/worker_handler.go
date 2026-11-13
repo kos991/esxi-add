@@ -38,6 +38,8 @@ type workerClaimResponse struct {
 	DriverPaths   []string `json:"driver_paths"`
 	CustomISOName string   `json:"custom_iso_name"`
 	ImageProfile  string   `json:"image_profile"`
+	RootPassword  string   `json:"root_password,omitempty"`
+	InstallMode   string   `json:"install_mode,omitempty"`
 	OutputISOName string   `json:"output_iso_name"`
 }
 

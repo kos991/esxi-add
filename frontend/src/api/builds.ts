@@ -8,6 +8,8 @@ export interface CreateBuildPayload {
   driver_paths: string[]
   custom_iso_name?: string
   image_profile?: string
+  root_password?: string
+  install_mode?: 'unattended' | 'interactive'
 }
 
 export interface PaginatedBuilds {

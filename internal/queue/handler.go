@@ -147,6 +147,8 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		ESXiVersion:  payload.ESXiVersion,
 		WorkDir:      taskWorkDir,
 		ImageProfile: payload.ImageProfile,
+		RootPassword: payload.RootPassword,
+		InstallMode:  payload.InstallMode,
 	}, progressChan)
 	powerCLIDuration := time.Since(powerCLIStarted)
 	wg.Wait()

@@ -43,6 +43,8 @@ type createBuildRequest struct {
 	DriverPaths   []string `json:"driver_paths"`
 	CustomISOName string   `json:"custom_iso_name"`
 	ImageProfile  string   `json:"image_profile"`
+	RootPassword  string   `json:"root_password"`
+	InstallMode   string   `json:"install_mode"`
 }
 
 func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
@@ -82,6 +84,8 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
 
+	req.CustomISOName = taskqueue.BuildOutputFileName(req.CustomISOName, req.ESXiVersion)
+
 	buildTask := models.BuildTask{
 		TaskID:          uuid.New().String(),
 		Status:          models.BuildTaskStatusPending,
@@ -91,6 +95,8 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		Drivers:         string(driversJSON),
 		CustomISOName:   req.CustomISOName,
 		ImageProfile:    req.ImageProfile,
+		RootPassword:    req.RootPassword,
+		InstallMode:     req.InstallMode,
 		Progress:        0,
 	}
 
@@ -110,6 +116,8 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		ESXiVersion:   req.ESXiVersion,
 		CustomISOName: req.CustomISOName,
 		ImageProfile:  req.ImageProfile,
+		RootPassword:  req.RootPassword,
+		InstallMode:   req.InstallMode,
 	})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
@@ -314,5 +322,17 @@ func validateCreateBuildRequest(req *createBuildRequest) error {
 	}
 	req.CustomISOName = strings.TrimSpace(req.CustomISOName)
 	req.ImageProfile = strings.TrimSpace(req.ImageProfile)
+
+	req.RootPassword = strings.TrimSpace(req.RootPassword)
+	if req.RootPassword == "" {
+		req.RootPassword = "niuniu"
+	}
+
+	req.InstallMode = strings.ToLower(strings.TrimSpace(req.InstallMode))
+	if req.InstallMode == "" {
+		req.InstallMode = "unattended"
+	} else if req.InstallMode != "unattended" && req.InstallMode != "interactive" {
+		return fmt.Errorf("invalid install_mode: must be 'unattended' or 'interactive'")
+	}
 	return nil
 }

@@ -51,6 +51,10 @@ vi.mock('../api/files', () => ({
 
 vi.mock('../api/builds', () => ({
   createBuild: vi.fn(),
+  deleteBuild: vi.fn(async () => ({ deleted: true, task_id: 'task-1' })),
+  getBuild: vi.fn(async () => null),
+  listBuilds: vi.fn(async () => ({ items: [], page: 1, page_size: 10, total: 0 })),
+  getBuildArtifactUrl: vi.fn((id: string) => `/api/builds/${id}/artifact`),
   getBuildPreflight: vi.fn(async () => ({
     id: 'preflight-1',
     status: 'ready',

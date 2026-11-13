@@ -25,6 +25,8 @@ type BuildParams struct {
 	ESXiVersion  string
 	WorkDir      string
 	ImageProfile string
+	RootPassword string
+	InstallMode  string
 }
 
 type BuildProgress struct {
@@ -61,11 +63,15 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		if params.ImageProfile != "" {
 			args = append(args, "--image-profile", params.ImageProfile)
 		}
+		if params.RootPassword != "" {
+			args = append(args, "--root-password", params.RootPassword)
+		}
+		if params.InstallMode != "" {
+			args = append(args, "--install-mode", params.InstallMode)
+		}
 		cmd = exec.CommandContext(ctx, "bash", args...)
 	} else {
-		cmd = exec.CommandContext(
-			ctx,
-			e.pwshPath,
+		args := []string{
 			"-File", e.scriptPath,
 			"-DepotPath", params.DepotPath,
 			"-DriverPaths", strings.Join(params.DriverPaths, ","),
@@ -73,7 +79,14 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 			"-ESXiVersion", params.ESXiVersion,
 			"-WorkDir", params.WorkDir,
 			"-ImageProfileName", params.ImageProfile,
-		)
+		}
+		if params.RootPassword != "" {
+			args = append(args, "-RootPassword", params.RootPassword)
+		}
+		if params.InstallMode != "" {
+			args = append(args, "-InstallMode", params.InstallMode)
+		}
+		cmd = exec.CommandContext(ctx, e.pwshPath, args...)
 	}
 
 	stdout, err := cmd.StdoutPipe()

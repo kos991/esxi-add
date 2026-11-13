@@ -20,6 +20,8 @@ type BuildTask struct {
 	Drivers         string         `gorm:"type:text" json:"drivers"`
 	CustomISOName   string         `json:"custom_iso_name"`
 	ImageProfile    string         `json:"image_profile"`
+	RootPassword    string         `gorm:"column:root_password" json:"root_password,omitempty"`
+	InstallMode     string         `gorm:"column:install_mode" json:"install_mode,omitempty"`
 	Progress        int            `gorm:"default:0" json:"progress"`
 	LogOutput       string         `gorm:"type:text" json:"log_output"`
 	OutputISO       string         `gorm:"column:output_iso" json:"output_iso"`
