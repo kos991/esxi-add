@@ -50,32 +50,52 @@ vi.mock('../api/files', () => ({
 }))
 
 vi.mock('../api/builds', () => ({
-  createBuild: vi.fn(),
-  deleteBuild: vi.fn(async () => ({ deleted: true, task_id: 'task-1' })),
-  getBuild: vi.fn(async () => null),
-  listBuilds: vi.fn(async () => ({ items: [], page: 1, page_size: 10, total: 0 })),
-  getBuildArtifactUrl: vi.fn((id: string) => `/api/builds/${id}/artifact`),
-  getBuildPreflight: vi.fn(async () => ({
-    id: 'preflight-1',
-    status: 'ready',
-    progress: 100,
-    files: [{ kind: 'depot', path: 'depot/ESXi-8.0U2-depot.zip', status: 'ready', progress: 100, cached: true }],
-    image_profiles: [
-      { name: 'ESXi-8.0U2-standard', vendor: 'VMware', acceptance_level: 'PartnerSupported' },
-      { name: 'ESXi-8.0U2-no-tools', vendor: 'VMware', acceptance_level: 'PartnerSupported' },
-    ],
-    selected_image_profile: 'ESXi-8.0U2-standard',
-    created_at: '2026-05-19T00:00:00Z',
-    updated_at: '2026-05-19T00:00:01Z',
-  })),
-  startBuildPreflight: vi.fn(async () => ({
-    id: 'preflight-1',
+  createBuild: vi.fn(async () => ({
+    id: 1,
+    task_id: 'task-test-123',
     status: 'running',
-    progress: 0,
-    files: [],
-    created_at: '2026-05-19T00:00:00Z',
-    updated_at: '2026-05-19T00:00:00Z',
+    esxi_version: '8.0',
+    depot_path: 'depot/ESXi-8.0U2-depot.zip',
+    drivers: '["drivers/net-community.vib"]',
+    custom_iso_name: 'ESXi-8.0-custom-test.iso',
+    root_password: 'niuniu',
+    install_mode: 'unattended',
+    progress: 50,
+    log_output: '[TIMING] input_prepare_ms=0\n[PROGRESS] 50 building\n',
+    created_at: '2026-11-13T08:00:00Z',
   })),
+  deleteBuild: vi.fn(async () => ({ deleted: true, task_id: 'task-1' })),
+  getBuild: vi.fn(async (id: string) => ({
+    id: 1,
+    task_id: id,
+    status: 'running',
+    esxi_version: '8.0',
+    custom_iso_name: 'ESXi-8.0-custom-test.iso',
+    progress: 50,
+    log_output: '[TIMING] input_prepare_ms=0\n[PROGRESS] 50 building\n',
+    created_at: '2026-11-13T08:00:00Z',
+  })),
+  listBuilds: vi.fn(async () => ({
+    items: [
+      {
+        id: 1,
+        task_id: 'task-test-123',
+        status: 'completed',
+        esxi_version: '8.0',
+        custom_iso_name: 'ESXi-8.0-custom-20261113.iso',
+        output_iso: 'output/ESXi-8.0-custom-20261113.iso',
+        output_iso_size: 489428992,
+        build_duration: 9,
+        created_at: '2026-11-13T08:00:00Z',
+      },
+    ],
+    page: 1,
+    page_size: 10,
+    total: 1,
+  })),
+  getBuildArtifactUrl: vi.fn((id: string) => `/api/builds/${id}/artifact`),
+  getBuildPreflight: vi.fn(),
+  startBuildPreflight: vi.fn(),
 }))
 
 function renderBuildPage() {
@@ -93,90 +113,48 @@ function renderBuildPage() {
   )
 }
 
-describe('BuildPage interaction workbench', () => {
-  it('renders the build workflow with Ant Design steps and source selection first', async () => {
+describe('BuildPage unified workbench', () => {
+  it('renders the unified build workbench with configuration and tasks console', async () => {
     renderBuildPage()
 
-    expect(await screen.findByText(/步骤驱动工作流/)).toBeInTheDocument()
-    expect(screen.queryByRole('tablist', { name: '构建步骤' })).not.toBeInTheDocument()
-    expect(screen.getAllByText('选择源文件').length).toBeGreaterThan(0)
-    expect(screen.getByText('Depot 源文件')).toBeInTheDocument()
-    expect(screen.getByText('当前配置')).toBeInTheDocument()
+    expect(await screen.findByText('新建定制构建配置')).toBeInTheDocument()
+    expect(screen.getByText('Linux 原生极速引擎 (5~10 秒)')).toBeInTheDocument()
+    expect(screen.getByText('基础镜像源文件 (ISO / Depot)')).toBeInTheDocument()
+    expect(screen.getByText('构建任务控制台与实时日志')).toBeInTheDocument()
+    expect(screen.getByText('近期构建任务')).toBeInTheDocument()
   })
 
-  it('keeps driver selection on an Ant Design table with toolbar actions', async () => {
+  it('keeps driver selection table with search and select-all actions', async () => {
     renderBuildPage()
 
-    expect((await screen.findAllByText('depot/ESXi-8.0U2-depot.zip')).length).toBeGreaterThan(0)
-    fireEvent.click(await screen.findByRole('button', { name: /继续下一步/ }))
-
-    expect(await screen.findByText('驱动选择')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('搜索驱动名称 / 供应商 / 文件名')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '全选当前' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '批量导入' })).toBeDisabled()
-    const compatibilityHeader = screen.getByRole('columnheader', { name: '兼容性' })
-    expect(compatibilityHeader).toBeInTheDocument()
-
-    const table = compatibilityHeader.closest('table') as HTMLTableElement
-    expect(within(table).getByRole('checkbox', { name: /Select all/i })).toBeInTheDocument()
-    expect(await within(table).findByText('net-community')).toBeInTheDocument()
-  })
-
-  it('does not jump when clicking a later navigation step', async () => {
-    const { container } = renderBuildPage()
+    expect(await screen.findByText('全选当前')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('搜索驱动')).toBeInTheDocument()
 
     await waitFor(() => {
-      expect(container.querySelectorAll('.build-navigation-steps .ant-steps-item')).toHaveLength(4)
-    })
-    const steps = container.querySelectorAll('.build-navigation-steps .ant-steps-item')
-    expect(steps).toHaveLength(4)
-
-    fireEvent.click(steps[2])
-
-    expect(steps[0]).toHaveClass('ant-steps-item-process')
-    expect(steps[2]).toHaveClass('ant-steps-item-wait')
-  })
-
-  it('uses compact build rows and truncation hooks for long text', async () => {
-    const { container } = renderBuildPage()
-
-    await waitFor(() => {
-      expect(container.querySelector('.selected-source-strip')).toBeInTheDocument()
-    })
-
-    const nextButton = container.querySelector('.build-actions-card .ant-btn-primary')
-    expect(nextButton).toBeInTheDocument()
-    fireEvent.click(nextButton as HTMLElement)
-
-    await waitFor(() => {
-      expect(container.querySelector('.driver-title')).toBeInTheDocument()
-      expect(container.querySelector('.driver-version')).toBeInTheDocument()
+      expect(screen.getByText('net-community')).toBeInTheDocument()
     })
   })
 
-  it('lets users confirm the inspected image profile before building', async () => {
-    const { container } = renderBuildPage()
+  it('provides custom iso name placeholder and core parameter adjustments', async () => {
+    renderBuildPage()
+
+    expect(await screen.findByText(/核心安装参数调整/)).toBeInTheDocument()
+    expect(screen.getByText(/无人值守自动安装/)).toBeInTheDocument()
+    expect(screen.getByText(/交互式手动安装/)).toBeInTheDocument()
+  })
+
+  it('submits build and updates active task console', async () => {
+    renderBuildPage()
 
     await waitFor(() => {
-      expect(container.querySelector('.selected-source-strip')).toBeInTheDocument()
+      expect(screen.getByText('开始极速构建')).toBeInTheDocument()
     })
-    let nextButton = container.querySelector('.build-actions-card .ant-btn-primary')
-    fireEvent.click(nextButton as HTMLElement)
+
+    const submitBtn = screen.getByText('开始极速构建')
+    fireEvent.click(submitBtn)
 
     await waitFor(() => {
-      expect(container.querySelector('.driver-title')).toBeInTheDocument()
-    })
-    nextButton = container.querySelector('.build-actions-card .ant-btn-primary')
-    fireEvent.click(nextButton as HTMLElement)
-
-    await waitFor(() => {
-      expect(container.querySelector('.preflight-row')).toBeInTheDocument()
-    })
-    nextButton = container.querySelector('.build-actions-card .ant-btn-primary')
-    fireEvent.click(nextButton as HTMLElement)
-
-    await waitFor(() => {
-      expect(container.querySelector('.build-image-profile-select')).toBeInTheDocument()
+      expect(screen.getByText('构建任务控制台与实时日志')).toBeInTheDocument()
     })
   })
 })
