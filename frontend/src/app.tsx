@@ -1,12 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import Layout from './layouts'
-import BucketsPage from './pages/BucketsPage'
 import BuildPage from './pages/BuildPage'
-import FilesPage from './pages/FilesPage'
 import OverviewPage from './pages/OverviewPage'
-import TaskDetailPage from './pages/TaskDetailPage'
-import TasksPage from './pages/TasksPage'
+import StorageFilesPage from './pages/StorageFilesPage'
 
 import 'antd/dist/reset.css'
 import './index.css'
@@ -20,6 +17,12 @@ const queryClient = new QueryClient({
   },
 })
 
+function TaskDetailRedirect() {
+  const { taskId } = useParams<{ taskId: string }>()
+  const target = taskId ? `/build?task=${encodeURIComponent(taskId)}` : '/build'
+  return <Navigate to={target} replace />
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -27,11 +30,14 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<OverviewPage />} />
-            <Route path="buckets" element={<BucketsPage />} />
-            <Route path="files" element={<FilesPage />} />
+            <Route path="storage" element={<StorageFilesPage />} />
             <Route path="build" element={<BuildPage />} />
-            <Route path="tasks" element={<TasksPage />} />
-            <Route path="tasks/:taskId" element={<TaskDetailPage />} />
+            {/* 兼容历史旧路径，统一收敛至 3 大核心页面 */}
+            <Route path="buckets" element={<Navigate to="/storage?focus=nodes" replace />} />
+            <Route path="files" element={<Navigate to="/storage" replace />} />
+            <Route path="tasks" element={<Navigate to="/build" replace />} />
+            <Route path="tasks/:taskId" element={<TaskDetailRedirect />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>

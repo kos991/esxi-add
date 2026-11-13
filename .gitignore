@@ -10,3 +10,6 @@ frontend/dist/
 frontend/src/.umi/
 frontend/src/.umi-production/
 .superpowers/
+
+.alma-snapshots/
+source-cleanup/

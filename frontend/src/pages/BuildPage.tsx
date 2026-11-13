@@ -1,60 +1,65 @@
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
-  CloudDownloadOutlined,
+  CloudUploadOutlined,
   CopyOutlined,
   DeleteOutlined,
   DownloadOutlined,
   EyeOutlined,
-  FileZipOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
   SearchOutlined,
   SettingOutlined,
+  ThunderboltOutlined,
   ToolOutlined,
 } from '@ant-design/icons'
-import { PageContainer } from '../components/pro-compat'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
-  Badge,
   Button,
-  Card,
-  Collapse,
-  Descriptions,
-  Divider,
   Empty,
-  Flex,
   Form,
   Input,
   Popconfirm,
   Progress,
-  Radio,
+  Segmented,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Tooltip,
   Typography,
-  Watermark,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useInRouterContext, useLocation, useNavigate } from 'react-router-dom'
 import { listBuckets } from '../api/buckets'
 import {
   createBuild,
   deleteBuild,
   getBuild,
   getBuildArtifactUrl,
+  getBuildPreflight,
   listBuilds,
+  startBuildPreflight,
 } from '../api/builds'
 import { listDepots, listDrivers } from '../api/files'
-import { useWebSocket } from '../hooks/useWebSocket'
 import { PhaseTimingBreakdown } from '../components/TaskWorkspace'
-import { BuildStatusTag, assetTitle, cacheStatusColor, cacheStatusText, compactSize, esxiVersions, fileName } from './pageUtils'
-import type { FileMetadata } from '../types'
-import { formatDate } from '../utils'
+import { PageContainer, ProCard } from '../components/pro-compat'
+import { useWebSocket } from '../hooks/useWebSocket'
+import type { BuildTask, FileMetadata } from '../types'
+import { buildPublicObjectUrl, formatDate, parseDrivers } from '../utils'
+import {
+  BuildStatusTag,
+  cacheStatusColor,
+  cacheStatusText,
+  compactSize,
+  esxiVersions,
+  fileName,
+} from './pageUtils'
 
 type DepotOption = {
   key: string
@@ -63,31 +68,20 @@ type DepotOption = {
   file: FileMetadata
 }
 
+type LogLevelFilter = 'all' | 'issues'
+type HistoryStatusFilter = 'all' | 'running' | 'completed' | 'failed'
+
 function depotKey(bucketId: number, file: FileMetadata) {
   return `${bucketId}:${file.id}:${file.path}`
 }
 
-function EllipsisText({
-  value,
-  className,
-  strong,
-  copyable,
-  type,
-}: {
-  value?: string
-  className?: string
-  strong?: boolean
-  copyable?: boolean
-  type?: 'secondary' | 'success' | 'warning' | 'danger'
-}) {
-  const text = value || '-'
-  return (
-    <Tooltip title={text}>
-      <Typography.Text className={className} strong={strong} type={type} copyable={copyable} ellipsis>
-        {text}
-      </Typography.Text>
-    </Tooltip>
-  )
+function classifyLogLine(line: string): 'error' | 'warn' | 'timing' | 'progress' | 'normal' {
+  const lower = line.toLowerCase()
+  if (lower.includes('error') || lower.includes('failed') || lower.includes('fatal')) return 'error'
+  if (lower.includes('warn')) return 'warn'
+  if (line.includes('[TIMING]')) return 'timing'
+  if (line.includes('[PROGRESS]')) return 'progress'
+  return 'normal'
 }
 
 export default function BuildPage() {
@@ -96,19 +90,59 @@ export default function BuildPage() {
   const [form] = Form.useForm()
   const logTerminalRef = useRef<HTMLDivElement>(null)
 
-  // Build Configuration State
-  const [version, setVersion] = useState('8.0')
-  const [bucketId, setBucketId] = useState<number | undefined>()
-  const [depotPath, setDepotPath] = useState('')
+  const inRouter = useInRouterContext()
+  const routerLocation = inRouter ? useLocation() : null
+  const routerNavigate = inRouter ? useNavigate() : null
+
+  const searchParams = useMemo(() => {
+    const raw = routerLocation ? routerLocation.search : window.location.search
+    return new URLSearchParams(raw)
+  }, [routerLocation])
+
+  const go = (path: string) => {
+    if (routerNavigate) {
+      routerNavigate(path)
+    } else {
+      window.location.assign(path)
+    }
+  }
+
+  // Build Recipe State
+  const [version, setVersion] = useState<string>(() => searchParams.get('version') || '8.0')
+  const [bucketId, setBucketId] = useState<number | undefined>(() => {
+    const b = searchParams.get('bucket')
+    return b ? Number(b) : undefined
+  })
+  const [depotPath, setDepotPath] = useState<string>(() => searchParams.get('depot') || '')
   const [driverPaths, setDriverPaths] = useState<string[]>([])
+  const [installMode, setInstallMode] = useState<'unattended' | 'interactive'>('unattended')
+
+  // Driver Filter State
   const [driverSearch, setDriverSearch] = useState('')
   const [compatibilityFilter, setCompatibilityFilter] = useState<'all' | 'match' | 'attention'>('all')
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'local' | 'remote'>('all')
 
-  // Selected Active Task (defaults to latest or newly created)
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  // Optional Preflight State
+  const [preflightId, setPreflightId] = useState<string | null>(null)
 
-  // Query: Buckets & Depots
+  // Console & History State
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(() => searchParams.get('task'))
+  const [logFilter, setLogFilter] = useState<LogLevelFilter>('all')
+  const [autoScroll, setAutoScroll] = useState(true)
+  const [historyFilter, setHistoryFilter] = useState<HistoryStatusFilter>('all')
+
+  // Sync URL ?task=... changes
+  useEffect(() => {
+    const urlTask = searchParams.get('task')
+    if (urlTask) setActiveTaskId(urlTask)
+    const urlBucket = searchParams.get('bucket')
+    const urlDepot = searchParams.get('depot')
+    const urlVersion = searchParams.get('version')
+    if (urlVersion) setVersion(urlVersion)
+    if (urlBucket) setBucketId(Number(urlBucket))
+    if (urlDepot) setDepotPath(urlDepot)
+  }, [searchParams])
+
+  // Query: Buckets & Depots across buckets
   const bucketsQuery = useQuery({ queryKey: ['buckets'], queryFn: listBuckets })
   const buckets = bucketsQuery.data ?? []
   const depotQueries = useQueries({
@@ -132,8 +166,8 @@ export default function BuildPage() {
     [buckets, depotQueries]
   )
 
-  const selectedBucketId = bucketId ?? buckets.find((bucket) => bucket.is_default)?.id ?? buckets[0]?.id
-  const selectedBucket = buckets.find((bucket) => bucket.id === selectedBucketId)
+  const selectedBucketId = bucketId ?? buckets.find((b) => b.is_default)?.id ?? buckets[0]?.id
+  const selectedBucket = buckets.find((b) => b.id === selectedBucketId)
 
   // Query: Drivers
   const driversQuery = useQuery({
@@ -141,11 +175,16 @@ export default function BuildPage() {
     queryFn: () => listDrivers(selectedBucketId as number, version),
     enabled: Boolean(selectedBucketId),
   })
-  const selectedDepot = depotOptions.find((item) => item.bucketId === selectedBucketId && item.file.path === depotPath)
+  const selectedDepot = depotOptions.find(
+    (item) => item.bucketId === selectedBucketId && item.file.path === depotPath
+  )
   const drivers = driversQuery.data ?? []
-  const selectedDrivers = drivers.filter((file) => driverPaths.includes(file.path))
+  const selectedDrivers = useMemo(
+    () => drivers.filter((file) => driverPaths.includes(file.path)),
+    [drivers, driverPaths]
+  )
 
-  // Auto-pick first available depot if not selected
+  // Auto-select first available depot when version changes or initial load
   useEffect(() => {
     if (!depotPath && depotOptions.length > 0) {
       setBucketId(depotOptions[0].bucketId)
@@ -153,31 +192,67 @@ export default function BuildPage() {
     }
   }, [depotOptions, depotPath])
 
-  // Query: Recent Builds List
-  const recentBuildsQuery = useQuery({
-    queryKey: ['builds-recent'],
-    queryFn: () => listBuilds(1, 10),
-    refetchInterval: activeTaskId ? 2000 : 8000,
+  // Optional Preflight Query
+  const preflightQuery = useQuery({
+    queryKey: ['build-preflight', preflightId],
+    queryFn: () => getBuildPreflight(preflightId!),
+    enabled: Boolean(preflightId),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1200 : false),
+    refetchIntervalInBackground: false,
   })
 
+  const preflightMutation = useMutation({
+    mutationFn: startBuildPreflight,
+    onSuccess: (res) => {
+      setPreflightId(res.id)
+      messageApi.info('已启动源文件完整性预检')
+    },
+    onError: (err) => messageApi.error(String(err)),
+  })
+
+  // Query: Recent Builds
+  const recentBuildsQuery = useQuery({
+    queryKey: ['builds-recent'],
+    queryFn: () => listBuilds(1, 20),
+    refetchInterval: (query) => {
+      const hasRunning = (query.state.data?.items ?? []).some(
+        (t) => t.status === 'running' || t.status === 'pending'
+      )
+      return hasRunning ? 2500 : 10000
+    },
+    refetchIntervalInBackground: false,
+  })
   const recentBuilds = recentBuildsQuery.data?.items ?? []
 
-  // Auto-select latest build if no active task
+  const filteredHistory = useMemo(() => {
+    if (historyFilter === 'all') return recentBuilds
+    if (historyFilter === 'running') {
+      return recentBuilds.filter((t) => t.status === 'running' || t.status === 'pending')
+    }
+    return recentBuilds.filter((t) => t.status === historyFilter)
+  }, [recentBuilds, historyFilter])
+
+  // Auto-select latest task if none selected
   useEffect(() => {
     if (!activeTaskId && recentBuilds.length > 0) {
       setActiveTaskId(recentBuilds[0].task_id)
     }
   }, [activeTaskId, recentBuilds])
 
-  // Active Task Detail Query & WebSocket Logs
+  // Active Task Detail & WebSocket Stream
   const activeTaskQuery = useQuery({
     queryKey: ['build-active', activeTaskId],
     queryFn: () => getBuild(activeTaskId!),
     enabled: Boolean(activeTaskId),
     refetchInterval: (query) =>
-      query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1000 : false,
+      query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1200 : false,
+    refetchIntervalInBackground: false,
   })
-  const activeTask = activeTaskQuery.data
+  const activeTask = activeTaskQuery.data ?? recentBuilds.find((t) => t.task_id === activeTaskId)
+  const activeTaskBucket = useMemo(
+    () => buckets.find((b) => b.id === activeTask?.storage_bucket_id),
+    [buckets, activeTask?.storage_bucket_id]
+  )
   const { logs: wsLogs, progress: wsProgress } = useWebSocket(activeTaskId ?? null)
 
   const displayLogs = useMemo(() => {
@@ -185,91 +260,102 @@ export default function BuildPage() {
     return activeTask?.log_output ? activeTask.log_output.split('\n').filter(Boolean) : []
   }, [wsLogs, activeTask?.log_output])
 
+  const filteredLogs = useMemo(() => {
+    if (logFilter === 'all') return displayLogs
+    return displayLogs.filter((line) => {
+      const kind = classifyLogLine(line)
+      return kind === 'error' || kind === 'warn'
+    })
+  }, [displayLogs, logFilter])
+
   const displayProgress = wsProgress || activeTask?.progress || 0
 
   useEffect(() => {
-    if (logTerminalRef.current) {
+    if (autoScroll && logTerminalRef.current) {
       logTerminalRef.current.scrollTop = logTerminalRef.current.scrollHeight
     }
-  }, [displayLogs])
+  }, [filteredLogs, autoScroll, activeTaskId])
 
-  // Mutation: Create Build
+  // Create Build Mutation
   const createMutation = useMutation({
     mutationFn: createBuild,
     onSuccess: (task) => {
       setActiveTaskId(task.task_id)
-      messageApi.success('构建任务已创建！正在极速封装中...')
+      setLogFilter('all')
+      messageApi.success('构建任务已启动！右侧实时输出构建流')
       queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+      queryClient.invalidateQueries({ queryKey: ['overview-builds'] })
     },
     onError: (error) => messageApi.error(String(error)),
   })
 
-  // Mutation: Delete Build
+  // Delete Build Mutation
   const deleteBuildMutation = useMutation({
     mutationFn: deleteBuild,
     onSuccess: (_, deletedTaskId) => {
-      messageApi.success('任务已删除')
+      messageApi.success('任务记录已删除')
       if (activeTaskId === deletedTaskId) {
         setActiveTaskId(null)
       }
       queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+      queryClient.invalidateQueries({ queryKey: ['overview-builds'] })
     },
     onError: (error) => messageApi.error(String(error)),
   })
 
-  // Driver Table Filters
-  const driverIsAttention = (file: FileMetadata) => Boolean(file.conflicts_with || file.depends_on || file.cache_status === 'missing')
-  const driverSource = (file: FileMetadata) => (file.cached || selectedBucket?.type === 'local' ? 'local' : 'remote')
-  const filteredDrivers = drivers.filter((file) => {
+  // Driver Filtering
+  const driverIsAttention = (file: FileMetadata) =>
+    Boolean(file.conflicts_with || file.depends_on || file.cache_status === 'missing')
+
+  const filteredDrivers = useMemo(() => {
     const keyword = driverSearch.trim().toLowerCase()
-    const matchesKeyword =
-      !keyword ||
-      file.path.toLowerCase().includes(keyword) ||
-      (file.driver_name && file.driver_name.toLowerCase().includes(keyword)) ||
-      (file.driver_description && file.driver_description.toLowerCase().includes(keyword))
-    const matchesCompatibility =
-      compatibilityFilter === 'all' ||
-      (compatibilityFilter === 'match' && !driverIsAttention(file)) ||
-      (compatibilityFilter === 'attention' && driverIsAttention(file))
-    const matchesSource = sourceFilter === 'all' || driverSource(file) === sourceFilter
-    return matchesKeyword && matchesCompatibility && matchesSource
-  })
+    return drivers.filter((file) => {
+      const matchesKeyword =
+        !keyword ||
+        file.path.toLowerCase().includes(keyword) ||
+        (file.driver_name && file.driver_name.toLowerCase().includes(keyword)) ||
+        (file.driver_description && file.driver_description.toLowerCase().includes(keyword))
+      const matchesCompat =
+        compatibilityFilter === 'all' ||
+        (compatibilityFilter === 'match' && !driverIsAttention(file)) ||
+        (compatibilityFilter === 'attention' && driverIsAttention(file))
+      return matchesKeyword && matchesCompat
+    })
+  }, [drivers, driverSearch, compatibilityFilter])
 
   const driverColumns: ColumnsType<FileMetadata> = [
     {
-      title: '驱动包名称',
+      title: '驱动包',
       key: 'name',
       render: (_, file) => (
-        <Space direction="vertical" size={2}>
+        <div className="table-cell-stack">
           <Typography.Text strong className="driver-title">
             {file.driver_name || fileName(file)}
           </Typography.Text>
-          <EllipsisText className="mono driver-path" type="secondary" value={file.path} copyable />
-        </Space>
+          <Typography.Text type="secondary" className="mono" ellipsis={{ tooltip: file.path }} style={{ maxWidth: 240, fontSize: 11 }}>
+            {file.driver_description || file.path}
+          </Typography.Text>
+        </div>
       ),
     },
     {
       title: '版本',
       dataIndex: 'driver_version',
-      width: 110,
-      render: (value: string | undefined) => <span className="mono driver-version">{value || '-'}</span>,
+      width: 96,
+      render: (val: string | undefined) => <span className="mono tabular-nums">{val || '-'}</span>,
     },
     {
       title: '大小',
       dataIndex: 'size',
-      width: 90,
-      render: (value: number | undefined) => compactSize(value),
+      width: 82,
+      render: (val: number | undefined) => <span className="mono tabular-nums">{compactSize(val)}</span>,
     },
     {
-      title: '兼容性',
+      title: '状态',
       key: 'compatibility',
-      width: 120,
+      width: 86,
       render: (_, file) =>
-        driverIsAttention(file) ? (
-          <Tag color="warning">需确认</Tag>
-        ) : (
-          <Tag color="success">已匹配</Tag>
-        ),
+        driverIsAttention(file) ? <Tag color="warning">需确认</Tag> : <Tag color="success">已匹配</Tag>,
     },
   ]
 
@@ -277,56 +363,52 @@ export default function BuildPage() {
   const formulaPlaceholder = `ESXi-${version}-custom-${nowTimestamp}.iso`
 
   const submitBuild = () => {
-    if (!depotPath) {
-      messageApi.warning('请选择基础镜像源文件 (ISO 或 Depot)')
+    if (!depotPath || !selectedBucketId) {
+      messageApi.warning('请先选择基础镜像源文件 (ISO 或 Depot)')
       return
     }
     form.validateFields().then((values) => {
       createMutation.mutate({
-        bucket_id: selectedBucketId as number,
+        bucket_id: selectedBucketId,
         esxi_version: version,
         depot_path: depotPath,
         driver_paths: driverPaths,
         custom_iso_name: values.custom_iso_name ? values.custom_iso_name.trim() : undefined,
         root_password: values.root_password ? values.root_password.trim() : 'niuniu',
-        install_mode: values.install_mode || 'unattended',
+        install_mode: installMode,
       })
     })
   }
 
+  const allFilteredSelected =
+    filteredDrivers.length > 0 && filteredDrivers.every((d) => driverPaths.includes(d.path))
+
+  const remoteArtifactUrl =
+    activeTask?.output_iso && activeTaskBucket?.public_domain
+      ? buildPublicObjectUrl(activeTaskBucket.public_domain, activeTask.output_iso)
+      : undefined
+
   return (
     <PageContainer
-      title="构建自定义 ESXi ISO"
-      subTitle="一体化构建控制台：配置镜像源与驱动，毫秒级参数解析，原地实时日志流与产物下载。"
+      title="构建工作台"
+      subTitle="左侧组合基础镜像、社区驱动与安装参数，右侧原地实时追踪日志流、阶段耗时并下载定制 ISO"
     >
       {contextHolder}
-      <Watermark
-        className="build-watermark"
-        content={['ESXi Builder', 'Unified Console']}
-        font={{ color: 'rgba(15, 23, 42, 0.04)', fontSize: 15, fontWeight: 500 }}
-        gap={[180, 120]}
-        rotate={-18}
-      >
-        <Space direction="vertical" size={20} style={{ width: '100%' }}>
-          {/* Section 1: Build Configuration Card */}
-          <Card
+
+      <div className="workbench-split-grid">
+        {/* LEFT COLUMN: Recipe Builder */}
+        <div className="workbench-recipe-col">
+          <ProCard
+            bordered
+            headerBordered
             title={
-              <Space size={8}>
-                <ToolOutlined style={{ color: '#1677ff' }} />
+              <Space size={8} wrap>
+                <ToolOutlined style={{ color: '#2563eb' }} />
                 <Typography.Text strong>新建定制构建配置</Typography.Text>
-                <Tag color="green">Linux 原生极速引擎 (5~10 秒)</Tag>
+                <Tag color="green" style={{ marginInlineEnd: 0 }}>
+                  Linux 原生极速引擎 (5~10 秒)
+                </Tag>
               </Space>
-            }
-            extra={
-              <Button
-                type="primary"
-                icon={<PlayCircleOutlined />}
-                size="middle"
-                onClick={submitBuild}
-                loading={createMutation.isPending}
-              >
-                开始极速构建
-              </Button>
             }
           >
             <Form
@@ -335,179 +417,331 @@ export default function BuildPage() {
               initialValues={{
                 custom_iso_name: '',
                 root_password: 'niuniu',
-                install_mode: 'unattended',
               }}
             >
-              <Flex gap={20} wrap="wrap">
-                {/* 1. Base Image selection */}
-                <div style={{ flex: '1 1 360px', minWidth: 320 }}>
-                  <Form.Item label="ESXi 基础版本" required style={{ marginBottom: 12 }}>
-                    <Select
-                      value={version}
-                      onChange={(value) => {
-                        setVersion(value)
-                        setDepotPath('')
-                        setDriverPaths([])
-                      }}
-                      options={esxiVersions.map((item) => ({ value: item, label: `ESXi ${item}` }))}
+              {/* Step 1: Base Version & Depot */}
+              <div className="recipe-section">
+                <div className="recipe-section-header">
+                  <span className="step-pill">1</span>
+                  <Typography.Text strong>基础版本与镜像源</Typography.Text>
+                </div>
+
+                <Form.Item label="ESXi 目标版本" style={{ marginBottom: 12 }}>
+                  <Segmented
+                    block
+                    value={version}
+                    onChange={(val) => {
+                      setVersion(String(val))
+                      setDepotPath('')
+                      setDriverPaths([])
+                      setPreflightId(null)
+                    }}
+                    options={esxiVersions.map((v) => ({ value: v, label: `ESXi ${v}` }))}
+                  />
+                </Form.Item>
+
+                <Form.Item label="基础镜像源文件 (ISO / Depot)" required style={{ marginBottom: 8 }}>
+                  <Select
+                    showSearch
+                    value={selectedDepot?.key}
+                    placeholder="选择已上传的基础 ESXi ISO 或 Offline Depot 包"
+                    loading={bucketsQuery.isLoading || depotQueries.some((q) => q.isLoading)}
+                    onChange={(val) => {
+                      const opt = depotOptions.find((item) => item.key === val)
+                      setBucketId(opt?.bucketId)
+                      setDepotPath(opt?.file.path ?? '')
+                      setPreflightId(null)
+                    }}
+                    optionFilterProp="label"
+                    notFoundContent={
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`暂无 ESXi ${version} 基础源`}>
+                        <Button size="small" type="primary" icon={<CloudUploadOutlined />} onClick={() => go('/storage')}>
+                          去存储库上传
+                        </Button>
+                      </Empty>
+                    }
+                    options={depotOptions.map((item) => ({
+                      value: item.key,
+                      label: `${item.bucketName} / ${fileName(item.file)}`,
+                    }))}
+                  />
+                </Form.Item>
+
+                {selectedDepot && (
+                  <div className="selected-source-strip">
+                    <Space size={6} wrap style={{ flex: 1, minWidth: 0 }}>
+                      <Tag color="blue" style={{ marginInlineEnd: 0 }}>{selectedDepot.bucketName}</Tag>
+                      <Tag color={cacheStatusColor(selectedDepot.file, selectedBucket)} style={{ marginInlineEnd: 0 }}>
+                        {cacheStatusText(selectedDepot.file, selectedBucket)}
+                      </Tag>
+                      {selectedDepot.file.size ? (
+                        <Tag style={{ marginInlineEnd: 0 }}>{compactSize(selectedDepot.file.size)}</Tag>
+                      ) : null}
+                      <Typography.Text code className="mono" ellipsis={{ tooltip: selectedDepot.file.path }} style={{ fontSize: 11 }}>
+                        {selectedDepot.file.path}
+                      </Typography.Text>
+                    </Space>
+                    <Tooltip title="预校验源文件与所选驱动在存储中的完整性">
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<SafetyCertificateOutlined />}
+                          loading={preflightMutation.isPending}
+                          onClick={() => {
+                            if (!selectedBucketId || !depotPath) return
+                            preflightMutation.mutate({
+                              bucket_id: selectedBucketId,
+                              depot_path: depotPath,
+                              driver_paths: driverPaths,
+                            })
+                          }}
+                        >
+                          预检
+                        </Button>
+                      </Tooltip>
+                  </div>
+                )}
+
+                {preflightQuery.data && (
+                  <Alert
+                    style={{ marginTop: 8 }}
+                    type={
+                      preflightQuery.data.status === 'ready'
+                        ? 'success'
+                        : preflightQuery.data.status === 'running'
+                          ? 'info'
+                          : 'warning'
+                    }
+                    showIcon
+                    message={
+                      preflightQuery.data.status === 'ready'
+                        ? `源文件预检通过 (${preflightQuery.data.files?.length ?? 1} 项就绪)`
+                        : preflightQuery.data.message || `预检状态：${preflightQuery.data.status}`
+                    }
+                  />
+                )}
+              </div>
+
+              {/* Step 2: Driver Injection */}
+              <div className="recipe-section">
+                <div className="recipe-section-header">
+                  <Space size={8}>
+                    <span className="step-pill">2</span>
+                    <Typography.Text strong>
+                      注入驱动包 ({selectedDrivers.length}/{drivers.length} 已选)
+                    </Typography.Text>
+                  </Space>
+                  <Space size={6} wrap>
+                    <Segmented<'all' | 'match' | 'attention'>
+                      size="small"
+                      value={compatibilityFilter}
+                      onChange={setCompatibilityFilter}
+                      options={[
+                        { value: 'all', label: '全部' },
+                        { value: 'match', label: '已匹配' },
+                        { value: 'attention', label: '需确认' },
+                      ]}
                     />
-                  </Form.Item>
-                  <Form.Item label="基础镜像源文件 (ISO / Depot)" required style={{ marginBottom: 12 }}>
-                    <Select
-                      showSearch
-                      value={selectedDepot?.key}
-                      placeholder="选择已有的基础 ISO 或 Depot 文件"
-                      loading={bucketsQuery.isLoading || depotQueries.some((q) => q.isLoading)}
-                      onChange={(val) => {
-                        const opt = depotOptions.find((item) => item.key === val)
-                        setBucketId(opt?.bucketId)
-                        setDepotPath(opt?.file.path ?? '')
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        const currentPaths = filteredDrivers.map((d) => d.path)
+                        if (allFilteredSelected) {
+                          setDriverPaths(driverPaths.filter((p) => !currentPaths.includes(p)))
+                        } else {
+                          setDriverPaths(Array.from(new Set([...driverPaths, ...currentPaths])))
+                        }
                       }}
-                      optionFilterProp="label"
-                      options={depotOptions.map((item) => ({
-                        value: item.key,
-                        label: `${item.bucketName} / ${fileName(item.file)}`,
-                      }))}
-                    />
-                  </Form.Item>
-                  {selectedDepot && (
-                    <div style={{ padding: '6px 12px', background: '#f8fafc', borderRadius: 6, marginBottom: 12 }}>
-                      <Space size={8} wrap>
-                        <Tag color="blue">{selectedDepot.bucketName}</Tag>
-                        <Tag color={cacheStatusColor(selectedDepot.file, selectedBucket)}>{cacheStatusText(selectedDepot.file, selectedBucket)}</Tag>
-                        <Typography.Text code className="mono" style={{ fontSize: 11 }}>{selectedDepot.file.path}</Typography.Text>
-                      </Space>
+                    >
+                      {allFilteredSelected ? '取消全选' : '全选当前'}
+                    </Button>
+                    {driverPaths.length > 0 && (
+                      <Button size="small" type="text" danger onClick={() => setDriverPaths([])}>
+                        清空
+                      </Button>
+                    )}
+                  </Space>
+                </div>
+
+                <Input
+                  allowClear
+                  size="small"
+                  prefix={<SearchOutlined />}
+                  placeholder="搜索驱动"
+                  style={{ marginBottom: 8 }}
+                  value={driverSearch}
+                  onChange={(e) => setDriverSearch(e.target.value)}
+                />
+
+                {selectedDrivers.length > 0 && (
+                  <div className="selected-driver-pills">
+                    {selectedDrivers.map((drv) => (
+                      <Tag
+                        key={drv.path}
+                        color="blue"
+                        closable
+                        onClose={() => setDriverPaths(driverPaths.filter((p) => p !== drv.path))}
+                      >
+                        {drv.driver_name || fileName(drv)}
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+
+                <Table
+                  size="small"
+                  rowKey="path"
+                  bordered
+                  pagination={false}
+                  scroll={{ y: 205 }}
+                  loading={driversQuery.isLoading}
+                  dataSource={filteredDrivers}
+                  columns={driverColumns}
+                  className="build-driver-table"
+                  locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前版本下暂无可选驱动（可不选直接构建）" /> }}
+                  rowSelection={{
+                    selectedRowKeys: driverPaths,
+                    onChange: (keys) => setDriverPaths(keys as string[]),
+                  }}
+                  onRow={(record) => ({
+                    style: { cursor: 'pointer' },
+                    onClick: () => {
+                      setDriverPaths((prev) =>
+                        prev.includes(record.path)
+                          ? prev.filter((p) => p !== record.path)
+                          : [...prev, record.path]
+                      )
+                    },
+                  })}
+                />
+              </div>
+
+              {/* Step 3: Core Install Parameters & Naming */}
+              <div className="recipe-section" style={{ borderBottom: 'none', paddingBottom: 4 }}>
+                <div className="recipe-section-header">
+                  <Space size={8}>
+                    <span className="step-pill">3</span>
+                    <SettingOutlined style={{ color: '#2563eb' }} />
+                    <Typography.Text strong>核心安装参数调整与镜像命名</Typography.Text>
+                  </Space>
+                </div>
+
+                <div className="install-mode-grid" role="radiogroup" aria-label="安装模式选择">
+                  <div
+                    role="radio"
+                    tabIndex={0}
+                    aria-checked={installMode === 'unattended'}
+                    className={`install-mode-card ${installMode === 'unattended' ? 'install-mode-card-active' : ''}`}
+                    onClick={() => setInstallMode('unattended')}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setInstallMode('unattended')}
+                  >
+                    <div className="install-mode-title">
+                      <ThunderboltOutlined style={{ color: '#2563eb' }} />
+                      <span>无人值守自动安装</span>
+                      <Tag color="blue" style={{ marginInlineEnd: 0, fontSize: 11 }}>推荐</Tag>
                     </div>
-                  )}
+                    <div className="install-mode-desc">
+                      开机自动格式化首块本地磁盘完成部署，首次进系统自动完成社区驱动注册。
+                    </div>
+                  </div>
+
+                  <div
+                    role="radio"
+                    tabIndex={0}
+                    aria-checked={installMode === 'interactive'}
+                    className={`install-mode-card ${installMode === 'interactive' ? 'install-mode-card-active' : ''}`}
+                    onClick={() => setInstallMode('interactive')}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setInstallMode('interactive')}
+                  >
+                    <div className="install-mode-title">
+                      <CheckCircleOutlined style={{ color: '#059669' }} />
+                      <span>交互式手动安装</span>
+                    </div>
+                    <div className="install-mode-desc">
+                      保留官方原厂图形安装向导，手动挑选目标硬盘，预载驱动照常生效。
+                    </div>
+                  </div>
+                </div>
+
+                <div className="param-two-col">
+                  <Form.Item
+                    name="root_password"
+                    label="Root 初始管理密码"
+                    extra="默认值为 niuniu"
+                    style={{ marginBottom: 10 }}
+                  >
+                    <Input.Password placeholder="niuniu" />
+                  </Form.Item>
+
                   <Form.Item
                     name="custom_iso_name"
-                    label="输出镜像名称"
-                    extra="支持自定义命名。留空将自动按公式命名：ESXi-{版本}-custom-{时间戳}.iso"
+                    label={
+                      <Space size={6}>
+                        <span>输出镜像名称</span>
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                          onClick={() => form.setFieldsValue({ custom_iso_name: formulaPlaceholder })}
+                        >
+                          填入建议名
+                        </Button>
+                      </Space>
+                    }
+                    extra="留空按公式自动生成时间戳文件名"
+                    style={{ marginBottom: 10 }}
                   >
                     <Input className="mono" placeholder={formulaPlaceholder} allowClear />
                   </Form.Item>
                 </div>
+              </div>
 
-                {/* 2. Drivers Selection */}
-                <div style={{ flex: '2 1 500px', minWidth: 360 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <Typography.Text strong>注入驱动包 ({selectedDrivers.length}/{drivers.length} 已选)</Typography.Text>
-                    <Space size={8}>
-                      <Input
-                        size="small"
-                        allowClear
-                        prefix={<SearchOutlined />}
-                        placeholder="搜索驱动"
-                        style={{ width: 160 }}
-                        value={driverSearch}
-                        onChange={(e) => setDriverSearch(e.target.value)}
-                      />
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          const currentPaths = filteredDrivers.map((d) => d.path)
-                          const allSelected = currentPaths.every((p) => driverPaths.includes(p))
-                          if (allSelected) {
-                            setDriverPaths(driverPaths.filter((p) => !currentPaths.includes(p)))
-                          } else {
-                            setDriverPaths(Array.from(new Set([...driverPaths, ...currentPaths])))
-                          }
-                        }}
-                      >
-                        {filteredDrivers.every((d) => driverPaths.includes(d.path)) && filteredDrivers.length > 0 ? '取消全选' : '全选当前'}
-                      </Button>
-                    </Space>
-                  </div>
-                  <Table
-                    size="small"
-                    rowKey="path"
-                    bordered
-                    pagination={false}
-                    scroll={{ y: 200 }}
-                    loading={driversQuery.isLoading}
-                    dataSource={filteredDrivers}
-                    columns={driverColumns}
-                    rowSelection={{
-                      selectedRowKeys: driverPaths,
-                      onChange: (keys) => setDriverPaths(keys as string[]),
-                    }}
-                  />
+              {/* Sticky Submit Footer */}
+              <div className="recipe-launch-bar">
+                <div className="recipe-launch-summary">
+                  <Typography.Text strong>ESXi {version}</Typography.Text>
+                  <span className="summary-dot">·</span>
+                  <Typography.Text type="secondary">
+                    已选 <strong className="tabular-nums">{selectedDrivers.length}</strong> 个驱动
+                  </Typography.Text>
+                  <span className="summary-dot">·</span>
+                  <Typography.Text type="secondary">
+                    {installMode === 'unattended' ? '无人值守' : '交互式安装'}
+                  </Typography.Text>
                 </div>
-              </Flex>
-
-              {/* Advanced Parameters Collapse */}
-              <Collapse defaultActiveKey={["advanced"]}
-                ghost
-                style={{ marginTop: 12 }}
-                items={[
-                  {
-                    key: 'advanced',
-                    label: (
-                      <Space size={6}>
-                        <SettingOutlined />
-                        <Typography.Text strong>核心安装参数调整 (Root 密码 / 安装模式)</Typography.Text>
-                      </Space>
-                    ),
-                    children: (
-                      <Flex gap={24} wrap="wrap" style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: 6 }}>
-                        <div style={{ minWidth: 260, flex: 1 }}>
-                          <Form.Item
-                            name="root_password"
-                            label="Root 初始管理密码"
-                            extra="系统安装后默认 root 密码，默认值为 niuniu"
-                            style={{ marginBottom: 0 }}
-                          >
-                            <Input.Password placeholder="niuniu" />
-                          </Form.Item>
-                        </div>
-                        <div style={{ minWidth: 320, flex: 2 }}>
-                          <Form.Item
-                            name="install_mode"
-                            label="安装模式选择"
-                            extra="控制 ESXi 开机安装时的自动化行为"
-                            style={{ marginBottom: 0 }}
-                          >
-                            <Radio.Group>
-                              <Space direction="vertical">
-                                <Radio value="unattended">
-                                  <Typography.Text strong>⚡ 无人值守自动安装 (推荐)</Typography.Text>
-                                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                                    开机全自动格式化第一块本地磁盘，装完自动重启并在首次开机自动注册驱动
-                                  </Typography.Text>
-                                </Radio>
-                                <Radio value="interactive">
-                                  <Typography.Text strong>🖥️ 交互式手动安装</Typography.Text>
-                                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                                    保留官方原厂图形安装向导，可手动选择目标磁盘和确认，驱动仍预载以通过网卡检测
-                                  </Typography.Text>
-                                </Radio>
-                              </Space>
-                            </Radio.Group>
-                          </Form.Item>
-                        </div>
-                      </Flex>
-                    ),
-                  },
-                ]}
-              />
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<PlayCircleOutlined />}
+                  onClick={submitBuild}
+                  loading={createMutation.isPending}
+                >
+                  开始极速构建
+                </Button>
+              </div>
             </Form>
-          </Card>
+          </ProCard>
+        </div>
 
-          {/* Section 2: Active Build Task & Live Log Console (Merged) */}
-          <Card
+        {/* RIGHT COLUMN: Live Task Console & History Dock */}
+        <div className="workbench-console-col">
+          {/* Card 1: Active Task Console */}
+          <ProCard
+            bordered
+            headerBordered
             title={
-              <Space wrap size={10}>
-                <ClockCircleOutlined style={{ color: '#1677ff', fontSize: 16 }} />
-                <Typography.Text strong style={{ fontSize: 15 }}>构建任务控制台与实时日志</Typography.Text>
-                {activeTaskId && <Typography.Text code className="mono">{activeTaskId}</Typography.Text>}
-                {activeTask?.status && <BuildStatusTag status={activeTask.status} />}
+              <Space wrap size={8}>
+                <ClockCircleOutlined style={{ color: '#2563eb' }} />
+                <Typography.Text strong>构建任务控制台与实时日志</Typography.Text>
+                {activeTask && <BuildStatusTag status={activeTask.status} />}
               </Space>
             }
             extra={
-              <Space wrap size={8}>
-                {activeTask?.status === 'completed' && activeTask?.output_iso && (
+              <Space size={6} wrap>
+                {activeTask?.status === 'completed' && activeTask.output_iso && (
                   <Button
                     type="primary"
+                    size="small"
                     icon={<DownloadOutlined />}
                     onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
                   >
@@ -519,7 +753,7 @@ export default function BuildPage() {
                   icon={<ReloadOutlined />}
                   onClick={() => {
                     activeTaskQuery.refetch()
-                    queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+                    recentBuildsQuery.refetch()
                   }}
                 >
                   刷新
@@ -527,220 +761,294 @@ export default function BuildPage() {
               </Space>
             }
           >
-            {activeTaskId ? (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Descriptions
-                  size="small"
-                  bordered
-                  column={{ xxl: 4, xl: 4, lg: 2, md: 2, sm: 1, xs: 1 }}
-                  items={[
-                    { key: 'name', label: '镜像名称', children: activeTask?.custom_iso_name || '默认公式命名' },
-                    { key: 'version', label: 'ESXi 版本', children: activeTask?.esxi_version || '-' },
-                    { key: 'duration', label: '构建总耗时', children: activeTask?.build_duration ? `${activeTask.build_duration} 秒` : '-' },
-                    { key: 'progress', label: '构建进度', children: `${displayProgress}%` },
-                  ]}
-                />
+            {activeTask ? (
+              <div className="console-stack">
+                <div className="task-meta-grid">
+                  <div className="task-meta-cell">
+                    <span className="task-meta-label">任务 ID</span>
+                    <Typography.Text className="mono" copyable ellipsis style={{ fontSize: 12 }}>
+                      {activeTask.task_id}
+                    </Typography.Text>
+                  </div>
+                  <div className="task-meta-cell">
+                    <span className="task-meta-label">版本 / 驱动</span>
+                    <span className="tabular-nums" style={{ fontWeight: 600 }}>
+                      ESXi {activeTask.esxi_version} · {parseDrivers(activeTask.drivers).length} 驱动
+                    </span>
+                  </div>
+                  <div className="task-meta-cell">
+                    <span className="task-meta-label">构建耗时</span>
+                    <span className="mono tabular-nums" style={{ fontWeight: 600 }}>
+                      {activeTask.build_duration ? `${activeTask.build_duration} 秒` : '进行中'}
+                    </span>
+                  </div>
+                  <div className="task-meta-cell">
+                    <span className="task-meta-label">实时进度</span>
+                    <span className="mono tabular-nums" style={{ fontWeight: 700, color: '#2563eb' }}>
+                      {displayProgress}%
+                    </span>
+                  </div>
+                </div>
 
                 <Progress
                   percent={displayProgress}
-                  status={activeTask?.status === 'failed' ? 'exception' : activeTask?.status === 'completed' ? 'success' : 'active'}
-                  strokeColor={{ '0%': '#108ee9', '100%': '#87d068' }}
+                  status={
+                    activeTask.status === 'failed'
+                      ? 'exception'
+                      : activeTask.status === 'completed'
+                        ? 'success'
+                        : 'active'
+                  }
+                  strokeColor={{ '0%': '#2563eb', '100%': '#10b981' }}
                 />
 
-                <PhaseTimingBreakdown
-                  logs={displayLogs}
-                  buildDuration={activeTask?.build_duration}
-                  isCompleted={activeTask?.status === 'completed'}
-                />
-
-                {activeTask?.status === 'completed' && activeTask?.output_iso && (
-                  <Alert
-                    type="success"
-                    showIcon
-                    message="🎉 定制 ESXi ISO 已构建完成！"
-                    description={
-                      <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
-                        <div>
-                          <Typography.Text strong>产物文件：</Typography.Text>
-                          <Typography.Text code className="mono">{activeTask.output_iso}</Typography.Text>
-                          {activeTask.output_iso_size && (
-                            <Tag color="blue" style={{ marginLeft: 8 }}>
-                              {(activeTask.output_iso_size / 1024 / 1024).toFixed(1)} MB
-                            </Tag>
-                          )}
-                        </div>
-                        {activeTask.output_iso_sha256 && (
-                          <div>
-                            <Typography.Text strong>SHA-256：</Typography.Text>
-                            <Typography.Text code copyable className="mono">
-                              {activeTask.output_iso_sha256}
-                            </Typography.Text>
-                          </div>
-                        )}
-                        <div style={{ marginTop: 8 }}>
-                          <Button
-                            type="primary"
-                            size="large"
-                            icon={<DownloadOutlined />}
-                            onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
-                          >
-                            立即下载定制 ISO
-                          </Button>
-                        </div>
+                {activeTask.status === 'completed' && activeTask.output_iso && (
+                  <div className="artifact-ready-box">
+                    <div className="artifact-ready-main">
+                      <Space size={8} wrap>
+                        <Tag color="success" style={{ marginInlineEnd: 0 }}>产物已就绪</Tag>
+                        <Typography.Text strong className="mono" ellipsis={{ tooltip: activeTask.output_iso }}>
+                          {activeTask.output_iso}
+                        </Typography.Text>
+                        {activeTask.output_iso_size ? (
+                          <Tag color="blue" className="tabular-nums" style={{ marginInlineEnd: 0 }}>
+                            {(activeTask.output_iso_size / 1024 / 1024).toFixed(1)} MB
+                          </Tag>
+                        ) : null}
                       </Space>
-                    }
-                  />
+                      {activeTask.output_iso_sha256 && (
+                        <Typography.Text type="secondary" className="mono" copyable style={{ fontSize: 11 }}>
+                          SHA-256: {activeTask.output_iso_sha256}
+                        </Typography.Text>
+                      )}
+                    </div>
+                    <Space size={8} wrap>
+                      <Button
+                        type="primary"
+                        icon={<DownloadOutlined />}
+                        onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
+                      >
+                        立即下载 ISO
+                      </Button>
+                      {remoteArtifactUrl && (
+                        <Button href={remoteArtifactUrl} target="_blank" rel="noreferrer">
+                          公网直链
+                        </Button>
+                      )}
+                    </Space>
+                  </div>
                 )}
 
-                {activeTask?.status === 'failed' && (
+                {activeTask.status === 'failed' && (
                   <Alert
                     type="error"
                     showIcon
-                    message="构建失败"
-                    description={activeTask.error_message || '请检查下方日志输出获取详细失败原因'}
+                    message="构建执行失败"
+                    description={activeTask.error_message || '请查看下方终端日志排查具体错误原因'}
                   />
                 )}
 
-                <div>
-                  <Typography.Text strong style={{ marginBottom: 8, display: 'block' }}>
-                    实时构建日志：
-                  </Typography.Text>
+                <PhaseTimingBreakdown
+                  logs={displayLogs}
+                  buildDuration={activeTask.build_duration}
+                  isCompleted={activeTask.status === 'completed'}
+                />
+
+                <div className="terminal-box">
+                  <div className="terminal-toolbar">
+                    <Space size={8}>
+                      <span className="terminal-dots" aria-hidden="true">
+                        <i /><i /><i />
+                      </span>
+                      <span className="terminal-title mono">
+                        build-output.log ({filteredLogs.length} 行)
+                      </span>
+                    </Space>
+                    <Space size={10} wrap>
+                      <Segmented<LogLevelFilter>
+                        size="small"
+                        value={logFilter}
+                        onChange={setLogFilter}
+                        options={[
+                          { value: 'all', label: '全部' },
+                          { value: 'issues', label: '仅警告/错误' },
+                        ]}
+                      />
+                      <Space size={4}>
+                        <span style={{ color: '#94a3b8', fontSize: 11 }}>跟随底部</span>
+                        <Switch size="small" checked={autoScroll} onChange={setAutoScroll} />
+                      </Space>
+                      <Tooltip title="复制全部日志">
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<CopyOutlined style={{ color: '#cbd5e1' }} />}
+                          aria-label="复制全部日志"
+                          onClick={() => {
+                            navigator.clipboard.writeText(displayLogs.join('\n'))
+                            messageApi.success('已复制构建日志')
+                          }}
+                        />
+                      </Tooltip>
+                    </Space>
+                  </div>
+
                   <div
                     ref={logTerminalRef}
-                    style={{
-                      backgroundColor: '#0f172a',
-                      color: '#e2e8f0',
-                      fontFamily: 'Consolas, Monaco, monospace',
-                      fontSize: 12,
-                      lineHeight: '1.6',
-                      padding: '12px 16px',
-                      borderRadius: 6,
-                      maxHeight: 260,
-                      overflowY: 'auto',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                    }}
+                    className="log-console"
+                    role="log"
+                    aria-live="polite"
+                    aria-label="实时构建输出日志"
                   >
-                    {displayLogs.length === 0 ? (
-                      <Typography.Text type="secondary" style={{ color: '#64748b' }}>
-                        等待日志输出...
-                      </Typography.Text>
+                    {filteredLogs.length === 0 ? (
+                      <div style={{ color: '#64748b', padding: '18px 0', textAlign: 'center' }}>
+                        {displayLogs.length > 0 ? '当前没有警告或错误日志' : '等待日志流输出...'}
+                      </div>
                     ) : (
-                      displayLogs.map((log, index) => <div key={index}>{log}</div>)
+                      filteredLogs.map((line, index) => (
+                        <div key={`${index}-${line.slice(0, 24)}`} className={`log-line log-line-${classifyLogLine(line)}`}>
+                          {line}
+                        </div>
+                      ))
                     )}
                   </div>
                 </div>
-              </Space>
+              </div>
             ) : (
-              <Empty description="暂无活动任务，请在上方配置并点击「开始极速构建」，或在下方选择历史任务查看" />
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="左侧选好配置后点击「开始极速构建」，或在下方点击任意历史任务查看详情"
+              />
             )}
-          </Card>
+          </ProCard>
 
-          {/* Section 3: Recent Builds History Table */}
-          <Card
+          {/* Card 2: Recent Builds Interactive Switcher */}
+          <ProCard
+            bordered
+            headerBordered
+            className="contain-panel"
             title={
               <Space size={8}>
                 <ClockCircleOutlined />
                 <Typography.Text strong>近期构建任务</Typography.Text>
+                <Tag style={{ marginInlineEnd: 0 }}>{recentBuilds.length}</Tag>
               </Space>
             }
             extra={
-              <Button
-                size="small"
-                icon={<ReloadOutlined />}
-                onClick={() => queryClient.invalidateQueries({ queryKey: ['builds-recent'] })}
-              >
-                刷新列表
-              </Button>
+              <Space size={6} wrap>
+                <Segmented<HistoryStatusFilter>
+                  size="small"
+                  value={historyFilter}
+                  onChange={setHistoryFilter}
+                  options={[
+                    { value: 'all', label: '全部' },
+                    { value: 'running', label: '运行中' },
+                    { value: 'completed', label: '已完成' },
+                    { value: 'failed', label: '失败' },
+                  ]}
+                />
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={() => queryClient.invalidateQueries({ queryKey: ['builds-recent'] })}
+                >
+                  刷新列表
+                </Button>
+              </Space>
             }
           >
             <Table
               size="small"
               rowKey="task_id"
               loading={recentBuildsQuery.isLoading}
-              dataSource={recentBuilds}
-              pagination={{ pageSize: 5 }}
+              dataSource={filteredHistory}
+              pagination={{ pageSize: 5, showSizeChanger: false }}
+              scroll={{ x: 560 }}
+              rowClassName={(r) => (r.task_id === activeTaskId ? 'ant-table-row-selected' : '')}
+              onRow={(r) => ({
+                style: { cursor: 'pointer' },
+                onClick: () => setActiveTaskId(r.task_id),
+              })}
               columns={[
                 {
                   title: '镜像名称 / ID',
                   key: 'name',
-                  render: (_, r: any) => (
-                    <Space direction="vertical" size={0}>
-                      <Typography.Text strong ellipsis style={{ maxWidth: 280 }}>
-                        {r.custom_iso_name || `ESXi-${r.esxi_version || '8.0'}`}
+                  render: (_, r: BuildTask) => (
+                    <div className="table-cell-stack">
+                      <Typography.Text strong ellipsis style={{ maxWidth: 210 }}>
+                        {r.custom_iso_name || `ESXi-${r.esxi_version || '8.0'}-custom.iso`}
                       </Typography.Text>
                       <Typography.Text type="secondary" className="mono" style={{ fontSize: 11 }}>
                         {r.task_id}
                       </Typography.Text>
-                    </Space>
+                    </div>
                   ),
-                },
-                {
-                  title: '版本',
-                  dataIndex: 'esxi_version',
-                  width: 90,
-                  render: (v) => <Tag color="geekblue">{v || '8.0'}</Tag>,
                 },
                 {
                   title: '状态',
                   key: 'status',
-                  width: 110,
-                  render: (_, r: any) => <BuildStatusTag status={r.status} />,
+                  width: 100,
+                  render: (_, r: BuildTask) => <BuildStatusTag status={r.status} />,
                 },
                 {
                   title: '耗时',
                   dataIndex: 'build_duration',
-                  width: 90,
-                  render: (d) => (d ? `${d} 秒` : '-'),
+                  width: 72,
+                  render: (d: number | undefined) => (
+                    <span className="mono tabular-nums">{d ? `${d}s` : '-'}</span>
+                  ),
                 },
                 {
                   title: '创建时间',
                   dataIndex: 'created_at',
-                  width: 170,
-                  render: (t) => formatDate(t),
+                  width: 152,
+                  render: (t: string) => (
+                    <span className="tabular-nums" style={{ fontSize: 12, color: '#64748b' }}>
+                      {formatDate(t)}
+                    </span>
+                  ),
                 },
                 {
                   title: '操作',
                   key: 'actions',
-                  width: 180,
-                  render: (_, r: any) => (
-                    <Space wrap size={4}>
-                      <Button
-                        size="small"
-                        type={activeTaskId === r.task_id ? 'primary' : 'default'}
-                        icon={<EyeOutlined />}
-                        onClick={() => {
-                          setActiveTaskId(r.task_id)
-                          window.scrollTo({ top: 350, behavior: 'smooth' })
-                        }}
-                      >
-                        {activeTaskId === r.task_id ? '当前查看' : '查看日志'}
-                      </Button>
-                      {r.status === 'completed' && r.output_iso && (
+                  width: 136,
+                  render: (_, r: BuildTask) => (
+                    <Space size={4} onClick={(e) => e.stopPropagation()}>
+                      <Tooltip title="在上方控制台查看">
                         <Button
                           size="small"
-                          icon={<DownloadOutlined />}
-                          onClick={() => window.open(getBuildArtifactUrl(r.task_id), '_blank', 'noopener,noreferrer')}
-                        >
-                          下载
-                        </Button>
+                          type={activeTaskId === r.task_id ? 'primary' : 'default'}
+                          icon={<EyeOutlined />}
+                          aria-label={`查看任务 ${r.task_id}`}
+                          onClick={() => setActiveTaskId(r.task_id)}
+                        />
+                      </Tooltip>
+                      {r.status === 'completed' && r.output_iso && (
+                        <Tooltip title="下载定制 ISO">
+                          <Button
+                            size="small"
+                            icon={<DownloadOutlined />}
+                            aria-label={`下载任务 ${r.task_id} ISO`}
+                            onClick={() => window.open(getBuildArtifactUrl(r.task_id), '_blank', 'noopener,noreferrer')}
+                          />
+                        </Tooltip>
                       )}
                       <Popconfirm
-                        title="确认删除任务记录？"
+                        title="确认删除此构建记录与产物？"
                         onConfirm={() => deleteBuildMutation.mutate(r.task_id)}
                         okText="删除"
                         cancelText="取消"
                       >
-                        <Button size="small" danger icon={<DeleteOutlined />} />
+                        <Button size="small" danger icon={<DeleteOutlined />} aria-label={`删除任务 ${r.task_id}`} />
                       </Popconfirm>
                     </Space>
                   ),
                 },
               ]}
             />
-          </Card>
-        </Space>
-      </Watermark>
+          </ProCard>
+        </div>
+      </div>
     </PageContainer>
   )
 }
