@@ -3,7 +3,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   SyncOutlined,
-} from '@ant-design/icons'
+} from '../components/icons'
 import { Tag } from 'antd'
 import type { ReactNode } from 'react'
 import type { BuildTask, FileMetadata, StorageBucket } from '../types'
@@ -121,7 +121,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
 
     return {
       raw: line,
-      chinese: `⏱️【阶段耗时】${label}（耗时 ${sec} 秒 / ${ms} 毫秒）`,
+      chinese: `【阶段耗时】${label}（耗时 ${sec} 秒 / ${ms} 毫秒）`,
       kind: 'timing',
       badge: '耗时指标',
     }
@@ -140,7 +140,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
     if (desc.includes('complete') || desc.includes('done')) desc = '流水线构建已完成'
     return {
       raw: line,
-      chinese: `📊【构建进度】流水线当前已推进至 ${pct}%${desc ? ` — ${desc}` : ''}`,
+      chinese: `【构建进度】流水线当前已推进至 ${pct}%${desc ? ` — ${desc}` : ''}`,
       kind: 'progress',
       badge: '进度更新',
     }
@@ -150,7 +150,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('starting native linux iso rebuild') || lower.includes('starting linux native')) {
     return {
       raw: line,
-      chinese: '⚡【引擎启动】启动 Linux 原生极速重封装引擎（预计 5~10 秒完成）',
+      chinese: '【引擎启动】启动 Linux 原生极速重封装引擎（预计 5~10 秒完成）',
       kind: 'step',
       badge: '引擎启动',
     }
@@ -158,7 +158,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('extracting base iso') || lower.includes('extracting iso')) {
     return {
       raw: line,
-      chinese: '📦【镜像解包】正在解开官方原版 ESXi 安装镜像目录树与引导卷...',
+      chinese: '【镜像解包】正在解开官方原版 ESXi 安装镜像目录树与引导卷...',
       kind: 'step',
       badge: '镜像解包',
     }
@@ -166,7 +166,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('injecting community driver') || lower.includes('injecting driver')) {
     return {
       raw: line,
-      chinese: '🧩【驱动注入】正在注入社区驱动包并配置自动加载脚本...',
+      chinese: '【驱动注入】正在注入社区驱动包并配置自动加载脚本...',
       kind: 'step',
       badge: '驱动注入',
     }
@@ -174,7 +174,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('rebuilding bootable iso') || lower.includes('xorriso')) {
     return {
       raw: line,
-      chinese: '💿【系统封装】调用 xorriso 重新封装生成兼容 UEFI / BIOS 的引导镜像...',
+      chinese: '【系统封装】调用 xorriso 重新封装生成兼容 UEFI / BIOS 的引导镜像...',
       kind: 'step',
       badge: '镜像重构',
     }
@@ -183,7 +183,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
     const dest = trimmed.replace(/.*(?:uploaded to|saved to|artifact:)s*/i, '')
     return {
       raw: line,
-      chinese: `🎉【产物入库】定制 ESXi ISO 已成功持久化至存储：${dest || 'output 目录'}`,
+      chinese: `【产物入库】定制 ESXi ISO 已成功持久化至存储：${dest || 'output 目录'}`,
       kind: 'success',
       badge: '产物就绪',
     }
@@ -191,7 +191,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('iso generated successfully') || lower.includes('build completed successfully')) {
     return {
       raw: line,
-      chinese: '✅【流水线成功】所有阶段均已顺利通过，定制 ISO 镜像已生成，可直接下载！',
+      chinese: '【流水线成功】所有阶段均已顺利通过，定制 ISO 镜像已生成，可直接下载！',
       kind: 'success',
       badge: '构建成功',
     }
@@ -201,7 +201,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('error') || lower.includes('failed') || lower.includes('fatal')) {
     return {
       raw: line,
-      chinese: `❌【异常报错】${trimmed}`,
+      chinese: `【异常报错】${trimmed}`,
       kind: 'error',
       badge: '异常错误',
     }
@@ -209,7 +209,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog {
   if (lower.includes('warn')) {
     return {
       raw: line,
-      chinese: `⚠️【运行警告】${trimmed}`,
+      chinese: `【运行警告】${trimmed}`,
       kind: 'warn',
       badge: '状态警告',
     }

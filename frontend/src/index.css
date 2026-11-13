@@ -219,6 +219,7 @@ body {
    ====================================================================== */
 .pipeline-page-flow {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-inline-size: 0;
 }
@@ -269,7 +270,7 @@ body {
 /* 4-Stage Horizontal Grid */
 .pipeline-stages-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   align-items: stretch;
 }
@@ -473,6 +474,7 @@ body {
 /* Output Section & Terminal */
 .pipeline-output-section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-inline-size: 0;
 }
@@ -618,6 +620,7 @@ body {
    ====================================================================== */
 .storage-management-layout {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-inline-size: 0;
 }
@@ -633,11 +636,12 @@ body {
 
 .drive-cards-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: 12px;
 }
 
 .drive-card {
+  min-inline-size: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -725,6 +729,7 @@ body {
 }
 
 .drive-card-actions {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -852,10 +857,20 @@ body {
   100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
 }
 
-@media (max-width: 1200px) {
+@media (min-width: 1700px) {
   .pipeline-stages-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+}
+
+@media (max-width: 820px) {
+  .pipeline-stages-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ant-page-header-heading-extra .ant-space {
+  flex-wrap: wrap;
 }
 
 @media (max-width: 768px) {
@@ -872,4 +887,23 @@ body {
   .drive-cards-strip {
     grid-template-columns: 1fr;
   }
+}
+
+/* 原生 SVG 图标 */
+.icon-svg {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
+
+.icon-spin {
+  animation: icon-rotate 1s linear infinite;
+}
+
+@keyframes icon-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-spin { animation-duration: 3s; }
 }

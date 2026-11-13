@@ -19,7 +19,7 @@ import {
   StarFilled,
   StarOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons'
+} from '../components/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -383,8 +383,8 @@ export default function StorageFilesPage() {
       }
     },
     onSuccess: (res) => {
-      if (res.connected) messageApi.success('节点连通性正常 🟢')
-      else messageApi.error('连接失败，请检查 S3 服务或网络 🔴')
+      if (res.connected) messageApi.success('节点连通性正常 ')
+      else messageApi.error('连接失败，请检查 S3 服务或网络 ')
     },
     onError: (err: any) => {
       const msg = err?.response?.data?.error || String(err)
@@ -585,7 +585,7 @@ export default function StorageFilesPage() {
           挂载本地目录
         </Button>,
         <Button key="mount-s3" type="primary" icon={<CloudServerOutlined />} onClick={openMountS3}>
-          ➕ 挂载 S3 对象存储
+          挂载 S3 对象存储
         </Button>,
         <Button key="to-pipeline" icon={<RocketOutlined />} onClick={() => go('/build')}>
           前往构建流水线
@@ -757,9 +757,9 @@ export default function StorageFilesPage() {
                 value={categoryTab}
                 onChange={setCategoryTab}
                 options={[
-                  { value: 'depot', label: `📦 基础镜像源 (${depots.length})` },
-                  { value: 'driver', label: `🧩 社区驱动包 (${drivers.length})` },
-                  { value: 'iso', label: `💿 构建产出 ISO (${isos.length})` },
+                  { value: 'depot', label: `基础镜像源 (${depots.length})` },
+                  { value: 'driver', label: `社区驱动包 (${drivers.length})` },
+                  { value: 'iso', label: `构建产出 ISO (${isos.length})` },
                 ]}
               />
 
@@ -887,8 +887,8 @@ export default function StorageFilesPage() {
                 setTestResult(null)
               }}
               options={[
-                { value: 's3', label: '☁️ S3 / MinIO 对象存储' },
-                { value: 'local', label: '💻 容器本地目录挂载' },
+                { value: 's3', label: 'S3 / MinIO 对象存储' },
+                { value: 'local', label: '容器本地目录挂载' },
               ]}
             />
           </Form.Item>
@@ -991,7 +991,7 @@ export default function StorageFilesPage() {
                   loading={testingConfigLoading}
                   onClick={handleTestMountConfig}
                 >
-                  ⚡ 测试 S3 连通性 (挂载前检验)
+                  测试 S3 连通性 (挂载前检验)
                 </Button>
                 {testResult && (
                   <Alert

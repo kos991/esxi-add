@@ -1,4 +1,4 @@
-import { ClockCircleOutlined } from '@ant-design/icons'
+import { ClockCircleOutlined } from './icons'
 import { Progress, Space, Tag, Tooltip, Typography } from 'antd'
 import { useMemo } from 'react'
 

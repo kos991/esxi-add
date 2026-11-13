@@ -6,11 +6,11 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons'
+} from '../components/icons'
 import { Button, ConfigProvider, Layout, Menu, Space, Tag, Tooltip, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const { Header, Sider, Content, Footer } = Layout
 const SIDER_WIDTH = 216
@@ -66,7 +66,20 @@ function AnimatedLogo({ onClick }: { onClick: () => void }) {
 }
 
 export function AppShell({ pathname, navigate, children }: AppShellProps) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900)
+
+  useEffect(() => {
+    let narrow = window.innerWidth < 900
+    const onResize = () => {
+      const nowNarrow = window.innerWidth < 900
+      if (nowNarrow !== narrow) {
+        narrow = nowNarrow
+        setCollapsed(nowNarrow)
+      }
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   const selectedPath = resolveSelectedMenuKey(pathname)
   const siderWidth = collapsed ? SIDER_COLLAPSED_WIDTH : SIDER_WIDTH
 

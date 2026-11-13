@@ -122,7 +122,7 @@ describe('BuildPage 2-stage pipeline layout', () => {
     expect(screen.getByText(/社区驱动注入/)).toBeInTheDocument()
     expect(screen.getByText('安装参数与命名')).toBeInTheDocument()
     expect(screen.getByText('执行重封装')).toBeInTheDocument()
-    expect(screen.getByText('🇨🇳 中文解析项')).toBeInTheDocument()
+    expect(screen.getByText('中文解析项')).toBeInTheDocument()
   })
 
   it('filters drivers and handles selection toggle', async () => {
@@ -139,10 +139,10 @@ describe('BuildPage 2-stage pipeline layout', () => {
     renderBuildPage()
 
     await waitFor(() => {
-      expect(screen.getByText('🚀 运行构建流水线')).toBeInTheDocument()
+      expect(screen.getByText('运行构建流水线')).toBeInTheDocument()
     })
 
-    const runBtn = screen.getByText('🚀 运行构建流水线')
+    const runBtn = screen.getByText('运行构建流水线')
     fireEvent.click(runBtn)
 
     await waitFor(() => {

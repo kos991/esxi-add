@@ -14,13 +14,14 @@ import {
   SettingOutlined,
   ThunderboltOutlined,
   TranslationOutlined,
-} from '@ant-design/icons'
+} from '../components/icons'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Badge,
   Button,
   Card,
+  Drawer,
   Empty,
   Form,
   Input,
@@ -284,6 +285,7 @@ export default function BuildPage() {
       setActiveTaskId(task.task_id)
       setLogFilter('all')
       messageApi.success('流水线已启动！下方实时输出中文构建日志')
+      window.setTimeout(() => document.getElementById('pipeline-output')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
       queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
     },
     onError: (err) => messageApi.error(String(err)),
@@ -437,7 +439,7 @@ export default function BuildPage() {
                 onClick={runPipeline}
                 className="pipeline-run-main-btn"
               >
-                {isRunning ? '流水线执行中...' : '🚀 运行构建流水线'}
+                {isRunning ? '流水线执行中...' : '运行构建流水线'}
               </Button>
             </Space>
           </div>
@@ -474,7 +476,7 @@ export default function BuildPage() {
                         setDriverPaths([])
                         setPreflightId(null)
                       }}
-                      options={esxiVersions.map((v) => ({ value: v, label: `ESXi ${v}` }))}
+                      options={esxiVersions.map((v) => ({ value: v, label: v }))}
                     />
                   </Form.Item>
 
@@ -738,14 +740,14 @@ export default function BuildPage() {
         {/* ========================================================
             PART 2: LOG TERMINAL & ARTIFACT (下面页面是产出日志)
             ======================================================== */}
-        <section className="pipeline-output-section" aria-label="产出日志与任务控制台">
+        <section id="pipeline-output" className="pipeline-output-section" aria-label="产出日志与任务控制台">
           {/* Active Artifact Ready Banner */}
           {activeTask?.status === 'completed' && activeTask.output_iso && (
             <div className="artifact-banner-card">
               <div className="artifact-banner-main">
                 <Space size={8} wrap align="center">
                   <Tag color="success" className="artifact-tag">
-                    🎉 定制 ISO 构建完成
+                    定制 ISO 构建完成
                   </Tag>
                   <Typography.Text strong className="mono" style={{ fontSize: 14 }}>
                     {activeTask.output_iso}
@@ -832,8 +834,8 @@ export default function BuildPage() {
                   value={logViewMode}
                   onChange={setLogViewMode}
                   options={[
-                    { value: 'chinese', label: '🇨🇳 中文解析项' },
-                    { value: 'raw', label: '💻 原始日志' },
+                    { value: 'chinese', label: '中文解析项' },
+                    { value: 'raw', label: '原始日志' },
                   ]}
                 />
 
@@ -923,8 +925,14 @@ export default function BuildPage() {
       </div>
 
       {/* History Pipelines Drawer */}
+      <Drawer
+        title="历史流水线"
+        open={historyDrawerOpen}
+        onClose={() => setHistoryDrawerOpen(false)}
+        width={780}
+        destroyOnClose
+      >
       <Card
-        style={{ marginTop: 16 }}
         size="small"
         title={
           <Space size={8}>
@@ -953,7 +961,10 @@ export default function BuildPage() {
           rowClassName={(r) => (r.task_id === activeTaskId ? 'ant-table-row-selected' : '')}
           onRow={(r) => ({
             style: { cursor: 'pointer' },
-            onClick: () => setActiveTaskId(r.task_id),
+            onClick: () => {
+              setActiveTaskId(r.task_id)
+              setHistoryDrawerOpen(false)
+            },
           })}
           columns={[
             {
@@ -1031,6 +1042,7 @@ export default function BuildPage() {
           ]}
         />
       </Card>
+      </Drawer>
     </PageContainer>
   )
 }
