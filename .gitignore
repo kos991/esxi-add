@@ -13,3 +13,6 @@ frontend/src/.umi-production/
 
 .alma-snapshots/
 source-cleanup/
+
+release/
+*.tar.gz
