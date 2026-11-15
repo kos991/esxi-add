@@ -62,7 +62,7 @@ import {
   renameFile,
   uploadFile,
 } from '../api/files'
-import { PageContainer } from '../components/pro-compat'
+import { PageHeader } from '../components/PageHeader'
 import type { FileMetadata, StorageBucket } from '../types'
 import { buildPublicObjectUrl, formatDate } from '../utils'
 import {
@@ -638,21 +638,24 @@ export default function StorageFilesPage() {
   const uploadReady = Boolean(uploadTarget) && fileList.length > 0 && !uploadMutation.isPending
 
   return (
-    <PageContainer
-      title="存储与挂载"
-      subTitle="本地目录与 S3 / MinIO 多盘挂载，按基础源、驱动、产出分类管理"
-      extra={[
-        <Button key="local" icon={<HddOutlined />} onClick={openMountLocal}>
-          挂载本地目录
-        </Button>,
-        <Button key="s3" type="primary" icon={<CloudServerOutlined />} onClick={openMountS3}>
-          挂载 S3 对象存储
-        </Button>,
-        <Button key="build" icon={<RocketOutlined />} onClick={() => go('/build')}>
-          构建流水线
-        </Button>,
-      ]}
-    >
+    <div className="page-shell">
+      <PageHeader
+        title="存储与挂载"
+        subTitle="本地目录与 S3 / MinIO 多盘挂载，按基础源、驱动、产出分类管理"
+        extra={
+          <>
+            <Button icon={<HddOutlined />} onClick={openMountLocal}>
+              挂载本地目录
+            </Button>
+            <Button type="primary" icon={<CloudServerOutlined />} onClick={openMountS3}>
+              挂载 S3 对象存储
+            </Button>
+            <Button icon={<RocketOutlined />} onClick={() => go('/build')}>
+              构建流水线
+            </Button>
+          </>
+        }
+      />
       {contextHolder}
 
       <div className="storage-management-layout">
@@ -1172,6 +1175,6 @@ export default function StorageFilesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </PageContainer>
+    </div>
   )
 }

@@ -33,6 +33,7 @@ vi.mock('../api/files', () => ({
       type: 'depot',
       esxi_version: '8.0',
       cached: true,
+      size: 682757230,
     },
   ]),
   listDrivers: vi.fn(async () => [
@@ -111,40 +112,46 @@ function renderBuildPage() {
   )
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
-})
+const nextBtn = () => screen.getByRole('button', { name: '下一步' })
+const startBtn = () => screen.getByRole('button', { name: '开始构建' })
 
-describe('构建流水线页面', () => {
-  it('渲染四个配置步骤，且不会把历史任务冒充为本次结果', async () => {
+beforeEach(() => vi.clearAllMocks())
+
+describe('构建流水线（分步引导）', () => {
+  it('第 1 步显示安装源，且不把历史任务当成本次结果', async () => {
     renderBuildPage()
 
-    expect(await screen.findByText('基础镜像源')).toBeInTheDocument()
-    expect(screen.getByText('驱动注入')).toBeInTheDocument()
-    expect(screen.getByText('安装参数')).toBeInTheDocument()
-    expect(screen.getByText('本次提交')).toBeInTheDocument()
-
+    expect(await screen.findByText('第 1 步 · 基础镜像')).toBeInTheDocument()
+    expect((await screen.findAllByText(/VMware-ESXi-8\.0U3k-depot\.zip/)).length).toBeGreaterThan(0)
     expect(screen.getByText(/还没有本次构建任务/)).toBeInTheDocument()
     expect(screen.queryByText('本次提交任务')).not.toBeInTheDocument()
     expect(screen.queryByText('history.iso')).not.toBeInTheDocument()
   })
 
-  it('勾选驱动后计数变化，并把真实驱动路径提交出去', async () => {
+  it('逐步走到第 4 步，提交真实驱动路径', async () => {
     renderBuildPage()
 
+    await waitFor(() => expect(nextBtn()).toBeEnabled())
+    fireEvent.click(nextBtn()) // → 第 2 步
+
+    expect(await screen.findByText('第 2 步 · 驱动注入')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('net-community')).toBeInTheDocument())
-    expect(screen.getByText('已选 0')).toBeInTheDocument()
 
     const row = screen.getByText('net-community').closest('tr') as HTMLElement
     fireEvent.click(within(row).getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByLabelText('已选 1 个')).toBeInTheDocument())
 
-    await waitFor(() => expect(screen.getByText('已选 1')).toBeInTheDocument())
+    fireEvent.click(nextBtn()) // → 第 3 步
+    expect(await screen.findByText('第 3 步 · 安装参数')).toBeInTheDocument()
 
-    fireEvent.click(screen.getAllByRole('button', { name: /运行构建流水线/ })[0])
+    fireEvent.click(nextBtn()) // → 第 4 步
+    expect(await screen.findByText('第 4 步 · 确认并运行')).toBeInTheDocument()
+    expect(screen.getByText(/PowerCLI/)).toBeInTheDocument()
+
+    fireEvent.click(startBtn())
 
     await waitFor(() => expect(createBuild).toHaveBeenCalled())
     const calls = (createBuild as unknown as { mock: { calls: unknown[][] } }).mock.calls
-    // 输出真实参数，断言不符时便于定位
     expect(calls[calls.length - 1]?.[0]).toEqual(
       expect.objectContaining({
         bucket_id: 1,
@@ -156,22 +163,38 @@ describe('构建流水线页面', () => {
     )
   })
 
-  it('提交后显示本次任务并可查看中文日志', async () => {
+  it('提交后显示本次任务与中文日志', async () => {
     renderBuildPage()
 
-    await waitFor(() => expect(screen.getByText('net-community')).toBeInTheDocument())
-    fireEvent.click(screen.getAllByRole('button', { name: /运行构建流水线/ })[0])
+    await waitFor(() => expect(nextBtn()).toBeEnabled())
+    fireEvent.click(nextBtn())
+    await screen.findByText('第 2 步 · 驱动注入')
+    fireEvent.click(nextBtn())
+    await screen.findByText('第 3 步 · 安装参数')
+    fireEvent.click(nextBtn())
+    await screen.findByText('第 4 步 · 确认并运行')
+    fireEvent.click(startBtn())
 
     await waitFor(() => expect(screen.getByText('本次提交任务')).toBeInTheDocument())
     expect(screen.getByText('task-new')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText(/输入准备：0\.12 秒/)).toBeInTheDocument())
   })
+
+  it('第 1 步没有可用镜像源时不能进入下一步', async () => {
+    const files = await import('../api/files')
+    vi.mocked(files.listDepots).mockResolvedValueOnce([])
+    renderBuildPage()
+
+    await waitFor(() =>
+      expect(screen.getByText(/暂无 ESXi 8\.0 的可用镜像源/)).toBeInTheDocument()
+    )
+    expect(nextBtn()).toBeDisabled()
+  })
 })
 
 describe('中文日志解析', () => {
-  it('错误优先于 xorriso 步骤匹配，不会被当成正常封装', () => {
+  it('错误优先于 xorriso 步骤匹配', () => {
     const parsed = formatLogToChinese('xorriso : FAILURE : Cannot open drive')
-    expect(parsed).not.toBeNull()
     expect(parsed?.kind).toBe('error')
     expect(parsed?.chinese).toContain('错误')
   })

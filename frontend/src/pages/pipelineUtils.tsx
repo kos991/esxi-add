@@ -127,8 +127,24 @@ function timingLabel(key: string) {
  * 判断顺序很重要：错误/警告优先，避免含 xorriso 的错误行被当成正常步骤。
  */
 export function formatLogToChinese(line: string): FormattedChineseLog | null {
-  const trimmed = line.trim()
+  // 去掉工具输出的 ANSI 颜色/控制码
+  const trimmed = line.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/\u001b\][^\u0007]*\u0007/g, '').trim()
   const lower = trimmed.toLowerCase()
+
+  // PowerCLI 的 CEIP 倡议与配置提示：对构建无意义，需在警告判断之前过滤
+  if (
+    /customer experience improvement program/i.test(trimmed) ||
+    /about_ceip/i.test(trimmed) ||
+    /^set-powercliconfiguration/i.test(trimmed) ||
+    /^vmware's customer experience/i.test(trimmed) ||
+    /^please consider joining/i.test(trimmed) ||
+    /^to disable this warning/i.test(trimmed) ||
+    /^for more (information|details)/i.test(trimmed) ||
+    /^you can (join|opt out)/i.test(trimmed) ||
+    /improve (our|its) products and services/i.test(trimmed)
+  ) {
+    return null
+  }
 
   const isError = /(^|\s)(error|failed|failure|fatal|panic)(\s|:|\]|$)/i.test(trimmed)
   const isWarn = !isError && /(^|\s)warn(ing)?(\s|:|\]|$)/i.test(trimmed)
@@ -187,6 +203,14 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     [/^written to medium/i, '镜像已写入输出文件', 'step', '封装'],
     [/^iso created[:\s]+(.+)$/i, '输出的 ISO：$1', 'success', '产物'],
     [/^rebuilding .*iso.*$/i, '正在重新封装可引导镜像', 'step', '封装'],
+    [/^starting build\.*$/i, '开始构建', 'step', '构建'],
+    [/^cloning profile[:\s]+(.+)$/i, '克隆镜像配置：$1', 'step', 'Profile'],
+    [/^using image profile[:\s]+(.+)$/i, '使用镜像配置：$1', 'step', 'Profile'],
+    [/^exporting iso\.*$/i, '正在导出 ISO', 'step', '导出'],
+    [/^export strategy[:\s]+(.+)$/i, '导出方式：$1', 'step', '导出'],
+    [/^loading esxi depot/i, '正在加载 ESXi 软件仓库', 'step', '仓库'],
+    [/^getting image profile/i, '正在读取镜像配置', 'step', 'Profile'],
+    [/^no esxi image profiles found/i, '软件仓库中没有可用的镜像配置', 'error', '仓库'],
     [/^iso uploaded to (.+)$/i, '定制 ISO 已写入存储：$1', 'success', '产物入库'],
     [/^done$/i, '该阶段处理完成', 'step', '完成'],
     [/^using .* engine/i, '$&', 'step', '引擎'],

@@ -1,6 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { ProCard } from './components/pro-compat'
 import { AppShell } from './layouts/AppShell'
 
 describe('2-Page Clean AppShell layout', () => {
@@ -46,16 +45,3 @@ describe('2-Page Clean AppShell layout', () => {
   })
 })
 
-describe('Ant Design compatibility wrappers', () => {
-  it('maps ProCard variant and semantic body styles to Ant Design Card', () => {
-    render(
-      <ProCard variant="borderless" styles={{ body: { backgroundColor: 'rgb(1, 2, 3)' } }}>
-        V6 card body
-      </ProCard>
-    )
-
-    expect(screen.getByText('V6 card body').closest('.ant-pro-card-body')).toHaveStyle({
-      backgroundColor: 'rgb(1, 2, 3)',
-    })
-  })
-})

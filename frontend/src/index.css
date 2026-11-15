@@ -1071,3 +1071,282 @@ body {
     animation: none !important;
   }
 }
+
+/* ======================================================================
+   原生 antd 页头（替代 pro-compat 的 PageContainer）
+   ====================================================================== */
+.page-shell {
+  display: grid;
+  gap: 14px;
+  min-inline-size: 0;
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header-main {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.page-header-title.ant-typography {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.page-header-sub {
+  font-size: 13px;
+}
+
+/* ======================================================================
+   分步引导（wizard）
+   ====================================================================== */
+.wizard-card .ant-card-body {
+  padding: 18px 20px 0;
+}
+
+.wizard-steps {
+  margin-block-end: 4px;
+}
+
+.wizard-steps .ant-steps-item-title {
+  font-size: 13px !important;
+  font-weight: 600;
+}
+
+.wizard-steps .ant-steps-item-description {
+  font-size: 11px !important;
+}
+
+.wizard-body {
+  padding-block: 18px 4px;
+  min-block-size: 300px;
+}
+
+.wizard-body-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-block-end: 10px;
+  margin-block-end: 14px;
+  border-block-end: 1px solid #f1f5f9;
+}
+
+.wizard-stage {
+  display: grid;
+  gap: 10px;
+  animation: wizard-in 0.18s ease;
+}
+
+@keyframes wizard-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* 安装源卡片 */
+.source-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.source-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.source-card:hover {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.source-card-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.18);
+}
+
+.source-icon {
+  display: grid;
+  place-items: center;
+  inline-size: 40px;
+  block-size: 40px;
+  flex: 0 0 40px;
+  border-radius: 9px;
+  background: #e0edff;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.source-body {
+  flex: 1;
+  min-inline-size: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.source-body strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-body code {
+  font-size: 11px;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-check {
+  color: #2563eb;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.preflight-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-start: 4px;
+}
+
+/* 驱动步骤 */
+.driver-toolbar-mini {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.driver-count {
+  font-size: 12px;
+  color: #64748b;
+  margin-inline-start: auto;
+}
+
+.driver-count strong {
+  color: #0f172a;
+}
+
+.selected-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 安装参数 */
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mode-card {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mode-card:hover {
+  border-color: #93c5fd;
+}
+
+.mode-card-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.16);
+}
+
+.mode-card strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.mode-card span {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.param-two-col {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(220px, 1.15fr);
+  gap: 12px;
+}
+
+.confirm-desc .ant-descriptions-item-label {
+  inline-size: 120px;
+  color: #64748b !important;
+  font-size: 12px;
+}
+
+/* 底部操作 */
+.wizard-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-inline: -20px;
+  padding: 12px 20px;
+  border-block-start: 1px solid #f1f5f9;
+  background: #fbfcff;
+  border-end-start-radius: 12px;
+  border-end-end-radius: 12px;
+}
+
+@media (max-width: 860px) {
+  .mode-grid,
+  .param-two-col {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wizard-card .ant-card-body {
+    padding: 14px 14px 0;
+  }
+  .wizard-footer {
+    margin-inline: -14px;
+    padding-inline: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-stage {
+    animation: none !important;
+  }
+}

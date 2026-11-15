@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>构建流水线 · 分步引导预览</title>
+<style>
+  :root{
+    --primary:#2563eb; --primary-dark:#1d4ed8; --success:#059669; --warning:#d97706;
+    --text:#0f172a; --muted:#64748b; --line:#e2e8f0; --bg:#f4f7fb; --panel:#fff;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text); font-size:13px; line-height:1.55;
+    font-family:Inter,"Noto Sans SC","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+    font-variant-numeric:tabular-nums;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 20px 48px}
+
+  /* 页头 */
+  .page-head{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;justify-content:space-between;margin-bottom:16px}
+  .page-head h1{font-size:20px;margin:0 0 2px}
+  .page-head p{margin:0;color:var(--muted);font-size:13px}
+  .head-tools{display:flex;gap:8px}
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;color:var(--text);
+    padding:7px 13px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;
+  }
+  .btn:hover{border-color:#93c5fd;color:var(--primary-dark)}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:var(--primary-dark);border-color:var(--primary-dark);color:#fff}
+  .btn.ghost{background:transparent}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  /* 步骤条 */
+  .stepper{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:0;background:#fff;border:1px solid var(--line);
+    border-radius:var(--radius);padding:10px 8px;margin-bottom:14px;position:relative;
+  }
+  .step{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;cursor:pointer;
+    min-width:0;position:relative;
+  }
+  .step:hover{background:#f8fbff}
+  .step.active{background:#eff6ff}
+  .step.done .dot{background:var(--success);border-color:var(--success);color:#fff}
+  .dot{
+    width:24px;height:24px;flex:0 0 24px;border-radius:50%;border:1.5px solid #cbd5e1;color:var(--muted);
+    display:grid;place-items:center;font-size:12px;font-weight:700;background:#fff;
+  }
+  .step.active .dot{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+  .step-text{display:grid;min-width:0}
+  .step-text b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .step-text span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .step-line{position:absolute;right:-4px;top:50%;width:8px;height:1px;background:var(--line)}
+  .step:last-child .step-line{display:none}
+
+  /* 主面板 */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px;min-height:340px}
+  .panel-head{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #f1f5f9}
+  .panel-head h2{font-size:15px;margin:0}
+  .panel-head .hint{color:var(--muted);font-size:12px}
+  .stage{display:none}
+  .stage.on{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .field-label{font-size:12px;font-weight:600;color:#475569;margin-bottom:6px;display:block}
+  .segmented{display:inline-flex;background:#f1f5f9;border-radius:9px;padding:3px;gap:2px;width:100%}
+  .segmented button{
+    flex:1;border:0;background:transparent;padding:7px 10px;border-radius:7px;font-size:12px;
+    color:#475569;cursor:pointer;font-family:inherit;font-weight:500;
+  }
+  .segmented button.on{background:#fff;color:var(--primary-dark);box-shadow:0 1px 3px rgba(15,23,42,.1);font-weight:600}
+
+  /* 镜像源卡片 */
+  .src-list{display:grid;gap:10px;margin-top:12px}
+  .src-card{
+    display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+    cursor:pointer;background:#fff;transition:.15s;
+  }
+  .src-card:hover{border-color:#93c5fd;background:#f8fbff}
+  .src-card.on{border-color:var(--primary);background:#eff6ff;box-shadow:0 0 0 1px rgba(37,99,235,.18)}
+  .src-icon{
+    width:38px;height:38px;flex:0 0 38px;border-radius:9px;background:#e0edff;color:var(--primary);
+    display:grid;place-items:center;
+  }
+  .src-body{flex:1;min-width:0}
+  .src-body b{display:block;font-size:13px}
+  .src-body code{display:block;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tag{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid;line-height:1.6}
+  .tag.blue{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+  .tag.cyan{background:#ecfeff;border-color:#a5f3fc;color:#0e7490}
+  .tag.green{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+  .tag.amber{background:#fffbeb;border-color:#fde68a;color:#b45309}
+  .tag.gray{background:#f8fafc;border-color:#e2e8f0;color:#64748b}
+  .check{
+    width:20px;height:20px;flex:0 0 20px;border-radius:50%;border:1.5px solid #cbd5e1;display:grid;place-items:center;
+    color:transparent;font-size:12px;
+  }
+  .src-card.on .check{background:var(--primary);border-color:var(--primary);color:#fff}
+
+  /* 驱动表 */
+  .drv-toolbar{display:flex;gap:8px;margin-top:4px;margin-bottom:10px;flex-wrap:wrap}
+  .input{
+    flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12px;
+    font-family:inherit;outline:none;
+  }
+  .input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  .drv-table{width:100%;border:1px solid var(--line);border-radius:10px;overflow:hidden;border-collapse:separate;border-spacing:0}
+  .drv-table th{background:#f8fafc;text-align:left;font-size:11px;color:#475569;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--line)}
+  .drv-table td{padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px}
+  .drv-table tr:last-child td{border-bottom:0}
+  .drv-table tbody tr{cursor:pointer}
+  .drv-table tbody tr:hover{background:#f8fbff}
+  .drv-table tbody tr.on{background:#eff6ff}
+  .muted{color:var(--muted)}
+  .mono{font-family:"JetBrains Mono",Consolas,Menlo,monospace}
+
+  .selected-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;min-height:24px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:999px;padding:2px 9px;font-size:11px}
+  .chip button{border:0;background:transparent;color:#60a5fa;cursor:pointer;font-size:12px;line-height:1;padding:0}
+
+  /* 安装参数 */
+  .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+  .mode{border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;background:#fff}
+  .mode:hover{border-color:#93c5fd}
+  .mode.on{border-color:var(--primary);background:#eff6ff;box-shadow:0 0 0 1px rgba(37,99,235,.16)}
+  .mode b{display:flex;align-items:center;gap:7px;font-size:13px;margin-bottom:3px}
+  .mode span{font-size:12px;color:var(--muted);line-height:1.5;display:block}
+  .two{display:grid;grid-template-columns:1fr 1.2fr;gap:12px}
+
+  /* 确认页 */
+  .review{display:grid;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .review-row{display:grid;grid-template-columns:130px 1fr;gap:12px;padding:10px 14px;border-bottom:1px solid #f1f5f9;font-size:13px}
+  .review-row:last-child{border-bottom:0}
+  .review-row .k{color:var(--muted);font-size:12px}
+  .run-box{margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;
+    border:1px solid #dbeafe;border-radius:10px;padding:12px 14px;background:linear-gradient(135deg,#f8fbff,#eff6ff)}
+  .run-box .warn{font-size:12px;color:#b45309;display:flex;gap:6px;align-items:center}
+
+  /* 底部操作 */
+  .actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center;margin-top:14px}
+  .actions .right{display:flex;gap:8px;margin-left:auto}
+  .summary-mini{font-size:12px;color:var(--muted)}
+  .summary-mini b{color:var(--text)}
+
+  /* 日志 */
+  .log-block{margin-top:16px;border:1px solid #1e293b;border-radius:12px;background:#0b1120;overflow:hidden}
+  .log-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:8px 14px;background:#111827;border-bottom:1px solid #1e293b}
+  .dots{display:inline-flex;gap:5px}
+  .dots i{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dots i:nth-child(1){background:#ef4444}.dots i:nth-child(2){background:#f59e0b}.dots i:nth-child(3){background:#10b981}
+  .log-title{color:#f1f5f9;font-size:12px;font-weight:600}
+  .log-body{height:190px;overflow:auto;padding:10px 14px;color:#e2e8f0;font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;line-height:1.7}
+  .log-row{display:flex;gap:8px;align-items:baseline}
+  .badge{flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:4px;background:#1e293b;color:#94a3b8}
+  .k-step .badge{background:#1d4ed8;color:#dbeafe}.k-step{color:#93c5fd}
+  .k-timing .badge{background:#0369a1;color:#e0f2fe}.k-timing{color:#38bdf8}
+  .k-success .badge{background:#15803d;color:#dcfce7}.k-success{color:#86efac}
+  .k-warn .badge{background:#b45309;color:#fef3c7}.k-warn{color:#fcd34d}
+
+  @media (max-width:900px){
+    .stepper{grid-template-columns:1fr 1fr}
+    .step-line{display:none}
+    .mode-grid,.two{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="page-head">
+    <div>
+      <h1>构建流水线</h1>
+      <p>按步骤完成配置，最后一步确认后运行，日志在同页下方输出。</p>
+    </div>
+    <div class="head-tools">
+      <button class="btn">历史流水线（8）</button>
+      <button class="btn">存储与挂载</button>
+    </div>
+  </div>
+
+  <!-- 步骤条 -->
+  <div class="stepper" id="stepper">
+    <div class="step active" data-step="1">
+      <div class="dot">1</div>
+      <div class="step-text"><b>基础镜像</b><span>版本与安装源</span></div>
+      <i class="step-line"></i>
+    </div>
+    <div class="step" data-step="2">
+      <div class="dot">2</div>
+      <div class="step-text"><b>驱动注入</b><span>可选，默认不注入</span></div>
+      <i class="step-line"></i>
+    </div>
+    <div class="step" data-step="3">
+      <div class="dot">3</div>
+      <div class="step-text"><b>安装参数</b><span>模式、密码、命名</span></div>
+      <i class="step-line"></i>
+    </div>
+    <div class="step" data-step="4">
+      <div class="dot">4</div>
+      <div class="step-text"><b>确认并运行</b><span>核对后执行</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2 id="panel-title">第 1 步 · 选择基础镜像</h2>
+      <span class="hint" id="panel-hint">原生引擎只接受 ISO；Depot ZIP 会自动使用 PowerCLI</span>
+    </div>
+
+    <!-- 步骤 1 -->
+    <section class="stage on" data-stage="1">
+      <label class="field-label">目标 ESXi 版本</label>
+      <div class="segmented" id="version-seg">
+        <button>6.5</button><button>6.7</button><button>7.0</button>
+        <button class="on">8.0</button><button>9.0</button>
+      </div>
+
+      <div class="src-list" id="src-list">
+        <div class="src-card on" data-src="depot">
+          <div class="src-icon">ISO</div>
+          <div class="src-body">
+            <b>VMware-ESXi-8.0U3k-25595708-depot</b>
+            <code>depots/8.0/VMware-ESXi-8.0U3k-25595708-depot.zip</code>
+            <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+              <span class="tag blue">本地存储</span>
+              <span class="tag green">本地直通</span>
+              <span class="tag gray mono">651.13 MB</span>
+              <span class="tag amber">Depot → PowerCLI（约 1~2 分钟）</span>
+            </div>
+          </div>
+          <div class="check">✓</div>
+        </div>
+
+        <div class="src-card" data-src="iso">
+          <div class="src-icon">ISO</div>
+          <div class="src-body">
+            <b>ESXi-8.0-custom-20261114-085457</b>
+            <code>output/ESXi-8.0-custom-20261114-085457.iso</code>
+            <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+              <span class="tag blue">本地存储</span>
+              <span class="tag green">ISO9660 已校验</span>
+              <span class="tag gray mono">467.8 MB</span>
+              <span class="tag cyan">ISO → 原生引擎（约 5~10 秒）</span>
+            </div>
+          </div>
+          <div class="check">✓</div>
+        </div>
+      </div>
+      <p style="margin:10px 0 0;font-size:12px;color:var(--muted)">
+        这里显示的是「实际会被使用」的文件路径；构建日志里也会再打印一次同样的路径。
+      </p>
+    </section>
+
+    <!-- 步骤 2 -->
+    <section class="stage" data-stage="2">
+      <div class="drv-toolbar">
+        <input class="input" id="drv-search" placeholder="搜索驱动包名称或路径" />
+        <button class="btn" id="drv-all">全选当前</button>
+        <button class="btn ghost" id="drv-clear">清空</button>
+        <span class="summary-mini" style="align-self:center">已选 <b id="drv-count">0</b> 个</span>
+      </div>
+
+      <table class="drv-table">
+        <thead>
+          <tr><th style="width:38px"></th><th>驱动包</th><th style="width:88px">版本</th><th style="width:86px">大小</th><th style="width:96px">标记</th></tr>
+        </thead>
+        <tbody id="drv-body">
+          <tr data-path="drivers/8.0/network/VMware-Re-Driver_1.101.01.zip">
+            <td><div class="check" style="border-radius:5px">✓</div></td>
+            <td><b>VMware-Re-Driver</b><div class="muted mono" style="font-size:11px">drivers/8.0/network/VMware-Re-Driver_1.101.01.zip</div></td>
+            <td class="mono">1.101.01</td><td class="mono">205 KB</td>
+            <td><span class="tag gray">无标记</span></td>
+          </tr>
+          <tr data-path="drivers/8.0/network/net-community.vib">
+            <td><div class="check" style="border-radius:5px">✓</div></td>
+            <td><b>net-community</b><div class="muted mono" style="font-size:11px">drivers/8.0/network/net-community.vib</div></td>
+            <td class="mono">1.2.7</td><td class="mono">18 MB</td>
+            <td><span class="tag gray">无标记</span></td>
+          </tr>
+          <tr data-path="drivers/8.0/storage/nvme-mi.vib">
+            <td><div class="check" style="border-radius:5px">✓</div></td>
+            <td><b>nvme-mi</b><div class="muted mono" style="font-size:11px">drivers/8.0/storage/nvme-mi.vib</div></td>
+            <td class="mono">1.0.4</td><td class="mono">2 MB</td>
+            <td><span class="tag amber">待确认</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="selected-chips" id="chips"></div>
+      <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">
+        「无标记」只表示没有冲突或依赖标记，不代表已验证硬件兼容性。
+      </p>
+    </section>
+
+    <!-- 步骤 3 -->
+    <section class="stage" data-stage="3">
+      <label class="field-label">安装模式</label>
+      <div class="mode-grid" id="mode-grid">
+        <div class="mode on" data-mode="unattended">
+          <b>⚡ 无人值守</b>
+          <span>开机自动格式化首块磁盘完成安装，首次启动自动注册驱动。</span>
+        </div>
+        <div class="mode" data-mode="interactive">
+          <b>🖥 交互式</b>
+          <span>保留官方图形安装向导，手动选择目标磁盘，驱动照常预载。</span>
+        </div>
+      </div>
+
+      <div class="two">
+        <div>
+          <label class="field-label">Root 密码</label>
+          <input class="input" id="root-pwd" value="niuniu" style="width:100%" />
+          <p style="margin:6px 0 0;font-size:11px;color:var(--muted)">留空则使用默认值 niuniu</p>
+        </div>
+        <div>
+          <label class="field-label">输出文件名</label>
+          <input class="input mono" id="iso-name" placeholder="ESXi-8.0-custom-20261115.iso" style="width:100%" />
+          <p style="margin:6px 0 0;font-size:11px;color:var(--muted)">留空自动按公式命名</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 步骤 4 -->
+    <section class="stage" data-stage="4">
+      <div class="review" id="review"></div>
+      <div class="run-box">
+        <div>
+          <div style="font-weight:600">确认无误后开始构建</div>
+          <div class="muted" style="font-size:12px">运行后日志会在下方实时输出，可随时离开页面再回来查看。</div>
+        </div>
+        <button class="btn primary" id="run-btn" style="padding:10px 20px;font-size:14px">开始构建</button>
+      </div>
+      <div class="warn-note" style="margin-top:8px">
+        <span class="tag amber">注意</span>
+        <span style="font-size:12px;color:var(--muted)">构建会覆盖同名输出文件；输出路径已存在时任务会直接失败，不会复用旧产物。</span>
+      </div>
+    </section>
+
+    <!-- 底部操作 -->
+    <div class="actions">
+      <div class="summary-mini" id="mini-summary">ESXi 8.0 · 1 个驱动 · 无人值守</div>
+      <div class="right">
+        <button class="btn" id="prev">上一步</button>
+        <button class="btn primary" id="next">下一步</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="log-block">
+    <div class="log-head">
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="log-title mono">流水线日志 · 本次构建</span>
+        <span class="tag green">构建成功</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="tag gray">全部</span>
+        <span class="tag gray">仅错误/警告</span>
+        <span class="tag gray">原始日志</span>
+      </div>
+    </div>
+    <div class="log-body" id="log-body">
+      <div class="log-row k-timing"><span class="badge">耗时</span><span>【阶段耗时】输入准备：0.10 秒</span></div>
+      <div class="log-row k-step"><span class="badge">引擎</span><span>【引擎】启动 Linux 原生重封装引擎</span></div>
+      <div class="log-row k-step"><span class="badge">基础镜像</span><span>【基础镜像】实际使用：output/ESXi-8.0-custom-20261114-085457.iso</span></div>
+      <div class="log-row k-step"><span class="badge">解包</span><span>【解包】确认为 ISO 镜像，体积 490475520 字节</span></div>
+      <div class="log-row k-timing"><span class="badge">耗时</span><span>【阶段耗时】基础镜像解包：8.67 秒</span></div>
+      <div class="log-row k-step"><span class="badge">驱动</span><span>【驱动】正在解包并注入驱动</span></div>
+      <div class="log-row k-warn"><span class="badge">警告</span><span>【警告】xorriso : WARNING : -volid text is too long for Joliet</span></div>
+      <div class="log-row k-step"><span class="badge">封装</span><span>【封装】镜像已生成，共 239490 个扇区</span></div>
+      <div class="log-row k-timing"><span class="badge">耗时</span><span>【阶段耗时】产物校验入库：2.52 秒</span></div>
+      <div class="log-row k-success"><span class="badge">产物</span><span>【产物入库】定制 ISO 已写入存储：output/verify-final.iso</span></div>
+    </div>
+  </div>
+
+  <p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:14px">
+    这是分步引导的界面预览，点「下一步」可以走完整个流程。
+  </p>
+</div>
+
+<script>
+  const state = { step: 1, version: '8.0', src: 'depot', drivers: [], mode: 'unattended' };
+
+  const stepper = document.getElementById('stepper');
+  const stages = [...document.querySelectorAll('.stage')];
+  const panelTitle = document.getElementById('panel-title');
+  const panelHint = document.getElementById('panel-hint');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const mini = document.getElementById('mini-summary');
+
+  const titles = {
+    1: ['第 1 步 · 选择基础镜像', '原生引擎只接受 ISO；Depot ZIP 会自动使用 PowerCLI'],
+    2: ['第 2 步 · 注入社区驱动（可选）', '默认不注入。勾选后会把驱动打进镜像并在首次启动时注册'],
+    3: ['第 3 步 · 安装参数', '决定安装时的自动化程度、root 密码与输出文件名'],
+    4: ['第 4 步 · 确认并运行', '请核对下面每一项，确认后点击开始构建'],
+  };
+
+  function render() {
+    stepper.querySelectorAll('.step').forEach(el => {
+      const n = Number(el.dataset.step);
+      el.classList.toggle('active', n === state.step);
+      el.classList.toggle('done', n < state.step);
+      el.querySelector('.dot').textContent = n < state.step ? '✓' : n;
+    });
+    stages.forEach(s => s.classList.toggle('on', Number(s.dataset.stage) === state.step));
+    panelTitle.textContent = titles[state.step][0];
+    panelHint.textContent = titles[state.step][1];
+    prevBtn.disabled = state.step === 1;
+    nextBtn.textContent = state.step === 4 ? '完成' : '下一步';
+    nextBtn.disabled = state.step === 4;
+    mini.textContent = `ESXi ${state.version} · ${state.drivers.length} 个驱动 · ${state.mode === 'unattended' ? '无人值守' : '交互式'}`;
+    if (state.step === 4) renderReview();
+  }
+
+  stepper.addEventListener('click', e => {
+    const step = e.target.closest('.step');
+    if (!step) return;
+    const n = Number(step.dataset.step);
+    if (n <= state.step) { state.step = n; render(); }
+  });
+
+  document.querySelectorAll('#version-seg button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#version-seg button').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      state.version = btn.textContent.trim();
+      render();
+    });
+  });
+
+  document.querySelectorAll('#src-list .src-card').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('#src-list .src-card').forEach(c => c.classList.remove('on'));
+      card.classList.add('on');
+      state.src = card.dataset.src;
+    });
+  });
+
+  const drvBody = document.getElementById('drv-body');
+  function syncDrivers() {
+    const rows = [...drvBody.querySelectorAll('tr')];
+    rows.forEach(row => {
+      const on = state.drivers.includes(row.dataset.path);
+      row.classList.toggle('on', on);
+      const box = row.querySelector('.check');
+      box.style.background = on ? 'var(--primary)' : '#fff';
+      box.style.borderColor = on ? 'var(--primary)' : '#cbd5e1';
+      box.style.color = on ? '#fff' : 'transparent';
+    });
+    document.getElementById('drv-count').textContent = state.drivers.length;
+    const chips = document.getElementById('chips');
+    chips.innerHTML = state.drivers.map(p => {
+      const name = p.split('/').pop();
+      return `<span class="chip">${name}<button data-rm="${p}">×</button></span>`;
+    }).join('');
+    chips.querySelectorAll('button').forEach(b => {
+      b.addEventListener('click', () => {
+        state.drivers = state.drivers.filter(x => x !== b.dataset.rm);
+        syncDrivers();
+        render();
+      });
+    });
+    render();
+  }
+
+  drvBody.addEventListener('click', e => {
+    const row = e.target.closest('tr');
+    if (!row) return;
+    const p = row.dataset.path;
+    state.drivers = state.drivers.includes(p) ? state.drivers.filter(x => x !== p) : [...state.drivers, p];
+    syncDrivers();
+  });
+
+  document.getElementById('drv-all').addEventListener('click', () => {
+    const paths = [...drvBody.querySelectorAll('tr')].map(r => r.dataset.path);
+    state.drivers = paths;
+    syncDrivers();
+  });
+  document.getElementById('drv-clear').addEventListener('click', () => {
+    state.drivers = [];
+    syncDrivers();
+  });
+  document.getElementById('drv-search').addEventListener('input', e => {
+    const kw = e.target.value.trim().toLowerCase();
+    drvBody.querySelectorAll('tr').forEach(row => {
+      row.style.display = row.textContent.toLowerCase().includes(kw) ? '' : 'none';
+    });
+  });
+
+  document.querySelectorAll('#mode-grid .mode').forEach(m => {
+    m.addEventListener('click', () => {
+      document.querySelectorAll('#mode-grid .mode').forEach(x => x.classList.remove('on'));
+      m.classList.add('on');
+      state.mode = m.dataset.mode;
+      render();
+    });
+  });
+
+  function renderReview() {
+    const srcLabel = state.src === 'depot'
+      ? 'VMware-ESXi-8.0U3k-25595708-depot.zip（Depot → PowerCLI）'
+      : 'ESXi-8.0-custom-20261114-085457.iso（ISO → 原生引擎）';
+    const drvLabel = state.drivers.length
+      ? state.drivers.map(p => p.split('/').pop()).join('、')
+      : '不注入驱动';
+    const name = document.getElementById('iso-name').value.trim() || `ESXi-${state.version}-custom-<时间戳>.iso`;
+    document.getElementById('review').innerHTML = `
+      <div class="review-row"><span class="k">ESXi 版本</span><b>ESXi ${state.version}</b></div>
+      <div class="review-row"><span class="k">基础镜像</span><span>${srcLabel}</span></div>
+      <div class="review-row"><span class="k">注入驱动</span><span>${drvLabel}</span></div>
+      <div class="review-row"><span class="k">安装模式</span><span>${state.mode === 'unattended' ? '无人值守（自动格式化首块磁盘）' : '交互式（手动选择磁盘）'}</span></div>
+      <div class="review-row"><span class="k">Root 密码</span><span class="mono">${document.getElementById('root-pwd').value || 'niuniu'}</span></div>
+      <div class="review-row"><span class="k">输出文件名</span><span class="mono">${name}</span></div>
+    `;
+  }
+
+  prevBtn.addEventListener('click', () => { if (state.step > 1) { state.step--; render(); } });
+  nextBtn.addEventListener('click', () => { if (state.step < 4) { state.step++; render(); } });
+  document.getElementById('run-btn').addEventListener('click', () => {
+    const body = document.getElementById('log-body');
+    body.innerHTML = '';
+    const lines = [
+      ['k-step','引擎','【引擎】启动 Linux 原生重封装引擎'],
+      ['k-step','基础镜像','【基础镜像】实际使用：output/ESXi-8.0-custom-20261114-085457.iso'],
+      ['k-step','解包','【解包】正在解包基础镜像'],
+      ['k-timing','耗时','【阶段耗时】基础镜像解包：8.67 秒'],
+      ['k-step','驱动','【驱动】正在解包并注入驱动'],
+      ['k-step','封装','【封装】镜像已生成，共 239490 个扇区'],
+      ['k-timing','耗时','【阶段耗时】产物校验入库：2.52 秒'],
+      ['k-success','产物','【产物入库】定制 ISO 已写入存储'],
+    ];
+    lines.forEach(([cls,badge,text], i) => {
+      setTimeout(() => {
+        const div = document.createElement('div');
+        div.className = 'log-row ' + cls;
+        div.innerHTML = `<span class="badge">${badge}</span><span>${text}</span>`;
+        body.appendChild(div);
+        body.scrollTop = body.scrollHeight;
+      }, i * 420);
+    });
+  });
+
+  document.getElementById('root-pwd').addEventListener('input', render);
+  document.getElementById('iso-name').addEventListener('input', render);
+  state.drivers = ['drivers/8.0/network/VMware-Re-Driver_1.101.01.zip'];
+  syncDrivers();
+</script>
+</body>
+</html>
