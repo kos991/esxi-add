@@ -26,7 +26,13 @@ func TestExecuteBuildDrainsPipes(t *testing.T) {
 	defer cancel()
 	events := make(chan BuildProgress)
 	done := make(chan error, 1)
-	go func() { done <- NewPowerShellExecutor(shell, script).ExecuteBuild(ctx, &BuildParams{}, events) }()
+	source := filepath.Join(t.TempDir(), "source.zip")
+	if err := os.WriteFile(source, []byte("PK"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		done <- NewPowerShellExecutor(shell, script).ExecuteBuild(ctx, &BuildParams{DepotPath: source}, events)
+	}()
 	stdout, stderr := 0, 0
 	for event := range events {
 		// Deliberately keep reading after the process has exited.
@@ -35,7 +41,7 @@ func TestExecuteBuildDrainsPipes(t *testing.T) {
 			stdout++
 		} else if strings.HasPrefix(event.Message, "stderr-") {
 			stderr++
-		} else {
+		} else if !strings.Contains(event.Message, "构建引擎:") {
 			t.Errorf("unexpected output: %+v", event)
 		}
 	}

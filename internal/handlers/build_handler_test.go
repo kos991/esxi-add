@@ -69,6 +69,14 @@ func TestCreateBuildExternalModeDoesNotRequireQueue(t *testing.T) {
 
 	app := fiber.New()
 	app.Post("/builds", NewBuildHandler(db, nil, "external").Create)
+	if err := db.AutoMigrate(&models.FileMetadata{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []models.FileMetadata{{StorageBucketID: 2, Path: "depot/6x/ESXi650.zip", Type: models.FileTypeDepot}, {StorageBucketID: 2, Path: "driver/6x/net.vib", Type: models.FileTypeDriver}} {
+		if err := db.Create(&file).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/builds", strings.NewReader(`{"bucket_id":2,"esxi_version":"6.5","depot_path":"depot/6x/ESXi650.zip","driver_paths":["driver/6x/net.vib"],"custom_iso_name":"custom.iso","image_profile":"ESXi-6.5.0-standard"}`))
 	req.Header.Set("Content-Type", "application/json")

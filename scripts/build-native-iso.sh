@@ -26,7 +26,7 @@ usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 Options:
-  --depot-path PATH       Path to base ISO image (or depot zip)
+  --depot-path PATH       Path to base ISO image (Depot ZIP requires PowerCLI)
   --driver-paths PATHS    Comma-separated list of driver files (.zip or .vib)
   --output-path PATH      Path for the generated ISO file
   --esxi-version VER      ESXi version (e.g., 8.0, 7.0)
@@ -87,24 +87,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# If Mode is InspectProfiles, output profile JSON and exit
 if [[ "$MODE" == "InspectProfiles" ]]; then
-    PROFILE_NAME="${IMAGE_PROFILE:-ESXi-${ESXI_VERSION:-8.0}-standard}"
-    if [[ -z "$PROFILE_NAME" ]]; then
-        PROFILE_NAME="ESXi-8.0-standard"
-    fi
-    cat <<EOF
-[
-  {
-    "name": "${PROFILE_NAME}",
-    "vendor": "VMware",
-    "acceptance_level": "CommunitySupported",
-    "creation_time": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-    "modified_time": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-  }
-]
-EOF
-    exit 0
+    echo "[ERROR] ?? ISO ????? Depot ImageProfile???? PowerCLI" >&2
+    exit 1
 fi
 
 # Validate required arguments
@@ -145,45 +130,32 @@ echo "[PROGRESS] 0 Starting native ISO build..."
 EXTRACT_START=$(date +%s%3N)
 echo "[PROGRESS] 10 Extracting base ISO with 7z..."
 
-# Check if DEPOT_PATH is an ISO or a ZIP containing an ISO
-BASE_ISO=""
-DEPOT_LOWER=$(echo "$DEPOT_PATH" | tr '[:upper:]' '[:lower:]')
-if [[ "$DEPOT_LOWER" == *.iso ]]; then
-    BASE_ISO="$DEPOT_PATH"
-elif [[ "$DEPOT_LOWER" == *.zip ]]; then
-    # Check if this zip is or contains an ISO
-    # If not, look in common base ISO locations
-    SEARCH_DIRS=(
-        "$(dirname "$DEPOT_PATH")/../isos"
-        "$(dirname "$DEPOT_PATH")/../output"
-        "/data/storage/output"
-        "/data/storage/isos"
-        "/data/verified-iso"
-        "/dev/shm"
-    )
-    for sdir in "${SEARCH_DIRS[@]}"; do
-        if [[ -d "$sdir" ]]; then
-            FOUND=$(find "$sdir" -maxdepth 2 -name "*.iso" 2>/dev/null | head -n 1 || true)
-            if [[ -n "$FOUND" && -f "$FOUND" ]]; then
-                BASE_ISO="$FOUND"
-                break
-            fi
-        fi
-    done
+# Native builds must use exactly the supplied ISO, never a previous output.
+BASE_ISO="$DEPOT_PATH"
+if [[ "${BASE_ISO,,}" != *.iso || ! -f "$BASE_ISO" ]]; then
+    echo "[ERROR] ????????? ISO ???Depot ZIP ???? PowerCLI: $DEPOT_PATH" >&2
+    exit 1
 fi
-
-if [[ -z "$BASE_ISO" || ! -f "$BASE_ISO" ]]; then
-    # If still not found, try extracting directly if DEPOT_PATH is an archive
-    if [[ -f "$DEPOT_PATH" ]]; then
-        BASE_ISO="$DEPOT_PATH"
-    else
-        echo "[ERROR] Cannot locate valid base ISO from depot path: $DEPOT_PATH" >&2
-        exit 1
-    fi
+if [[ "$(dd if="$BASE_ISO" bs=1 skip=32769 count=5 2>/dev/null)" != "CD001" ]]; then
+    echo "[ERROR] Input is not a valid ISO9660 image: $BASE_ISO" >&2
+    exit 1
 fi
-
 echo "Using base ISO: $BASE_ISO"
-7z x "$BASE_ISO" -o"$ISO_ROOT" -y > /dev/null
+if [[ -e "$OUTPUT_PATH" ]]; then
+    echo "[ERROR] Output already exists; refusing to overwrite or reuse an old artifact: $OUTPUT_PATH" >&2
+    exit 1
+fi
+7z x "$BASE_ISO" -o"$ISO_ROOT" -y
+BOOT_SOURCE=$(find "$ISO_ROOT" -maxdepth 1 -iname 'boot.cfg' -print -quit)
+if [[ -z "$BOOT_SOURCE" ]]; then
+    echo "[ERROR] Input ISO is missing ESXi BOOT.CFG" >&2
+    exit 1
+fi
+ACTUAL_VERSION=$(sed -nE 's/^build=([0-9]+\.[0-9]+).*/\1/ip' "$BOOT_SOURCE" | head -n 1)
+if [[ -z "$ACTUAL_VERSION" || "$ACTUAL_VERSION" != "$ESXI_VERSION" ]]; then
+    echo "[ERROR] ISO version mismatch: requested=$ESXI_VERSION actual=$ACTUAL_VERSION source=$BASE_ISO" >&2
+    exit 1
+fi
 
 EXTRACT_END=$(date +%s%3N)
 ISO_EXTRACT_MS=$((EXTRACT_END - EXTRACT_START))
@@ -405,7 +377,7 @@ xorriso -as mkisofs \
     -no-emul-boot \
     -boot-load-size 1 \
     -o "$OUTPUT_PATH" \
-    "$ISO_ROOT" 2>&1 | grep -E "ISO image produced|Written to medium|UPDATE" || true
+    "$ISO_ROOT" 2>&1
 
 if [[ ! -s "$OUTPUT_PATH" ]]; then
     echo "[ERROR] Failed to produce output ISO: $OUTPUT_PATH" >&2

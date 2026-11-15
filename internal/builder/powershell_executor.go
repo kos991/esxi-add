@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,10 +52,24 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		return fmt.Errorf("build params are required")
 	}
 
+	scriptPath, engine, err := e.SelectEngine(params.DepotPath)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Stat(params.DepotPath); err != nil {
+		return fmt.Errorf("实际输入不可访问: %w", err)
+	} else if !info.Mode().IsRegular() {
+		return fmt.Errorf("输入不是普通文件")
+	}
+	select {
+	case progressChan <- BuildProgress{Percentage: -1, Message: fmt.Sprintf("实际输入: %s；构建引擎: %s；脚本: %s", params.DepotPath, engine, scriptPath)}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	var cmd *exec.Cmd
-	if strings.HasSuffix(strings.ToLower(e.scriptPath), ".sh") {
+	if engine == "native" {
 		args := []string{
-			e.scriptPath,
+			scriptPath,
 			"--depot-path", params.DepotPath,
 			"--driver-paths", strings.Join(params.DriverPaths, ","),
 			"--output-path", params.OutputPath,
@@ -72,7 +88,7 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		cmd = exec.CommandContext(ctx, "bash", args...)
 	} else {
 		args := []string{
-			"-File", e.scriptPath,
+			"-File", scriptPath,
 			"-DepotPath", params.DepotPath,
 			"-DriverPaths", strings.Join(params.DriverPaths, ","),
 			"-OutputPath", params.OutputPath,
@@ -152,10 +168,17 @@ type ImageProfile struct {
 }
 
 func (e *PowerShellExecutor) InspectImageProfiles(ctx context.Context, depotPath string) ([]ImageProfile, error) {
+	scriptPath, engine, err := e.SelectEngine(depotPath)
+	if err != nil {
+		return nil, err
+	}
+	if engine == "native" {
+		return []ImageProfile{}, nil
+	}
 	cmd := exec.CommandContext(
 		ctx,
 		e.pwshPath,
-		"-File", e.scriptPath,
+		"-File", scriptPath,
 		"-Mode", "InspectProfiles",
 		"-DepotPath", depotPath,
 	)
@@ -177,6 +200,26 @@ func (e *PowerShellExecutor) InspectImageProfiles(ctx context.Context, depotPath
 		return []ImageProfile{}, nil
 	}
 	return []ImageProfile{single}, nil
+}
+
+// SelectEngine routes the supplied source, independent of the default script suffix.
+func (e *PowerShellExecutor) SelectEngine(source string) (string, string, error) {
+	switch strings.ToLower(filepath.Ext(source)) {
+	case ".iso":
+		script := e.scriptPath
+		if !strings.HasSuffix(strings.ToLower(script), ".sh") {
+			script = filepath.Join(filepath.Dir(script), "build-native-iso.sh")
+		}
+		return script, "native", nil
+	case ".zip":
+		script := e.scriptPath
+		if strings.HasSuffix(strings.ToLower(script), ".sh") {
+			script = filepath.Join(filepath.Dir(script), "build-esxi-iso.ps1")
+		}
+		return script, "powercli", nil
+	default:
+		return "", "", fmt.Errorf("构建源仅支持 ISO 或 Depot ZIP: %s", source)
+	}
 }
 
 func scanOutput(reader io.Reader, progressChan chan<- BuildProgress, stderr bool) error {

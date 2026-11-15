@@ -252,8 +252,8 @@ func newLocalBuildStorage(localPath string) (buildStorage, error) {
 
 func ValidateBuildInputFile(localPath, objectPath string) error {
 	ext := strings.ToLower(filepath.Ext(objectPath))
-	if ext != ".zip" && ext != ".vib" {
-		return nil
+	if ext != ".zip" && ext != ".vib" && ext != ".iso" {
+		return fmt.Errorf("unsupported build input: %s", objectPath)
 	}
 
 	file, err := os.Open(localPath)
@@ -262,6 +262,16 @@ func ValidateBuildInputFile(localPath, objectPath string) error {
 	}
 	defer file.Close()
 
+	if ext == ".iso" {
+		signature := make([]byte, 5)
+		if _, err := file.ReadAt(signature, 32769); err != nil {
+			return fmt.Errorf("read ISO signature: %w", err)
+		}
+		if string(signature) != "CD001" {
+			return fmt.Errorf("输入不是有效 ISO9660 镜像: %s", objectPath)
+		}
+		return nil
+	}
 	header := make([]byte, 8)
 	n, err := io.ReadFull(file, header)
 	if err != nil && err != io.ErrUnexpectedEOF {

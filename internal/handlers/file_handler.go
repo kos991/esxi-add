@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"errors"
+	"mime"
+	"os"
 	"strconv"
 	"strings"
 
@@ -167,6 +169,37 @@ func (h *FileHandler) RefreshCache(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(utils.SuccessResponse(fiber.Map{"refreshed": true, "bucket_id": bucketID}))
+}
+
+func (h *FileHandler) List(c *fiber.Ctx) error {
+	id, err := parseBucketID(c)
+	if err != nil {
+		return c.Status(400).JSON(utils.ErrorResponse(err.Error()))
+	}
+	files, err := h.fileService.ListFiles(c.UserContext(), id)
+	if err != nil {
+		return c.Status(500).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(files))
+}
+
+func (h *FileHandler) Download(c *fiber.Ctx) error {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return c.Status(400).JSON(utils.ErrorResponse("invalid file id"))
+	}
+	reader, name, err := h.fileService.OpenFile(c.UserContext(), id)
+	if err != nil {
+		status := 400
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, os.ErrNotExist) {
+			status = 404
+		}
+		return c.Status(status).JSON(utils.ErrorResponse(err.Error()))
+	}
+	c.Set(fiber.HeaderContentDisposition, mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	c.Set(fiber.HeaderContentType, "application/octet-stream")
+	c.Set("X-Content-Type-Options", "nosniff")
+	return c.SendStream(reader)
 }
 
 func parseBucketID(c *fiber.Ctx) (uint, error) {

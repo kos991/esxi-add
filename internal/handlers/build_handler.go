@@ -79,6 +79,9 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
 	}
 
+	if err := h.validatePreflightSelection(c.UserContext(), &buildPreflightRequest{BucketID: req.BucketID, ESXiVersion: req.ESXiVersion, DepotPath: req.DepotPath, DriverPaths: req.DriverPaths}); err != nil {
+		return c.Status(400).JSON(utils.ErrorResponse(err.Error()))
+	}
 	driversJSON, err := json.Marshal(req.DriverPaths)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))

@@ -907,3 +907,167 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .icon-spin { animation-duration: 3s; }
 }
+
+/* ======================================================================
+   构建配置：紧凑两列，自然高度，不拉伸等高
+   ====================================================================== */
+.pipeline-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.pipeline-config-grid .pipeline-stage-card {
+  height: auto;
+  align-self: start;
+}
+
+.pipeline-config-grid .pipeline-stage-card:nth-child(4) {
+  height: auto;
+}
+
+.preflight-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-start: 6px;
+}
+
+/* 当前任务上下文条 */
+.task-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.task-context-empty {
+  background: #f8fafc;
+  border-style: dashed;
+}
+
+/* ======================================================================
+   阶段耗时分解（此前样式缺失，导致纵向堆叠占 425px）
+   ====================================================================== */
+.phase-timing-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.phase-timing-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-block-end: 8px;
+}
+
+.phase-stacked-bar {
+  display: flex;
+  gap: 2px;
+  inline-size: 100%;
+  block-size: 8px;
+  border-radius: 999px;
+  overflow: clip;
+  background: #f1f5f9;
+  margin-block-end: 8px;
+}
+
+.phase-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.phase-row {
+  display: grid;
+  grid-template-columns: 132px minmax(60px, 1fr) 56px 44px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.phase-row-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.phase-row-label .ant-typography {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-dot {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.phase-row-bar {
+  min-inline-size: 0;
+}
+
+.phase-row-sec {
+  text-align: end;
+  font-weight: 600;
+}
+
+.phase-row-pct {
+  text-align: end;
+  color: #64748b;
+  font-size: 11px;
+}
+
+@media (max-width: 860px) {
+  .phase-row {
+    grid-template-columns: 96px minmax(48px, 1fr) 48px;
+  }
+  .phase-row-pct {
+    display: none;
+  }
+}
+
+/* 上传确认区 */
+.upload-confirm-box {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  font-size: 12px;
+}
+
+.upload-confirm-label {
+  display: inline-block;
+  inline-size: 52px;
+  color: #64748b;
+}
+
+/* 窄屏：配置单列，驱动表可横向滚动 */
+@media (max-width: 900px) {
+  .pipeline-config-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-pulse-dot,
+  .live-dot {
+    animation: none !important;
+  }
+}

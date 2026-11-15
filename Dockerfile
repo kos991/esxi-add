@@ -41,10 +41,17 @@ RUN if command -v apt-get >/dev/null 2>&1; then \
 
 RUN python3 -m pip install --no-cache-dir lxml psutil pyopenssl six
 
+# 统一 UTF-8，避免脚本中文输出在容器内变成 ??
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
 WORKDIR /app
 COPY --from=backend-builder /out/server /usr/local/bin/server
 COPY --from=frontend-builder /frontend/dist/ /app/frontend/dist/
 COPY scripts/ ./scripts/
+# 防止脚本以 CRLF 换行进入 Linux 容器（否则 bash 报 $'\r': command not found）
+RUN find ./scripts -type f -name '*.sh' -exec sed -i 's/\r$//' {} + \
+    && chmod +x ./scripts/*.sh
 COPY configs/ ./configs/
 COPY docker/all-in-one-entrypoint.sh /usr/local/bin/all-in-one-entrypoint
 RUN chmod +x /usr/local/bin/all-in-one-entrypoint \

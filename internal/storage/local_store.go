@@ -25,9 +25,7 @@ func NewLocalStore(root string) (*LocalStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve local path: %w", err)
 	}
-	if err := os.MkdirAll(absRoot, 0o755); err != nil {
-		return nil, fmt.Errorf("create local storage path: %w", err)
-	}
+
 	return &LocalStore{root: absRoot}, nil
 }
 
@@ -162,8 +160,11 @@ func (s *LocalStore) ListObjects(ctx context.Context, prefix string) ([]minio.Ob
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(startPath); os.IsNotExist(err) {
-		return []minio.ObjectInfo{}, nil
+	if _, err := os.Stat(startPath); err != nil {
+		if os.IsNotExist(err) && strings.TrimSpace(prefix) != "" {
+			return []minio.ObjectInfo{}, nil
+		}
+		return nil, err
 	}
 
 	objects := make([]minio.ObjectInfo, 0)
@@ -177,6 +178,9 @@ func (s *LocalStore) ListObjects(ctx context.Context, prefix string) ([]minio.Ob
 		default:
 		}
 		if info.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() || strings.HasPrefix(info.Name(), ".upload-") {
 			return nil
 		}
 		rel, err := filepath.Rel(s.root, currentPath)
@@ -227,20 +231,29 @@ func (s *LocalStore) TestConnection(ctx context.Context) error {
 		return ctx.Err()
 	default:
 	}
-	if err := os.MkdirAll(s.root, 0o755); err != nil {
-		return fmt.Errorf("create local storage path: %w", err)
-	}
-	tempFile, err := os.CreateTemp(s.root, ".write-test-*")
+	dir, err := os.Open(s.root)
 	if err != nil {
-		return fmt.Errorf("test local storage write: %w", err)
+		return fmt.Errorf("容器内已有目录不可访问: %w", err)
 	}
-	tempName := tempFile.Name()
-	_ = tempFile.Close()
-	_ = os.Remove(tempName)
-	return nil
+	defer dir.Close()
+	info, err := dir.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("local storage path is not a directory")
+	}
+	_, err = dir.Readdirnames(1)
+	if err == io.EOF {
+		return nil
+	}
+	return err
 }
 
 func (s *LocalStore) safePath(objectName string) (string, error) {
+	if len(objectName) > 4096 || strings.ContainsAny(objectName, "\x00:") {
+		return "", fmt.Errorf("invalid local object path")
+	}
 	cleanName := cleanObjectName(objectName)
 	if cleanName == "" || cleanName == "." {
 		return s.root, nil
@@ -260,6 +273,18 @@ func (s *LocalStore) safePath(objectName string) (string, error) {
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("local object path escapes storage root: %s", objectName)
+	}
+	// Reject symlink components (including dangling links) before any read/write.
+	current := s.root
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("symbolic links are not allowed in local object paths")
+		}
 	}
 	return absPath, nil
 }

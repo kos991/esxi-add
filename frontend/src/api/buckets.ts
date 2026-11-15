@@ -40,12 +40,24 @@ export async function testBucketConnection(id: number): Promise<{ connected: boo
   return response.data
 }
 
-export async function testBucketConfig(data: BucketPayload): Promise<{ connected: boolean }> {
-  const response = await api.post('/buckets/test-config', data)
+export async function setDefaultBucket(id: number): Promise<{ is_default: boolean; id: number }> {
+  const response = await api.put(`/buckets/${id}/default`)
   return response.data
 }
 
-export async function setDefaultBucket(id: number): Promise<{ is_default: boolean; id: number }> {
-  const response = await api.put(`/buckets/${id}/default`)
+export interface BucketTestResult {
+  connected: boolean
+  capabilities?: {
+    list?: boolean
+    read?: string
+    write?: string
+    persistent?: string
+  }
+  message?: string
+}
+
+/** 挂载前测试。传 id 时后端会沿用已保存的密钥，避免留空导致误判失败。 */
+export async function testBucketConfig(data: BucketPayload & { id?: number }): Promise<BucketTestResult> {
+  const response = await api.post('/buckets/test-config', data)
   return response.data
 }

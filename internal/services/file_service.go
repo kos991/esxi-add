@@ -26,6 +26,9 @@ import (
 // The supported deployment has one API process. Hold ownership through indexing
 // so concurrent uploads cannot pair one request's hashes with another's bytes.
 var activeUploads sync.Map
+
+// Serializes scans with writes so a snapshot cannot erase newly committed metadata.
+var storageMutationMu sync.RWMutex
 var ErrUploadConflict = errors.New("an upload to this bucket/path is already in progress")
 
 type FileService struct {
@@ -117,6 +120,8 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 		return nil, ErrUploadConflict
 	}
 	defer activeUploads.Delete(uploadKey)
+	storageMutationMu.Lock()
+	defer storageMutationMu.Unlock()
 
 	shaHasher := sha256.New()
 	md5Hasher := md5.New()
@@ -216,11 +221,16 @@ func (s *FileService) UploadFile(ctx context.Context, bucketID uint, fileType, e
 }
 
 func (s *FileService) DeleteFile(ctx context.Context, id uint) error {
+	storageMutationMu.Lock()
+	defer storageMutationMu.Unlock()
 	var file models.FileMetadata
 	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
 		return err
 	}
 
+	if err := s.ensureUnreferenced(ctx, file); err != nil {
+		return err
+	}
 	bucket, err := s.getBucket(ctx, file.StorageBucketID)
 	if err != nil {
 		return err
@@ -255,11 +265,16 @@ func (s *FileService) DeleteFile(ctx context.Context, id uint) error {
 }
 
 func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (*models.FileMetadata, error) {
+	storageMutationMu.Lock()
+	defer storageMutationMu.Unlock()
 	var file models.FileMetadata
 	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
 		return nil, err
 	}
 
+	if err := s.ensureUnreferenced(ctx, file); err != nil {
+		return nil, err
+	}
 	cleanName, err := cleanRenameFilename(newName, file.Path)
 	if err != nil {
 		return nil, err
@@ -325,7 +340,7 @@ func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (
 		"driver_name":        indexed.DriverName,
 		"driver_description": indexed.DriverDescription,
 		"driver_version":     indexed.DriverVersion,
-		"md5":                indexed.MD5,
+		"md5":                file.MD5,
 		"size":               indexed.Size,
 		"etag":               indexed.ETag,
 		"last_modified":      indexed.LastModified,
@@ -337,58 +352,6 @@ func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (
 		return nil, fmt.Errorf("find renamed metadata: %w", err)
 	}
 	return &file, nil
-}
-
-func (s *FileService) RefreshCache(ctx context.Context, bucketID uint) error {
-	bucket, err := s.getBucket(ctx, bucketID)
-	if err != nil {
-		return err
-	}
-
-	if err := s.db.WithContext(ctx).
-		Where("storage_bucket_id = ? AND (path = ? OR path LIKE ?)", bucketID, ".openlist", "%/.openlist").
-		Delete(&models.FileMetadata{}).Error; err != nil {
-		return fmt.Errorf("delete ignored metadata: %w", err)
-	}
-
-	prefixes := []string{"depot/", "depots/", "driver/", "drivers/", "iso/", "isos/", "output/"}
-	for _, prefix := range prefixes {
-		objects, err := s.listObjects(ctx, bucket, prefix)
-		if err != nil {
-			return err
-		}
-
-		for _, objectInfo := range objects {
-			if !shouldIndexStorageObject(objectInfo.Key) {
-				continue
-			}
-			metadata := objectInfoToMetadata(bucketID, objectInfo)
-			if metadata.Type == "" {
-				continue
-			}
-			if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"type",
-					"esxi_version",
-					"driver_category",
-					"driver_type",
-					"driver_name",
-					"driver_description",
-					"driver_version",
-					"md5",
-					"size",
-					"etag",
-					"last_modified",
-					"updated_at",
-				}),
-			}).Create(&metadata).Error; err != nil {
-				return fmt.Errorf("upsert metadata for %s: %w", objectInfo.Key, err)
-			}
-		}
-	}
-
-	return nil
 }
 
 func (s *FileService) getBucket(ctx context.Context, bucketID uint) (*models.StorageBucket, error) {
@@ -582,6 +545,29 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeISO)
 	}
 
+	// Outside managed prefixes, use extension plus an explicit ESXi depot name.
+	ext := strings.ToLower(path.Ext(cleanPath))
+	switch ext {
+	case ".iso":
+		metadata.Type = models.FileTypeISO
+	case ".vib":
+		metadata.Type = models.FileTypeDriver
+		metadata.DriverType = "vib"
+	case ".zip":
+		if metadata.Type == "" {
+			name := strings.ToLower(path.Base(cleanPath))
+			if strings.Contains(name, "esxi") && strings.Contains(name, "depot") {
+				metadata.Type = models.FileTypeDepot
+			} else {
+				metadata.Type = "unknown"
+			}
+		}
+	default:
+		metadata.Type = ""
+	}
+	if metadata.ESXiVersion == "" {
+		metadata.ESXiVersion = inferESXiVersionFromDepotName(metadata.DriverName)
+	}
 	return metadata
 }
 
@@ -601,6 +587,9 @@ func splitStoragePath(objectPath string) (prefix, version, category string) {
 }
 
 func cleanRenameFilename(newName, oldPath string) (string, error) {
+	if len(newName) > 255 || strings.ContainsAny(newName, "/\\\x00\r\n:") {
+		return "", fmt.Errorf("invalid filename")
+	}
 	cleanName := path.Base(strings.ReplaceAll(strings.TrimSpace(newName), "\\", "/"))
 	if cleanName == "" || cleanName == "." || cleanName == "/" {
 		return "", fmt.Errorf("filename is required")
@@ -668,6 +657,9 @@ func md5FromETag(etag string) string {
 
 func inferESXiVersionFromDepotName(name string) string {
 	upper := strings.ToUpper(name)
+	if match := regexp.MustCompile(`(?i)esxi[-_ ]?(6\.[57]|[789]\.0)(?:[^0-9]|$)`).FindStringSubmatch(name); len(match) > 1 {
+		return match[1]
+	}
 	switch {
 	case strings.Contains(upper, "ESXI650"):
 		return "6.5"
@@ -756,4 +748,12 @@ func isDriverPrefix(prefix string) bool {
 
 func isISOPrefix(prefix string) bool {
 	return prefix == "iso" || prefix == "isos" || prefix == "output"
+}
+
+// Only well-known VMware driver archive names count; anything else stays unknown.
+func looksLikeDriverArchive(name string) bool {
+ for _, prefix := range []string{"net-", "net_", "scsi-", "sata-", "nvme-", "vmkusb", "usb-nic", "usb_nic", "raid"} {
+  if strings.HasPrefix(name, prefix) || strings.Contains(name, prefix) { return true }
+ }
+ return false
 }

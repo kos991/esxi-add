@@ -18,12 +18,20 @@ export async function listISOs(bucketId: number): Promise<FileMetadata[]> {
   return response.data
 }
 
+/** 列出节点下全部已索引文件（含未归入固定目录的条目）。 */
+export async function listAllFiles(bucketId: number): Promise<FileMetadata[]> {
+  const response = await api.get('/files', { params: { bucket_id: bucketId } })
+  return response.data
+}
+
 export async function uploadFile(
   bucketId: number,
   type: 'depot' | 'driver' | 'iso',
   file: File,
   esxiVersion?: string,
-  category?: string
+  category?: string,
+  onProgress?: (percent: number, loaded: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<FileMetadata> {
   const formData = new FormData()
   formData.append('bucket_id', String(bucketId))
@@ -34,6 +42,14 @@ export async function uploadFile(
 
   const response = await api.post('/files/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    signal,
+    onUploadProgress: (event) => {
+      if (!onProgress) return
+      const total = event.total ?? file.size
+      const loaded = event.loaded ?? 0
+      const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
+      onProgress(percent, loaded, total)
+    },
   })
   return response.data
 }
@@ -51,4 +67,17 @@ export async function renameFile(id: number, name: string): Promise<FileMetadata
 export async function refreshFiles(bucketId: number): Promise<{ refreshed: boolean; bucket_id: number }> {
   const response = await api.post('/files/refresh', null, { params: { bucket_id: bucketId } })
   return response.data
+}
+
+/** 带鉴权头的文件下载：不依赖 window.open，内网 HTTP 下也能工作。 */
+export async function downloadFile(id: number, name: string): Promise<void> {
+  const response = await api.get(`/files/${id}/download`, { responseType: 'blob' })
+  const url = URL.createObjectURL(response as unknown as Blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
 }

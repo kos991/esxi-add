@@ -20,6 +20,7 @@ type BucketHandler struct {
 }
 
 type bucketRequest struct {
+	ID           *uint  `json:"id"`
 	Name         string `json:"name"`
 	Type         string `json:"type"`
 	Endpoint     string `json:"endpoint"`
@@ -161,8 +162,31 @@ func (h *BucketHandler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
 	}
 
-	if err := h.db.WithContext(c.UserContext()).Delete(&models.StorageBucket{}, id).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	err = h.db.WithContext(c.UserContext()).Transaction(func(tx *gorm.DB) error {
+		var bucket models.StorageBucket
+		if err := tx.First(&bucket, id).Error; err != nil {
+			return err
+		}
+		if bucket.IsDefault {
+			return fmt.Errorf("不能删除默认存储节点")
+		}
+		var count int64
+		if err := tx.Model(&models.BuildTask{}).Where("storage_bucket_id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return fmt.Errorf("存储节点被构建任务引用，不能删除")
+		}
+		if err := tx.Unscoped().Where("storage_bucket_id = ?", id).Delete(&models.FileMetadata{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&bucket).Error
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(404).JSON(utils.ErrorResponse("bucket not found"))
+		}
+		return c.Status(409).JSON(utils.ErrorResponse(err.Error()))
 	}
 
 	return c.JSON(utils.SuccessResponse(fiber.Map{"deleted": true}))
@@ -186,18 +210,31 @@ func (h *BucketHandler) TestConnection(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
 	}
 
-	return c.JSON(utils.SuccessResponse(fiber.Map{"connected": true}))
+	return c.JSON(utils.SuccessResponse(fiber.Map{"connected": true, "capabilities": fiber.Map{"list": true, "read": "untested", "write": "untested", "persistent": "unknown"}}))
 }
 
 func (h *BucketHandler) TestConfig(c *fiber.Ctx) error {
 	var req bucketRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("invalid request body"))
+		return c.Status(400).JSON(utils.ErrorResponse("invalid request body"))
+	}
+	if req.ID != nil {
+		if *req.ID == 0 {
+			return c.Status(400).JSON(utils.ErrorResponse("invalid bucket id"))
+		}
+		var existing models.StorageBucket
+		if err := h.db.WithContext(c.UserContext()).First(&existing, *req.ID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(404).JSON(utils.ErrorResponse("bucket not found"))
+			}
+			return c.Status(500).JSON(utils.ErrorResponse(err.Error()))
+		}
+		mergeBucketUpdateRequest(&req, existing)
 	}
 	if err := validateBucketRequest(c.UserContext(), &req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse(err.Error()))
 	}
-	return c.JSON(utils.SuccessResponse(fiber.Map{"connected": true}))
+	return c.JSON(utils.SuccessResponse(fiber.Map{"connected": true, "capabilities": fiber.Map{"list": true, "read": "untested", "write": "untested", "persistent": "unknown"}}))
 }
 
 func (h *BucketHandler) SetDefault(c *fiber.Ctx) error {
@@ -315,9 +352,9 @@ func testBucketConnection(ctx context.Context, bucket *models.StorageBucket) err
 
 func parseUintParam(c *fiber.Ctx, name string) (uint, error) {
 	value := c.Params(name)
-	parsed, err := strconv.ParseUint(value, 10, 64)
-	if err != nil {
-		return 0, err
+	parsed, err := strconv.ParseUint(value, 10, strconv.IntSize)
+	if err != nil || parsed == 0 || len(value) > 20 {
+		return 0, fmt.Errorf("invalid %s", name)
 	}
 	return uint(parsed), nil
 }

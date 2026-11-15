@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -42,15 +43,14 @@ func NewS3Client(cfg *S3Config) (*S3Client, error) {
 		return nil, fmt.Errorf("create s3 client: %w", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	exists, err := client.BucketExists(ctx, cfg.BucketName)
 	if err != nil {
 		return nil, fmt.Errorf("check bucket exists: %w", err)
 	}
 	if !exists {
-		if err := client.MakeBucket(ctx, cfg.BucketName, minio.MakeBucketOptions{Region: cfg.Region}); err != nil {
-			return nil, fmt.Errorf("create bucket: %w", err)
-		}
+		return nil, fmt.Errorf("存储桶不存在: %s", cfg.BucketName)
 	}
 
 	return &S3Client{
@@ -148,11 +148,23 @@ func NormalizePublicDomain(rawDomain string) string {
 }
 
 func (s *S3Client) TestConnection(ctx context.Context) error {
-	_, err := s.client.BucketExists(ctx, s.bucketName)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	exists, err := s.client.BucketExists(ctx, s.bucketName)
 	if err != nil {
 		return fmt.Errorf("test s3 connection: %w", err)
 	}
-	return nil
+	if !exists {
+		return fmt.Errorf("存储桶不存在: %s", s.bucketName)
+	}
+	// A list probe demonstrates listing only, never object read/write permission.
+	for info := range s.client.ListObjects(ctx, s.bucketName, minio.ListObjectsOptions{MaxKeys: 1}) {
+		if info.Err != nil {
+			return fmt.Errorf("列举存储桶失败: %w", info.Err)
+		}
+		return nil
+	}
+	return ctx.Err()
 }
 
 func normalizeS3Endpoint(rawEndpoint string, useSSL bool) (string, bool, error) {

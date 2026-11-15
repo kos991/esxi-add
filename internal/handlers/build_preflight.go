@@ -59,6 +59,7 @@ type PreflightFile struct {
 
 type buildPreflightRequest struct {
 	BucketID    uint     `json:"bucket_id"`
+	ESXiVersion string   `json:"esxi_version"`
 	DepotPath   string   `json:"depot_path"`
 	DriverPaths []string `json:"driver_paths"`
 }
@@ -128,10 +129,30 @@ func validateBuildPreflightRequest(req *buildPreflightRequest) error {
 }
 
 func (h *BuildHandler) validatePreflightSelection(ctx context.Context, req *buildPreflightRequest) error {
-	if err := h.requireFileMetadata(ctx, req.BucketID, req.DepotPath, models.FileTypeDepot); err != nil {
+	sourceType := models.FileTypeDepot
+	switch strings.ToLower(filepath.Ext(req.DepotPath)) {
+	case ".iso":
+		sourceType = models.FileTypeISO
+	case ".zip":
+	default:
+		return fmt.Errorf("构建源仅支持 ISO 或 Depot ZIP")
+	}
+	if err := h.requireFileMetadata(ctx, req.BucketID, req.DepotPath, sourceType); err != nil {
 		return err
 	}
+	if req.ESXiVersion != "" {
+		var source models.FileMetadata
+		if err := h.db.WithContext(ctx).Where("storage_bucket_id = ? AND path = ?", req.BucketID, req.DepotPath).First(&source).Error; err != nil {
+			return err
+		}
+		if source.ESXiVersion != "" && !strings.Contains(source.ESXiVersion, "x") && source.ESXiVersion != req.ESXiVersion {
+			return fmt.Errorf("源文件版本 %s 与请求版本 %s 不匹配", source.ESXiVersion, req.ESXiVersion)
+		}
+	}
 	for _, driverPath := range req.DriverPaths {
+		if driverPath != "" && !strings.EqualFold(filepath.Ext(driverPath), ".zip") && !strings.EqualFold(filepath.Ext(driverPath), ".vib") {
+			return fmt.Errorf("驱动仅支持 VIB 或 ZIP")
+		}
 		if driverPath == "" {
 			continue
 		}
@@ -239,12 +260,15 @@ func (h *BuildHandler) runPreflight(ctx context.Context, id string, req buildPre
 			item.Message = "ready"
 		})
 
-		if i == 0 && h.imageProfileInspector != nil {
+		if i == 0 && h.imageProfileInspector != nil && strings.EqualFold(filepath.Ext(file.Path), ".zip") {
 			profiles, err := h.imageProfileInspector.InspectImageProfiles(ctx, localPath)
 			if err != nil {
 				h.updatePreflightFile(id, i, func(item *PreflightFile) {
-					item.Message = "ready; image profile inspection failed: " + err.Error()
+					item.Message = "ImageProfile 检查失败: " + err.Error()
+					item.Status = PreflightFileStatusFailed
 				})
+				h.finishPreflight(id, PreflightStatusFailed, err.Error())
+				return
 			} else {
 				h.updatePreflightImageProfiles(id, profiles)
 			}

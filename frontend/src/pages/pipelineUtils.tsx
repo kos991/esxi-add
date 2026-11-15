@@ -3,7 +3,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   SyncOutlined,
-} from '../components/icons'
+} from '@ant-design/icons'
 import { Tag } from 'antd'
 import type { ReactNode } from 'react'
 import type { BuildTask, FileMetadata, StorageBucket } from '../types'
@@ -62,11 +62,17 @@ export function assetTitle(file?: FileMetadata) {
   return file.driver_description ? `${baseName}（${file.driver_description}）` : baseName
 }
 
+/** 普通 ISO 与构建产出必须分开，产出路径固定以 output/ 开头。 */
+export function isBuildOutput(file?: FileMetadata) {
+  return Boolean(file?.path && file.path.toLowerCase().startsWith('output/'))
+}
+
 export function assetTypeText(file: FileMetadata) {
-  if (file.path.toLowerCase().startsWith('output/')) return '构建产出 ISO'
+  if (isBuildOutput(file)) return '构建产出 ISO'
   if (file.type === 'depot') return '基础源 (Depot/ISO)'
   if (file.type === 'driver') return '驱动包 (VIB/ZIP)'
-  return '普通 ISO'
+  if (file.type === 'iso') return '普通 ISO'
+  return '未识别'
 }
 
 export function cacheStatusText(file: FileMetadata, bucket?: StorageBucket) {
@@ -89,137 +95,228 @@ export function compactSize(value?: number) {
   return value ? formatBytes(value) : '-'
 }
 
+export type ChineseLogKind = 'timing' | 'progress' | 'step' | 'success' | 'warn' | 'error' | 'normal'
+
 export interface FormattedChineseLog {
   raw: string
   chinese: string
-  kind: 'timing' | 'progress' | 'step' | 'success' | 'warn' | 'error' | 'normal'
+  kind: ChineseLogKind
   badge: string
+  /** 用于耗时指标去重：同一阶段只保留一条 */
+  dedupeKey?: string
 }
 
-export function formatLogToChinese(line: string): FormattedChineseLog {
+const TIMING_LABELS: Array<{ keys: string[]; label: string }> = [
+  { keys: ['input_prepare_ms'], label: '输入准备' },
+  { keys: ['iso_extract_ms'], label: '基础镜像解包' },
+  { keys: ['powercli_load_ms'], label: 'PowerCLI 初始化' },
+  { keys: ['depot_profile_ms'], label: 'Depot 与 Profile 加载' },
+  { keys: ['driver_injection_ms', 'driver_inject_ms'], label: '驱动与参数注入' },
+  { keys: ['iso_export_ms', 'iso_rebuild_ms'], label: 'ISO 镜像封装' },
+  { keys: ['artifact_persist_ms'], label: '产物校验入库' },
+  { keys: ['powercli_process_ms'], label: '构建执行合计' },
+]
+
+function timingLabel(key: string) {
+  const hit = TIMING_LABELS.find((item) => item.keys.includes(key))
+  return hit ? { label: hit.label, dedupeKey: hit.keys[0] } : { label: `未登记阶段 ${key}`, dedupeKey: key }
+}
+
+/**
+ * 把构建输出翻成中文语义行。
+ * 判断顺序很重要：错误/警告优先，避免含 xorriso 的错误行被当成正常步骤。
+ */
+export function formatLogToChinese(line: string): FormattedChineseLog | null {
   const trimmed = line.trim()
   const lower = trimmed.toLowerCase()
 
-  // 1. [TIMING] 耗时分解指标项
-  const timingMatch = trimmed.match(/^\[TIMING\]\s+([a-zA-Z0-9_]+)=(\d+)/)
-  if (timingMatch) {
-    const key = timingMatch[1]
-    const ms = parseInt(timingMatch[2], 10)
-    const sec = (ms / 1000).toFixed(2)
-    let label = '阶段耗时'
-    if (key === 'input_prepare_ms') label = '基础镜像源与输入参数校验准备完成'
-    else if (key === 'iso_extract_ms') label = '原版 ESXi 基础 ISO 镜像解包完成'
-    else if (key === 'powercli_load_ms') label = 'PowerCLI 镜像构建环境初始化完成'
-    else if (key === 'depot_profile_ms') label = 'Depot 离线包与镜像 Profile 克隆完成'
-    else if (key === 'driver_injection_ms' || key === 'driver_inject_ms')
-      label = '社区驱动包与 kickstart 自动安装配置注入完成'
-    else if (key === 'iso_export_ms' || key === 'iso_rebuild_ms')
-      label = 'xorriso 原生极速重封装可引导 ISO 镜像完成'
-    else if (key === 'artifact_persist_ms')
-      label = '产物 SHA-256 流式校验与持久化落盘入库完成'
-    else label = `阶段 ${key} 执行完成`
+  const isError = /(^|\s)(error|failed|failure|fatal|panic)(\s|:|\]|$)/i.test(trimmed)
+  const isWarn = !isError && /(^|\s)warn(ing)?(\s|:|\]|$)/i.test(trimmed)
 
+  if (isError) {
+    return { raw: line, chinese: `【错误】${trimmed}`, kind: 'error', badge: '错误' }
+  }
+  if (isWarn) {
+    return { raw: line, chinese: `【警告】${trimmed}`, kind: 'warn', badge: '警告' }
+  }
+
+  // [TIMING] 阶段耗时
+  const timing = trimmed.match(/^\[TIMING\]\s+([a-zA-Z0-9_]+)=(\d+)/)
+  if (timing) {
+    const { label, dedupeKey } = timingLabel(timing[1])
+    const ms = Number(timing[2])
     return {
       raw: line,
-      chinese: `【阶段耗时】${label}（耗时 ${sec} 秒 / ${ms} 毫秒）`,
+      chinese: `【阶段耗时】${label}：${(ms / 1000).toFixed(2)} 秒`,
       kind: 'timing',
-      badge: '耗时指标',
+      badge: '耗时',
+      dedupeKey: `timing:${dedupeKey}`,
     }
   }
 
-  // 2. [PROGRESS] 进度汇报
-  const progressMatch = trimmed.match(/^\[PROGRESS\]\s+(\d+)\s*(.*)/)
-  if (progressMatch) {
-    const pct = progressMatch[1]
-    let desc = progressMatch[2]?.trim() || ''
-    if (desc.includes('building')) desc = '正在执行镜像处理...'
-    if (desc.includes('extracting')) desc = '正在解压基础 ISO...'
-    if (desc.includes('injecting')) desc = '正在注入网卡与存储驱动...'
-    if (desc.includes('rebuilding')) desc = '正在生成可引导镜像...'
-    if (desc.includes('persisting')) desc = '正在校验并写入产物...'
-    if (desc.includes('complete') || desc.includes('done')) desc = '流水线构建已完成'
+  // [PROGRESS]
+  const progress = trimmed.match(/^\[PROGRESS\]\s+(\d+)\s*(.*)/)
+  if (progress) {
+    const rest = progress[2]?.trim() || ''
     return {
       raw: line,
-      chinese: `【构建进度】流水线当前已推进至 ${pct}%${desc ? ` — ${desc}` : ''}`,
+      chinese: `【构建进度】${progress[1]}%${rest ? ` · ${translateProgressText(rest)}` : ''}`,
       kind: 'progress',
-      badge: '进度更新',
+      badge: '进度',
     }
   }
 
-  // 3. 关键动作步骤项
-  if (lower.includes('starting native linux iso rebuild') || lower.includes('starting linux native')) {
-    return {
-      raw: line,
-      chinese: '【引擎启动】启动 Linux 原生极速重封装引擎（预计 5~10 秒完成）',
-      kind: 'step',
-      badge: '引擎启动',
+  const scriptRules: Array<[RegExp, string, ChineseLogKind, string]> = [
+    [/native engine only accepts an existing iso/i, '原生引擎只接受已有 ISO；Depot ZIP 需使用 PowerCLI', 'error', '输入'],
+    [/input is not a valid iso9660 image/i, '输入不是有效的 ISO9660 镜像', 'error', '输入'],
+    [/input iso is missing esxi boot\.cfg/i, '输入镜像缺少 ESXi BOOT.CFG', 'error', '输入'],
+    [/iso version mismatch/i, 'ISO 版本与所选版本不一致', 'error', '输入'],
+    [/output already exists; refusing/i, '输出文件已存在，已拒绝覆盖旧产物', 'error', '输出'],
+  ]
+
+  const rules: Array<[RegExp, string, ChineseLogKind, string]> = [
+    [/starting native .*(iso )?build/i, '启动 Linux 原生重封装引擎', 'step', '引擎'],
+    [/^using base iso[:\s]+(.+)$/i, '实际使用的基础镜像：$1', 'step', '基础镜像'],
+    [/^processing driver[:\s]+(.+)$/i, '正在处理驱动包：$1', 'step', '驱动'],
+    [/^injected vib[:\s]+(.+)$/i, '已注入 VIB 驱动：$1', 'step', '驱动'],
+    [/^injected kernel module[:\s]+(.+)$/i, '已注入内核模块：$1', 'step', '驱动'],
+    [/^patching boot\.cfg.*$/i, '正在修改引导配置并生成无人值守安装脚本', 'step', '安装配置'],
+    [/^extracting (base )?iso.*$/i, '正在解包基础镜像', 'step', '解包'],
+    [/^extracting and injecting drivers.*$/i, '正在解包并注入驱动', 'step', '驱动'],
+    [/iso image produced[:\s]+(\d+).*sectors/i, '镜像已生成，共 $1 个扇区', 'step', '封装'],
+    [/^written to medium/i, '镜像已写入输出文件', 'step', '封装'],
+    [/^iso created[:\s]+(.+)$/i, '输出的 ISO：$1', 'success', '产物'],
+    [/^rebuilding .*iso.*$/i, '正在重新封装可引导镜像', 'step', '封装'],
+    [/^iso uploaded to (.+)$/i, '定制 ISO 已写入存储：$1', 'success', '产物入库'],
+    [/^done$/i, '该阶段处理完成', 'step', '完成'],
+    [/^using .* engine/i, '$&', 'step', '引擎'],
+  ]
+
+  for (const [re, text, kind, badge] of scriptRules) {
+    if (re.test(trimmed)) {
+      return { raw: line, chinese: `【${badge}】${text}`, kind, badge }
     }
   }
-  if (lower.includes('extracting base iso') || lower.includes('extracting iso')) {
-    return {
-      raw: line,
-      chinese: '【镜像解包】正在解开官方原版 ESXi 安装镜像目录树与引导卷...',
-      kind: 'step',
-      badge: '镜像解包',
+
+  for (const [re, text, kind, badge] of rules) {
+    if (re.test(trimmed)) {
+      return {
+        raw: line,
+        chinese: `【${badge}】${trimmed.replace(re, text)}`,
+        kind,
+        badge,
+      }
     }
   }
-  if (lower.includes('injecting community driver') || lower.includes('injecting driver')) {
+
+  if (/iso uploaded to|persisting artifact|artifact saved/i.test(trimmed)) {
     return {
       raw: line,
-      chinese: '【驱动注入】正在注入社区驱动包并配置自动加载脚本...',
-      kind: 'step',
-      badge: '驱动注入',
-    }
-  }
-  if (lower.includes('rebuilding bootable iso') || lower.includes('xorriso')) {
-    return {
-      raw: line,
-      chinese: '【系统封装】调用 xorriso 重新封装生成兼容 UEFI / BIOS 的引导镜像...',
-      kind: 'step',
-      badge: '镜像重构',
-    }
-  }
-  if (lower.includes('iso uploaded to') || lower.includes('persisting artifact') || lower.includes('artifact saved')) {
-    const dest = trimmed.replace(/.*(?:uploaded to|saved to|artifact:)s*/i, '')
-    return {
-      raw: line,
-      chinese: `【产物入库】定制 ESXi ISO 已成功持久化至存储：${dest || 'output 目录'}`,
+      chinese: `【产物入库】${trimmed}`,
       kind: 'success',
-      badge: '产物就绪',
+      badge: '产物入库',
     }
   }
-  if (lower.includes('iso generated successfully') || lower.includes('build completed successfully')) {
+  if (/build completed successfully|iso generated successfully/i.test(trimmed)) {
     return {
       raw: line,
-      chinese: '【流水线成功】所有阶段均已顺利通过，定制 ISO 镜像已生成，可直接下载！',
+      chinese: '【完成】构建流程已成功结束',
       kind: 'success',
-      badge: '构建成功',
+      badge: '完成',
     }
   }
 
-  // 4. 错误与警告
-  if (lower.includes('error') || lower.includes('failed') || lower.includes('fatal')) {
-    return {
-      raw: line,
-      chinese: `【异常报错】${trimmed}`,
-      kind: 'error',
-      badge: '异常错误',
+  // 7z 等工具的低价值细节：中文视图忽略，原始日志仍保留
+  if (
+    /^7-zip|^p7zip|^copyright/i.test(trimmed) ||
+    /^-{2,}$/.test(trimmed) ||
+    /^(scanning the drive|path = |type = |physical size|created = |modified = |everything is ok|files read from disk|archive size)/i.test(
+      trimmed
+    ) ||
+    /^(folders|files|size|compressed)\s*:/i.test(trimmed) ||
+    /^\d+ file(s)?, \d+ bytes/i.test(trimmed) ||
+    /^drive current:|^media (current|status|summary)|^added to iso image|^writing to |^xorriso : update|^xorriso [\d.]+ :/i.test(
+      trimmed
+    )
+  ) {
+    if (/^type = iso/i.test(trimmed)) {
+      return { raw: line, chinese: '【解包】确认为 ISO 镜像', kind: 'step', badge: '解包' }
     }
+    if (/^physical size = (\d+)/i.test(trimmed)) {
+      const size = trimmed.replace(/^physical size = /i, '')
+      return { raw: line, chinese: `【解包】镜像体积 ${size} 字节`, kind: 'step', badge: '解包', dedupeKey: 'unpack:size' }
+    }
+    return null
   }
-  if (lower.includes('warn')) {
+
+  if (/^extracting archive: (.+)$/i.test(trimmed)) {
     return {
       raw: line,
-      chinese: `【运行警告】${trimmed}`,
-      kind: 'warn',
-      badge: '状态警告',
+      chinese: `【解包】开始解包：${trimmed.replace(/^extracting archive:\s*/i, '')}`,
+      kind: 'step',
+      badge: '解包',
     }
   }
 
-  // 5. 普通信息
-  return {
-    raw: line,
-    chinese: trimmed,
-    kind: 'normal',
-    badge: '执行日志',
+  return { raw: line, chinese: trimmed, kind: 'normal', badge: '日志' }
+}
+
+function translateProgressText(text: string) {
+  const map: Array<[RegExp, string]> = [
+    [/extract/i, '正在解包基础镜像'],
+    [/inject/i, '正在注入驱动'],
+    [/rebuild|repack|export/i, '正在封装镜像'],
+    [/persist|upload/i, '正在校验并写入产物'],
+    [/build/i, '正在构建'],
+    [/complete|done/i, '已完成'],
+  ]
+  for (const [re, text2] of map) {
+    if (re.test(text)) return text2
+  }
+  return text
+}
+
+/** 相邻重复的中文行去掉，保留原始日志视图完整。 */
+export function dedupeChineseLogs(logs: Array<FormattedChineseLog | null>) {
+  const seenTiming = new Set<string>()
+  const out: FormattedChineseLog[] = []
+  let lastKey = ''
+  for (const item of logs) {
+    if (!item) continue
+    if (item.dedupeKey) {
+      if (seenTiming.has(item.dedupeKey)) continue
+      seenTiming.add(item.dedupeKey)
+    }
+    const key = `${item.kind}:${item.chinese}`
+    if (key === lastKey) continue
+    lastKey = key
+    out.push(item)
+  }
+  return out
+}
+
+/** 内网 HTTP 下 navigator.clipboard 不可用，需要回退方案。 */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 继续走回退
+  }
+  try {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.setAttribute('readonly', '')
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(area)
+    return ok
+  } catch {
+    return false
   }
 }

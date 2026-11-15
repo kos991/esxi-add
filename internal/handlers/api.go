@@ -43,10 +43,12 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	protectedAPI.Post("/buckets/:id/test", bucketHandler.TestConnection)
 	protectedAPI.Put("/buckets/:id/default", bucketHandler.SetDefault)
 
+	protectedAPI.Get("/files", fileHandler.List)
 	protectedAPI.Get("/files/depots", fileHandler.ListDepots)
 	protectedAPI.Get("/files/drivers", fileHandler.ListDrivers)
 	protectedAPI.Get("/files/isos", fileHandler.ListISOs)
 	protectedAPI.Post("/files/upload", fileHandler.UploadFile)
+	protectedAPI.Get("/files/:id/download", fileHandler.Download)
 	protectedAPI.Put("/files/:id/rename", fileHandler.RenameFile)
 	protectedAPI.Delete("/files/:id", fileHandler.DeleteFile)
 	protectedAPI.Post("/files/refresh", fileHandler.RefreshCache)
