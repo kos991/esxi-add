@@ -1,22 +1,25 @@
 # Changelog
 
+## v0.3.6 - 2026-11-15
+
+修复两个页面上「看到的选择」与「实际执行」不一致的问题。
+
+- **构建来源**：原生引擎只使用界面上选中的那个 ISO；不再去 `output/` 等目录随便找第一个 ISO 顶替。Depot ZIP 自动走 PowerCLI，两条路线都实测跑通。
+- **状态口径**：新配置、本次提交任务、历史查看任务分开显示；不再把历史成功任务当作本次结果；去掉硬编码的「引擎就绪」和不实的「已匹配」，改为「无标记（未验证兼容性）」。
+- **预检**：预检结果真正渲染（进行中/通过/失败），配方一变即标记过期。
+- **驱动**：跨存储或换源会清空旧的驱动选择，提交前只保留当前列表里真实存在的路径。
+- **中文日志**：错误优先判断，xorriso 报错不再被当成正常封装；阶段耗时别名去重；7z/xorriso 底层细节不再刷屏；中文视图实测 0 行英文残留，原始日志完整保留。
+- **存储**：新增 `GET /api/files/:id/download`，构建产出与普通 ISO 分栏；无版本文件标注「未标注」而不是静默消失；上传前必须确认目标盘/用途/版本，切盘不会漂移；支持真实上传进度、速率与取消。
+- **S3**：`test-config` 支持传 `id`（留空密钥沿用已保存的），返回 `capabilities`，只声明「可达 + 可列举」，不再声称读写；构造客户端不再偷偷创建桶；不存在的桶返回明确错误。
+- **扫描**：挂载后自动扫描，扫描失败会提示而不是假装成功；成功扫描后才清理已失效条目，保留原有 hash 与版本，保护正在上传的文件。
+- **保护**：被任务引用的文件不可重命名/删除，默认节点与被引用节点不可删除。
+- **镜像**：Dockerfile 统一 `LANG=C.UTF-8`，并在构建时把脚本换行强制转换为 LF，避免 CRLF 导致 bash 报错。
+
 ## v0.3.0 - 2026-11-14
 
 - 前端重构为两个页面：构建流水线（上编排、下中文日志）与存储与挂载。
 - 全部图标改为原生内联 SVG，移除第三方图标库依赖。
-- 新增 `POST /api/buckets/test-config`：S3 / 本地挂载保存前先测试连通性。
-- 构建引擎默认切换为 Linux 原生 xorriso 重封装（5~10 秒），PowerCLI 保留为备用。
+- 新增 `POST /api/buckets/test-config`：保存挂载前先测试连通性。
+- 构建引擎默认切换为 Linux 原生 xorriso 重封装，PowerCLI 保留为备用。
 - 新增 `install.sh` 一键部署脚本与 `make save` 离线镜像包。
 - 历史版本归档到 `archive/*` 分支。
-
-# Changelog
-
-## v0.2.0 - 2026-05-09
-
-- Single all-in-one Docker image for backend, frontend, Redis, PowerShell, and PowerCLI.
-- Local and S3-compatible storage nodes with public ISO download links.
-- Mixed-storage Depot discovery in the build wizard.
-- Depot and driver preflight download validation before builds start.
-- Build artifact download actions for local API download and remote public URL download.
-- Storage bucket API no longer returns stored secret keys.
-- Removed legacy standalone frontend image files and brittle frontend source-string Actions tests.
