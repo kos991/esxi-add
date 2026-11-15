@@ -54,6 +54,7 @@ export const HddOutlined = make('HddOutlined', <><line x1="22" y1="12" x2="2" y2
 export const HistoryOutlined = make('HistoryOutlined', <><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><polyline points="12 7 12 12 15 14"/></>)
 export const InboxOutlined = make('InboxOutlined', <><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>)
 export const LinkOutlined = make('LinkOutlined', <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></>)
+export const MenuOutlined = make('MenuOutlined', <><path d="M3 6h18M3 12h18M3 18h18"/></>)
 export const MenuFoldOutlined = make('MenuFoldOutlined', <><path d="M3 6h18M9 12h12M3 18h18"/><polyline points="5 9 2 12 5 15"/></>)
 export const MenuUnfoldOutlined = make('MenuUnfoldOutlined', <><path d="M3 6h18M3 12h12M3 18h18"/><polyline points="18 9 21 12 18 15"/></>)
 export const PlayCircleOutlined = make('PlayCircleOutlined', <><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></>)

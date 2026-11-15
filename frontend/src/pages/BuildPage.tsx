@@ -442,6 +442,8 @@ export default function BuildPage() {
           current={step - 1}
           items={stepItems}
           size="small"
+          responsive={false}
+          labelPlacement="horizontal"
           onChange={(n) => {
             const target = n + 1
             if (target <= step) setStep(target)

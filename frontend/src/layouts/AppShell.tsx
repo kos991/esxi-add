@@ -1,13 +1,13 @@
 import {
-  CloudServerOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   GithubOutlined,
   MenuFoldOutlined,
+  MenuOutlined,
   MenuUnfoldOutlined,
   ThunderboltOutlined,
 } from '../components/icons'
-import { Button, ConfigProvider, Layout, Menu, Space, Tag, Tooltip, theme } from 'antd'
+import { Button, ConfigProvider, Drawer, Layout, Menu, Space, Tag, Tooltip, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
@@ -16,8 +16,9 @@ const { Header, Sider, Content, Footer } = Layout
 const SIDER_WIDTH = 216
 const SIDER_COLLAPSED_WIDTH = 72
 const HEADER_HEIGHT = 56
+/** 小于该宽度视为手机：完全隐藏侧栏，改用抽屉导航，避免挤占内容区。 */
+const MOBILE_BREAKPOINT = 900
 
-// 严格精简为用户要求的 2 大核心页面
 const menuItems = [
   { key: '/build', label: '构建流水线', icon: <DeploymentUnitOutlined /> },
   { key: '/storage', label: '存储与挂载', icon: <DatabaseOutlined /> },
@@ -36,7 +37,7 @@ function resolveSelectedMenuKey(pathname: string): string {
   return '/build'
 }
 
-function AnimatedLogo({ onClick }: { onClick: () => void }) {
+function AnimatedLogo({ onClick, compact }: { onClick: () => void; compact?: boolean }) {
   return (
     <button
       type="button"
@@ -57,31 +58,40 @@ function AnimatedLogo({ onClick }: { onClick: () => void }) {
         <path className="brand-logo-line brand-logo-line-alt" d="M13 20h13" />
         <circle className="brand-logo-dot" cx="27.5" cy="20" r="2.6" />
       </svg>
-      <div className="brand-logo-text">
-        <strong>ESXi ISO Builder</strong>
-        <span>极速构建流水线</span>
-      </div>
+      {!compact && (
+        <div className="brand-logo-text">
+          <strong>ESXi ISO Builder</strong>
+          <span>极速构建流水线</span>
+        </div>
+      )}
     </button>
   )
 }
 
 export function AppShell({ pathname, navigate, children }: AppShellProps) {
-  const [collapsed, setCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900)
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT
+  )
+  const [collapsed, setCollapsed] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
-    let narrow = window.innerWidth < 900
     const onResize = () => {
-      const nowNarrow = window.innerWidth < 900
-      if (nowNarrow !== narrow) {
-        narrow = nowNarrow
-        setCollapsed(nowNarrow)
-      }
+      const mobile = window.innerWidth < MOBILE_BREAKPOINT
+      setIsMobile(mobile)
+      if (mobile) setDrawerOpen(false)
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
   const selectedPath = resolveSelectedMenuKey(pathname)
-  const siderWidth = collapsed ? SIDER_COLLAPSED_WIDTH : SIDER_WIDTH
+  const siderWidth = isMobile ? 0 : collapsed ? SIDER_COLLAPSED_WIDTH : SIDER_WIDTH
+
+  const handleNavigate = (path: string) => {
+    setDrawerOpen(false)
+    navigate(path)
+  }
 
   return (
     <ConfigProvider
@@ -112,9 +122,7 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
             lightTriggerBg: '#ffffff',
             lightTriggerColor: '#0f172a',
           },
-          Card: {
-            headerBg: '#ffffff',
-          },
+          Card: { headerBg: '#ffffff' },
           Menu: {
             itemBorderRadius: 8,
             itemHeight: 44,
@@ -122,14 +130,8 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
             itemSelectedBg: '#eff6ff',
             itemSelectedColor: '#1d4ed8',
           },
-          Table: {
-            headerBg: '#f8fafc',
-            headerColor: '#475569',
-            rowHoverBg: '#f8fbff',
-          },
-          Button: {
-            borderRadius: 8,
-          },
+          Table: { headerBg: '#f8fafc', headerColor: '#475569', rowHoverBg: '#f8fbff' },
+          Button: { borderRadius: 8 },
         },
         algorithm: theme.defaultAlgorithm,
       }}
@@ -137,76 +139,105 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
       <a href="#main-content" className="skip-link">
         跳到主要内容
       </a>
-      <Layout
-        hasSider
-        className={`app-shell ant-pro-layout ${collapsed ? 'app-shell-collapsed' : 'app-shell-expanded'}`}
-        style={{ minHeight: '100dvh' }}
-      >
+
+      <Layout hasSider={!isMobile} className="app-shell" style={{ minHeight: '100dvh' }}>
         <Header className="app-header">
-          <AnimatedLogo onClick={() => navigate('/build')} />
+          <Space size={8} align="center">
+            {isMobile && (
+              <Button
+                type="text"
+                aria-label="打开导航"
+                icon={<MenuOutlined />}
+                onClick={() => setDrawerOpen(true)}
+              />
+            )}
+            <AnimatedLogo compact={isMobile} onClick={() => handleNavigate('/build')} />
+          </Space>
+
           <div className="app-header-tools">
-            <Tag color="processing" className="header-engine-tag">
-              <ThunderboltOutlined /> Linux 原生重封装 (5~10 秒)
-            </Tag>
-            <Space size={10}>
-              <a
-                href="https://github.com/kos991/esxi-add"
-                target="_blank"
-                rel="noreferrer"
-                aria-label="项目仓库"
-                className="header-github-link"
-              >
-                <GithubOutlined />
-              </a>
-            </Space>
+            {!isMobile && (
+              <Tag color="processing" className="header-engine-tag">
+                <ThunderboltOutlined /> 原生重封装 / PowerCLI 备用
+              </Tag>
+            )}
+            <a
+              href="https://github.com/kos991/esxi-add"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="项目仓库"
+              className="header-github-link"
+            >
+              <GithubOutlined />
+            </a>
           </div>
         </Header>
 
-        <Sider
-          theme="light"
-          trigger={null}
-          collapsible
-          collapsed={collapsed}
-          width={SIDER_WIDTH}
-          collapsedWidth={SIDER_COLLAPSED_WIDTH}
-          className={`ant-pro-sider ${collapsed ? 'ant-pro-sider-collapsed' : ''}`}
-          style={{
-            position: 'fixed',
-            insetInlineStart: 0,
-            insetBlockStart: HEADER_HEIGHT,
-            insetBlockEnd: 0,
-            zIndex: 100,
-            borderInlineEnd: '1px solid #e2e8f0',
-            boxShadow: '4px 0 20px rgba(15, 23, 42, 0.03)',
-          }}
-        >
-          <nav aria-label="主导航">
+        {!isMobile && (
+          <Sider
+            theme="light"
+            trigger={null}
+            collapsible
+            collapsed={collapsed}
+            width={SIDER_WIDTH}
+            collapsedWidth={SIDER_COLLAPSED_WIDTH}
+            className={`ant-pro-sider ${collapsed ? 'ant-pro-sider-collapsed' : ''}`}
+            style={{
+              position: 'fixed',
+              insetInlineStart: 0,
+              insetBlockStart: HEADER_HEIGHT,
+              insetBlockEnd: 0,
+              zIndex: 100,
+              borderInlineEnd: '1px solid #e2e8f0',
+              boxShadow: '4px 0 20px rgba(15, 23, 42, 0.03)',
+            }}
+          >
+            <nav aria-label="主导航">
+              <Menu
+                mode="inline"
+                selectedKeys={[selectedPath]}
+                items={menuItems}
+                onClick={({ key }) => handleNavigate(key)}
+                style={{ borderInlineEnd: 0, paddingBlock: 12 }}
+              />
+            </nav>
+            <div className="ant-pro-model-menu-footer">
+              <Tooltip title={collapsed ? '展开侧栏' : '收起侧栏'} placement="right">
+                <Button
+                  aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+                  type="text"
+                  icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                  onClick={() => setCollapsed(!collapsed)}
+                />
+              </Tooltip>
+            </div>
+          </Sider>
+        )}
+
+        {isMobile && (
+          <Drawer
+            title="导航"
+            placement="left"
+            width={240}
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            styles={{ body: { padding: 0 } }}
+          >
             <Menu
               mode="inline"
               selectedKeys={[selectedPath]}
               items={menuItems}
-              onClick={({ key }) => navigate(key)}
-              style={{ borderInlineEnd: 0, paddingBlock: 12 }}
+              onClick={({ key }) => handleNavigate(key)}
+              style={{ borderInlineEnd: 0, paddingBlock: 8 }}
             />
-          </nav>
-          <div className="ant-pro-model-menu-footer">
-            <Tooltip title={collapsed ? '展开侧栏' : '收起侧栏'} placement="right">
-              <Button
-                aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
-                type="text"
-                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                onClick={() => setCollapsed(!collapsed)}
-              />
-            </Tooltip>
-          </div>
-        </Sider>
+          </Drawer>
+        )}
 
         <Layout
           className="app-main-layout"
           data-testid="app-main-layout"
           style={{
             marginLeft: siderWidth,
-            width: `calc(100% - ${siderWidth}px)`,
+            width: isMobile ? '100%' : `calc(100% - ${siderWidth}px)`,
             minWidth: 0,
             marginTop: HEADER_HEIGHT,
             transition: 'margin-left 0.2s ease, width 0.2s ease',

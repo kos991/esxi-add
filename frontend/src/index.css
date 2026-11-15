@@ -1350,3 +1350,88 @@ body {
     animation: none !important;
   }
 }
+
+/* ======================================================================
+   手机端：彻底让出宽度，步骤条横向紧凑
+   ====================================================================== */
+@media (max-width: 900px) {
+  .app-content {
+    padding: 12px 10px 4px;
+  }
+
+  .page-header {
+    gap: 8px;
+  }
+
+  .page-header-title.ant-typography {
+    font-size: 18px;
+  }
+
+  .page-header-extra {
+    inline-size: 100%;
+  }
+
+  .page-header-extra .ant-btn {
+    flex: 1 1 auto;
+  }
+
+  .wizard-steps .ant-steps-item-title {
+    font-size: 12px !important;
+  }
+
+  .wizard-steps .ant-steps-item-description {
+    display: none !important;
+  }
+
+  .wizard-steps .ant-steps-item-icon {
+    margin-inline-end: 6px;
+  }
+
+  .source-card {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .source-icon {
+    inline-size: 34px;
+    block-size: 34px;
+    flex-basis: 34px;
+    font-size: 9px;
+  }
+
+  .source-body strong {
+    font-size: 12px;
+  }
+
+  .wizard-footer {
+    position: sticky;
+    inset-block-end: 0;
+    z-index: 20;
+  }
+
+  .task-context-bar {
+    align-items: flex-start;
+  }
+
+  .log-terminal-body {
+    block-size: 240px;
+  }
+}
+
+@media (max-width: 480px) {
+  .wizard-steps .ant-steps-item-title {
+    font-size: 11px !important;
+  }
+
+  .wizard-steps .ant-steps-item-tail {
+    margin-inline-start: 10px !important;
+  }
+
+  .source-body code {
+    display: none;
+  }
+
+  .confirm-desc .ant-descriptions-item-label {
+    inline-size: 84px;
+  }
+}
