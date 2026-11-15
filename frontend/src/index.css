@@ -1435,3 +1435,223 @@ body {
     inline-size: 84px;
   }
 }
+
+/* ======================================================================
+   顶栏：只有两个页面，取消侧栏与抽屉
+   ====================================================================== */
+.topbar {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  block-size: 52px;
+  padding-inline: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-block-end: 1px solid #e6ebf2;
+}
+
+.topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar-brand:hover {
+  color: #1d4ed8;
+}
+
+.topbar .ant-segmented {
+  margin-inline: auto;
+}
+
+.seg-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.topbar-github {
+  display: grid;
+  place-items: center;
+  inline-size: 30px;
+  block-size: 30px;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 17px;
+}
+
+.topbar-github:hover {
+  background: #f1f5f9;
+  color: #2563eb;
+}
+
+.page-main {
+  max-inline-size: 1120px;
+  margin-inline: auto;
+  padding-inline: 16px;
+  padding-block-end: 40px;
+  min-inline-size: 0;
+}
+
+/* ======================================================================
+   极简步骤头：一个数字 + 一个标题 + 一条细进度
+   ====================================================================== */
+.step-head {
+  display: grid;
+  gap: 8px;
+  padding-block-end: 14px;
+  margin-block-end: 18px;
+  border-block-end: 1px solid #f1f5f9;
+}
+
+.step-head-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-inline-size: 0;
+}
+
+.step-head-count {
+  font-size: 24px;
+  font-weight: 750;
+  color: #2563eb;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.step-head-count em {
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 500;
+  color: #94a3b8;
+  margin-inline-start: 2px;
+}
+
+.step-head-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.step-head-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.step-head-bar {
+  block-size: 3px;
+  border-radius: 999px;
+  background: #eef2f7;
+  overflow: clip;
+}
+
+.step-head-bar i {
+  display: block;
+  block-size: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb, #0ea5e9);
+  transition: inline-size 0.25s ease;
+}
+
+/* 源卡片精简版 */
+.source-main {
+  flex: 1;
+  min-inline-size: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.source-main strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.source-engine {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.source-engine.iso {
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.source-engine.depot {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.source-card {
+  padding: 12px 14px;
+}
+
+.wizard-body {
+  padding-block: 4px 6px;
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    padding-inline: 10px;
+    gap: 6px;
+  }
+
+  .topbar-brand span {
+    display: none;
+  }
+
+  .page-main {
+    padding-inline: 10px;
+  }
+
+  .step-head-count {
+    font-size: 20px;
+  }
+
+  .step-head-name {
+    font-size: 14px;
+  }
+
+  .step-head-hint {
+    display: none;
+  }
+
+  .source-card {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .source-main strong {
+    font-size: 13px;
+  }
+
+  .source-engine {
+    font-size: 10px;
+    padding-inline: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-head-bar i {
+    transition: none;
+  }
+}

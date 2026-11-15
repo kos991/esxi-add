@@ -28,7 +28,6 @@ import {
   Progress,
   Segmented,
   Space,
-  Steps,
   Switch,
   Table,
   Tag,
@@ -83,11 +82,11 @@ function depotKey(bucketId: number, file: FileMetadata) {
 }
 
 /** 从来源路径推断实际会用的引擎，用于第 1 步直接告诉用户耗时量级。 */
-function engineOf(path: string): { label: string; tag: string; color: string } {
+function engineOf(path: string): { label: string; short: string; tag: string; color: 'iso' | 'depot' } {
   if (path.toLowerCase().endsWith('.iso')) {
-    return { label: 'ISO → 原生引擎（约 5~10 秒）', tag: '原生', color: 'cyan' }
+    return { label: 'ISO → 原生引擎（约 5~10 秒）', short: '原生 · 约 10 秒', tag: '原生', color: 'iso' }
   }
-  return { label: 'Depot → PowerCLI（约 1~2 分钟）', tag: 'PowerCLI', color: 'amber' }
+  return { label: 'Depot → PowerCLI（约 1~2 分钟）', short: 'PowerCLI · 约 1 分钟', tag: 'PowerCLI', color: 'depot' }
 }
 
 export default function BuildPage() {
@@ -438,30 +437,21 @@ export default function BuildPage() {
       />
 
       <Card className="wizard-card" variant="outlined">
-        <Steps
-          current={step - 1}
-          items={stepItems}
-          size="small"
-          responsive={false}
-          labelPlacement="horizontal"
-          onChange={(n) => {
-            const target = n + 1
-            if (target <= step) setStep(target)
-            else if (canLeaveStep1) setStep(target)
-          }}
-          className="wizard-steps"
-        />
+        <div className="step-head">
+          <div className="step-head-row">
+            <span className="step-head-count">
+              {step}
+              <em>/4</em>
+            </span>
+            <span className="step-head-name">{stepItems[step - 1].title}</span>
+            <span className="step-head-hint">{stepItems[step - 1].description}</span>
+          </div>
+          <div className="step-head-bar" aria-hidden="true">
+            <i style={{ width: `${(step / 4) * 100}%` }} />
+          </div>
+        </div>
 
         <div className="wizard-body">
-          <div className="wizard-body-head">
-            <Typography.Text strong>{`第 ${step} 步 · ${stepItems[step - 1].title}`}</Typography.Text>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {step === 1 && '原生引擎只接受 ISO；Depot ZIP 会自动使用 PowerCLI'}
-              {step === 2 && '默认不注入。勾选后会打进镜像并在首次启动时注册'}
-              {step === 3 && '决定安装自动化程度、root 密码与输出文件名'}
-              {step === 4 && '请核对下面每一项，确认后点击开始构建'}
-            </Typography.Text>
-          </div>
 
           {/* 步骤 1 */}
           {step === 1 && (
@@ -520,24 +510,15 @@ export default function BuildPage() {
                           }
                         }}
                       >
-                        <div className="source-icon">{engine.tag}</div>
-                        <div className="source-body">
+                        <div className="source-main">
                           <strong>{fileName(item.file)}</strong>
-                          <code className="mono">{item.file.path}</code>
-                          <Space size={6} wrap style={{ marginTop: 4 }}>
-                            <Tag color={item.bucketType === 's3' ? 'cyan' : 'blue'}>
-                              {item.bucketType === 's3' ? 'S3 挂载' : '本地存储'} · {item.bucketName}
-                            </Tag>
-                            <Tag color={cacheStatusColor(item.file, selectedBucket)}>
-                              {cacheStatusText(item.file, selectedBucket)}
-                            </Tag>
-                            {item.file.size ? (
-                              <Tag className="mono tabular-nums">{compactSize(item.file.size)}</Tag>
-                            ) : null}
-                            <Tag color={engine.color}>{engine.label}</Tag>
-                          </Space>
+                          <span className="source-meta">
+                            {item.bucketType === 's3' ? 'S3' : '本地'} · {compactSize(item.file.size)} ·{' '}
+                            {cacheStatusText(item.file, selectedBucket)}
+                          </span>
                         </div>
-                        <span className="source-check">{active ? <CheckCircleFilled /> : null}</span>
+                        <span className={`source-engine ${engine.color}`}>{engine.short}</span>
+                        {active && <CheckCircleFilled className="source-check" />}
                       </div>
                     )
                   })}
@@ -754,7 +735,7 @@ export default function BuildPage() {
                   </div>
                 </Descriptions.Item>
                 <Descriptions.Item label="实际引擎">
-                  <Tag color={engineOf(depotPath).color}>{engineOf(depotPath).label}</Tag>
+                  <Tag color={engineOf(depotPath).color === 'iso' ? 'cyan' : 'amber'}>{engineOf(depotPath).label}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="注入驱动">
                   {selectedDrivers.length === 0

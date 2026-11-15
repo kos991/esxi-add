@@ -121,7 +121,7 @@ describe('构建流水线（分步引导）', () => {
   it('第 1 步显示安装源，且不把历史任务当成本次结果', async () => {
     renderBuildPage()
 
-    expect(await screen.findByText('第 1 步 · 基础镜像')).toBeInTheDocument()
+    expect(await screen.findByText('基础镜像')).toBeInTheDocument()
     expect((await screen.findAllByText(/VMware-ESXi-8\.0U3k-depot\.zip/)).length).toBeGreaterThan(0)
     expect(screen.getByText(/还没有本次构建任务/)).toBeInTheDocument()
     expect(screen.queryByText('本次提交任务')).not.toBeInTheDocument()
@@ -134,7 +134,7 @@ describe('构建流水线（分步引导）', () => {
     await waitFor(() => expect(nextBtn()).toBeEnabled())
     fireEvent.click(nextBtn()) // → 第 2 步
 
-    expect(await screen.findByText('第 2 步 · 驱动注入')).toBeInTheDocument()
+    expect(await screen.findByText('驱动注入')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('net-community')).toBeInTheDocument())
 
     const row = screen.getByText('net-community').closest('tr') as HTMLElement
@@ -142,10 +142,10 @@ describe('构建流水线（分步引导）', () => {
     await waitFor(() => expect(screen.getByLabelText('已选 1 个')).toBeInTheDocument())
 
     fireEvent.click(nextBtn()) // → 第 3 步
-    expect(await screen.findByText('第 3 步 · 安装参数')).toBeInTheDocument()
+    expect(await screen.findByText('安装参数')).toBeInTheDocument()
 
     fireEvent.click(nextBtn()) // → 第 4 步
-    expect(await screen.findByText('第 4 步 · 确认并运行')).toBeInTheDocument()
+    expect(await screen.findByText('确认并运行')).toBeInTheDocument()
     expect(screen.getByText(/PowerCLI/)).toBeInTheDocument()
 
     fireEvent.click(startBtn())
@@ -168,11 +168,11 @@ describe('构建流水线（分步引导）', () => {
 
     await waitFor(() => expect(nextBtn()).toBeEnabled())
     fireEvent.click(nextBtn())
-    await screen.findByText('第 2 步 · 驱动注入')
+    await screen.findByText('驱动注入')
     fireEvent.click(nextBtn())
-    await screen.findByText('第 3 步 · 安装参数')
+    await screen.findByText('安装参数')
     fireEvent.click(nextBtn())
-    await screen.findByText('第 4 步 · 确认并运行')
+    await screen.findByText('确认并运行')
     fireEvent.click(startBtn())
 
     await waitFor(() => expect(screen.getByText('本次提交任务')).toBeInTheDocument())

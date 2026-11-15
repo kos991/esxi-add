@@ -2,46 +2,45 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { AppShell } from './layouts/AppShell'
 
-describe('2-Page Clean AppShell layout', () => {
-  it('renders strictly the 2 core navigation items (构建流水线, 存储与挂载)', async () => {
+describe('顶栏两页切换（无侧栏）', () => {
+  it('只提供「构建 / 存储」两个入口，且不渲染侧栏', async () => {
+    const navigate = vi.fn()
     render(
-      <AppShell pathname="/build" navigate={vi.fn()}>
-        <div>流水线内容区</div>
+      <AppShell pathname="/build" navigate={navigate}>
+        <div>内容区</div>
       </AppShell>
     )
 
-    expect(await screen.findByLabelText('ESXi ISO Builder')).toBeInTheDocument()
-    expect(await screen.findByText('构建流水线')).toBeInTheDocument()
-    expect(screen.getByText('存储与挂载')).toBeInTheDocument()
-    expect(screen.queryByText('总览')).not.toBeInTheDocument()
-    expect(screen.queryByText('任务日志')).not.toBeInTheDocument()
-    expect(screen.getByText('流水线内容区')).toBeInTheDocument()
+    expect(await screen.findByText('ESXi Builder')).toBeInTheDocument()
+    expect(screen.getByText('构建')).toBeInTheDocument()
+    expect(screen.getByText('存储')).toBeInTheDocument()
+    expect(screen.getByText('内容区')).toBeInTheDocument()
+
+    // 没有侧栏、没有汉堡按钮
+    expect(document.querySelector('.ant-layout-sider')).toBeNull()
+    expect(screen.queryByLabelText('打开导航')).not.toBeInTheDocument()
   })
 
-  it('toggles collapse cleanly', () => {
-    render(
-      <AppShell pathname="/build" navigate={vi.fn()}>
-        <div>流水线内容区</div>
+  it('在构建页点「存储」会跳转，在存储页点「构建」会跳转', async () => {
+    const nav1 = vi.fn()
+    const { unmount } = render(
+      <AppShell pathname="/build" navigate={nav1}>
+        <div>内容区</div>
       </AppShell>
     )
+    await screen.findByText('存储')
+    fireEvent.click(screen.getAllByRole('radio')[1])
+    expect(nav1).toHaveBeenCalledWith('/storage')
+    unmount()
 
-    const mainLayout = screen.getByTestId('app-main-layout')
-    expect(mainLayout).toHaveStyle({
-      marginLeft: '216px',
-      width: 'calc(100% - 216px)',
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
-    expect(mainLayout).toHaveStyle({
-      marginLeft: '72px',
-      width: 'calc(100% - 72px)',
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
-    expect(mainLayout).toHaveStyle({
-      marginLeft: '216px',
-      width: 'calc(100% - 216px)',
-    })
+    const nav2 = vi.fn()
+    render(
+      <AppShell pathname="/storage" navigate={nav2}>
+        <div>内容区</div>
+      </AppShell>
+    )
+    await screen.findByText('构建')
+    fireEvent.click(screen.getAllByRole('radio')[0])
+    expect(nav2).toHaveBeenCalledWith('/build')
   })
 })
-
