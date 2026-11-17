@@ -149,6 +149,7 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		ImageProfile: payload.ImageProfile,
 		RootPassword: payload.RootPassword,
 		InstallMode:  payload.InstallMode,
+		BootOptions:  payload.BootOptions,
 	}, progressChan)
 	powerCLIDuration := time.Since(powerCLIStarted)
 	wg.Wait()

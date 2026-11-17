@@ -75,6 +75,7 @@ import {
   compactSize,
   copyText,
   esxiVersions,
+  fileCategoryMeta,
   fileName,
   isBuildOutput,
 } from './pipelineUtils'
@@ -97,9 +98,11 @@ const defaultBucketPayload: BucketPayload = {
 }
 
 const driverCategories = [
-  { value: 'network', label: '网卡驱动' },
-  { value: 'storage', label: '存储控制器' },
-  { value: 'raid', label: 'RAID 阵列卡' },
+  { value: 'community', label: '社区驱动 (软路由/小主机)' },
+  { value: 'raid', label: 'RAID 阵列卡驱动' },
+  { value: 'network', label: '服务器网卡驱动' },
+  { value: 'storage', label: '存储/HBA 驱动' },
+  { value: 'oem-addon', label: '品牌机 Addon 扩展包' },
   { value: 'other', label: '其他驱动' },
 ]
 
@@ -154,6 +157,7 @@ export default function StorageFilesPage() {
   const [assetTab, setAssetTab] = useState<AssetTab>('depot')
   const [searchKeyword, setSearchKeyword] = useState('')
   const [versionFilter, setVersionFilter] = useState<string>('all')
+  const [kindFilter, setKindFilter] = useState<string>('all')
   const [renaming, setRenaming] = useState<FileMetadata | null>(null)
   const [renameForm] = Form.useForm<{ new_name: string }>()
 
@@ -211,14 +215,15 @@ export default function StorageFilesPage() {
           : versionFilter === 'unknown'
             ? !item.esxi_version
             : item.esxi_version === versionFilter
+      const matchKind = kindFilter === 'all' || fileCategoryMeta(item).kind === kindFilter
       const matchKw =
         !kw ||
         item.path.toLowerCase().includes(kw) ||
         (item.driver_name && item.driver_name.toLowerCase().includes(kw)) ||
         (item.driver_description && item.driver_description.toLowerCase().includes(kw))
-      return matchVersion && matchKw
+      return matchVersion && matchKind && matchKw
     })
-  }, [assetTab, groups, searchKeyword, versionFilter])
+  }, [assetTab, groups, searchKeyword, versionFilter, kindFilter])
 
   const unversionedCount = useMemo(
     () => groups[assetTab].filter((f) => !f.esxi_version).length,
@@ -514,9 +519,7 @@ export default function StorageFilesPage() {
           <Space size={6} wrap>
             <Typography.Text strong>{assetTitle(file)}</Typography.Text>
             {file.driver_version && <Tag style={{ marginInlineEnd: 0 }}>v{file.driver_version}</Tag>}
-            <Tag color={file.type === 'depot' ? 'blue' : file.type === 'driver' ? 'cyan' : 'purple'}>
-              {assetTypeText(file)}
-            </Tag>
+            <Tag color={fileCategoryMeta(file).color}>{fileCategoryMeta(file).label}</Tag>
           </Space>
           <Typography.Text
             className="mono table-path"
@@ -814,6 +817,22 @@ export default function StorageFilesPage() {
                 ]}
               />
               <Space size={8} wrap>
+                <Select
+                  style={{ width: 140 }}
+                  value={kindFilter}
+                  onChange={setKindFilter}
+                  options={[
+                    { value: 'all', label: '全部品牌/分类' },
+                    { value: 'official', label: '官方原版 ISO' },
+                    { value: 'official-patch', label: '官方升级补丁包' },
+                    { value: 'oem', label: '品牌定制 (Dell/H3C/浪潮)' },
+                    { value: 'community', label: '社区驱动' },
+                    { value: 'raid', label: '阵列卡驱动' },
+                    { value: 'network', label: '网卡驱动' },
+                    { value: 'storage', label: '存储/HBA' },
+                    { value: 'oem-addon', label: '品牌 Addon' },
+                  ]}
+                />
                 <Select
                   style={{ width: 132 }}
                   value={versionFilter}

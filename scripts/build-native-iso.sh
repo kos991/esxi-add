@@ -21,6 +21,7 @@ IMAGE_PROFILE=""
 MODE="Build"
 ROOT_PASSWORD="niuniu"
 INSTALL_MODE="unattended"
+BOOT_OPTIONS=""
 
 usage() {
     cat <<EOF
@@ -72,6 +73,10 @@ while [[ $# -gt 0 ]]; do
             INSTALL_MODE="$2"
             shift 2
             ;;
+        --boot-options)
+            BOOT_OPTIONS="$2"
+            shift 2
+            ;;
         --mode|-m)
             MODE="$2"
             shift 2
@@ -88,7 +93,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$MODE" == "InspectProfiles" ]]; then
-    echo "[ERROR] ?? ISO ????? Depot ImageProfile???? PowerCLI" >&2
+    echo "[ERROR] Native ISO engine cannot inspect Depot ImageProfiles; use PowerCLI" >&2
     exit 1
 fi
 
@@ -133,7 +138,7 @@ echo "[PROGRESS] 10 Extracting base ISO with 7z..."
 # Native builds must use exactly the supplied ISO, never a previous output.
 BASE_ISO="$DEPOT_PATH"
 if [[ "${BASE_ISO,,}" != *.iso || ! -f "$BASE_ISO" ]]; then
-    echo "[ERROR] ????????? ISO ???Depot ZIP ???? PowerCLI: $DEPOT_PATH" >&2
+    echo "[ERROR] Native engine only accepts an existing ISO file; Depot ZIP must use PowerCLI: $DEPOT_PATH" >&2
     exit 1
 fi
 if [[ "$(dd if="$BASE_ISO" bs=1 skip=32769 count=5 2>/dev/null)" != "CD001" ]]; then
@@ -225,10 +230,16 @@ for vib in vibs_to_process:
             if not clean_name.endswith('.v00'):
                 clean_name = clean_name + '.v00'
             
-            v00_path = os.path.join(iso_root, clean_name)
+            existing_match = None
+            for existing_f in os.listdir(iso_root):
+                if existing_f.lower() == clean_name.lower():
+                    existing_match = existing_f
+                    break
+            final_mod_name = existing_match if existing_match else clean_name
+            v00_path = os.path.join(iso_root, final_mod_name)
             with open(v00_path, 'wb') as out_f:
                 out_f.write(data)
-            print("MODULE:" + clean_name)
+            print("MODULE:" + final_mod_name)
 PYEOF
 }
 
@@ -257,16 +268,50 @@ fi
 # Step 3: Patch BOOT.CFG (BIOS and UEFI)
 echo "[PROGRESS] 55 Patching BOOT.CFG and generating KS.CFG..."
 
+EXTRA_KOPTS=""
+PERSIST_KOPTS=""
+TWEAK_HYBRID=0
+TWEAK_HEADLESS=0
+
+if [[ -n "$BOOT_OPTIONS" ]]; then
+    IFS=',' read -ra OPT_LIST <<< "$BOOT_OPTIONS"
+    for opt in "${OPT_LIST[@]}"; do
+        opt=$(echo "$opt" | tr -d '[:space:]')
+        case "$opt" in
+            hybrid_cpu)
+                EXTRA_KOPTS="${EXTRA_KOPTS} cpuUniformityHardCheckPanic=FALSE"
+                PERSIST_KOPTS="${PERSIST_KOPTS} cpuUniformityHardCheckPanic=FALSE"
+                TWEAK_HYBRID=1
+                echo "Enabled boot tweak: cpuUniformityHardCheckPanic=FALSE (Intel hybrid P/E-core)"
+                ;;
+            legacy_cpu)
+                EXTRA_KOPTS="${EXTRA_KOPTS} allowLegacyCPU=true"
+                PERSIST_KOPTS="${PERSIST_KOPTS} allowLegacyCPU=true"
+                echo "Enabled boot tweak: allowLegacyCPU=true (unsupported legacy CPU)"
+                ;;
+            osdata_8g)
+                EXTRA_KOPTS="${EXTRA_KOPTS} autoPartitionOSDataSize=8192"
+                echo "Enabled boot tweak: autoPartitionOSDataSize=8192 (8GB ESX-OSData volume)"
+                ;;
+            headless)
+                EXTRA_KOPTS="${EXTRA_KOPTS} ignoreHeadless=TRUE"
+                PERSIST_KOPTS="${PERSIST_KOPTS} ignoreHeadless=TRUE"
+                TWEAK_HEADLESS=1
+                echo "Enabled boot tweak: ignoreHeadless=TRUE (headless boot)"
+                ;;
+        esac
+    done
+fi
+
 patch_boot_cfg() {
     local cfg_file="$1"
     if [[ ! -f "$cfg_file" ]]; then
         return
     fi
 
-    # 1. Update kernelopt: set runweasel with or without ks=cdrom:/KS.CFG
-    local kernelopt_val="runweasel cdromBoot"
+    local kernelopt_val="runweasel cdromBoot${EXTRA_KOPTS}"
     if [[ "$INSTALL_MODE" != "interactive" ]]; then
-        kernelopt_val="runweasel ks=cdrom:/KS.CFG cdromBoot"
+        kernelopt_val="runweasel ks=cdrom:/KS.CFG cdromBoot${EXTRA_KOPTS}"
     fi
     if grep -qi "^kernelopt=" "$cfg_file"; then
         sed -i -E "s|^kernelopt=.*|kernelopt=${kernelopt_val}|I" "$cfg_file"
@@ -274,11 +319,9 @@ patch_boot_cfg() {
         echo "kernelopt=${kernelopt_val}" >> "$cfg_file"
     fi
 
-    # 2. Append injected .v00 modules into modules= line
     for mod in "${INJECTED_MODULES[@]}"; do
         mod_clean=$(echo "$mod" | tr '[:upper:]' '[:lower:]')
         if ! grep -qi -- "/$mod_clean" "$cfg_file"; then
-            # Append before /imgdb.tgz or at the end of modules line
             if grep -qi -- "--- /imgdb.tgz" "$cfg_file"; then
                 sed -i -E "s|--- /imgdb\.tgz|--- /${mod_clean} --- /imgdb.tgz|I" "$cfg_file"
             else
@@ -288,7 +331,6 @@ patch_boot_cfg() {
     done
 }
 
-# Locate BOOT.CFG files in root and EFI/BOOT/ (case insensitive)
 BOOT_CFG_ROOT=$(find "$ISO_ROOT" -maxdepth 1 -iname "BOOT.CFG" | head -n 1 || true)
 if [[ -n "$BOOT_CFG_ROOT" ]]; then
     patch_boot_cfg "$BOOT_CFG_ROOT"
@@ -299,10 +341,10 @@ if [[ -n "$BOOT_CFG_EFI" ]]; then
     patch_boot_cfg "$BOOT_CFG_EFI"
 fi
 
-# Step 4: Write KS.CFG with %firstboot script for reboot persistence
+# Step 4: Write KS.CFG with %post bootbank persistence and %firstboot VIB install
 KS_CFG="$ISO_ROOT/KS.CFG"
 cat <<KSEOF > "$KS_CFG"
-# ESXi Kickstart Installation Script with Custom Driver Firstboot Persistence
+# ESXi Kickstart Installation Script with Custom Driver & Kernel Persistence
 vmaccepteula
 rootpw ${ROOT_PASSWORD}
 clearpart --firstdisk=local --overwritevmfs
@@ -310,16 +352,20 @@ install --firstdisk=local --overwritevmfs
 reboot
 
 %post --interpreter=busybox
-# Stage VIB packages from CD-ROM to target disk
 mkdir -p /mnt/sysimage/var/opt/esxi-custom-vibs 2>/dev/null || mkdir -p /var/opt/esxi-custom-vibs 2>/dev/null || true
 cp /cdrom/*.vib /mnt/sysimage/var/opt/esxi-custom-vibs/ 2>/dev/null || cp /cdrom/*.vib /var/opt/esxi-custom-vibs/ 2>/dev/null || true
+if [ -n "${PERSIST_KOPTS}" ]; then
+    for bcfg in /mnt/sysimage/bootbank/boot.cfg /mnt/sysimage/altbootbank/boot.cfg /bootbank/boot.cfg; do
+        if [ -f "$bcfg" ]; then
+            sed -i "s|^kernelopt=.*|&${PERSIST_KOPTS}|" "$bcfg" 2>/dev/null || true
+        fi
+    done
+fi
 
 %firstboot --interpreter=busybox
-# Install custom injected VIB packages on first reboot
 LOG="/var/log/custom-driver-firstboot.log"
-echo "=== Installing Custom Drivers at $(date) ===" > "$LOG"
+echo "=== Installing Custom Drivers & Kernel Settings at $(date) ===" > "$LOG"
 
-# Wait for local esxcli subsystem to become ready
 counter=0
 while [ $counter -lt 30 ]; do
     if esxcli system version get >/dev/null 2>&1; then
@@ -329,7 +375,13 @@ while [ $counter -lt 30 ]; do
     counter=$((counter + 1))
 done
 
-# Search and install staged or cdrom VIBs
+if [ "${TWEAK_HYBRID}" = "1" ]; then
+    esxcli system settings kernel set -s cpuUniformityHardCheckPanic -v FALSE >> "$LOG" 2>&1 || true
+fi
+if [ "${TWEAK_HEADLESS}" = "1" ]; then
+    esxcli system settings kernel set -s ignoreHeadless -v TRUE >> "$LOG" 2>&1 || true
+fi
+
 VIB_DIR="/var/opt/esxi-custom-vibs"
 if [ ! -d "$VIB_DIR" ] || [ -z "$(ls -A "$VIB_DIR" 2>/dev/null)" ]; then
     VIB_DIR="/cdrom"
@@ -338,7 +390,7 @@ fi
 for vib in "$VIB_DIR"/*.vib; do
     if [ -f "$vib" ]; then
         echo "Installing $vib..." >> "$LOG"
-        esxcli software vib install -v "$vib" --no-sig-check >> "$LOG" 2>&1 || true
+        esxcli software vib install -v "$vib" --no-sig-check -f >> "$LOG" 2>&1 || true
     fi
 done
 
@@ -354,7 +406,6 @@ echo "[TIMING] driver_injection_ms=${DRIVER_INJECT_MS}"
 REBUILD_START=$(date +%s%3N)
 echo "[PROGRESS] 70 Rebuilding dual-boot ISO with xorriso HPE golden parameters..."
 
-# Identify boot file names (case-insensitive)
 BOOT_BIN=$(find "$ISO_ROOT" -maxdepth 1 -iname "isolinux.bin" -exec basename {} \; | head -n 1 || echo "ISOLINUX.BIN")
 BOOT_CAT=$(find "$ISO_ROOT" -maxdepth 1 -iname "boot.cat" -exec basename {} \; | head -n 1 || echo "BOOT.CAT")
 EFI_IMG=$(find "$ISO_ROOT" -maxdepth 1 -iname "efiboot.img" -exec basename {} \; | head -n 1 || echo "EFIBOOT.IMG")

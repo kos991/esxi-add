@@ -10,6 +10,7 @@ export interface CreateBuildPayload {
   image_profile?: string
   root_password?: string
   install_mode?: 'unattended' | 'interactive'
+  boot_options?: string[]
 }
 
 export interface PaginatedBuilds {

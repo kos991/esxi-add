@@ -29,6 +29,7 @@ type BuildParams struct {
 	ImageProfile string
 	RootPassword string
 	InstallMode  string
+	BootOptions  []string
 }
 
 type BuildProgress struct {
@@ -85,6 +86,9 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		if params.InstallMode != "" {
 			args = append(args, "--install-mode", params.InstallMode)
 		}
+		if len(params.BootOptions) > 0 {
+			args = append(args, "--boot-options", strings.Join(params.BootOptions, ","))
+		}
 		cmd = exec.CommandContext(ctx, "bash", args...)
 	} else {
 		args := []string{
@@ -101,6 +105,9 @@ func (e *PowerShellExecutor) ExecuteBuild(ctx context.Context, params *BuildPara
 		}
 		if params.InstallMode != "" {
 			args = append(args, "-InstallMode", params.InstallMode)
+		}
+		if len(params.BootOptions) > 0 {
+			args = append(args, "-BootOptions", strings.Join(params.BootOptions, ","))
 		}
 		cmd = exec.CommandContext(ctx, e.pwshPath, args...)
 	}

@@ -91,6 +91,54 @@ export function cacheStatusColor(file: FileMetadata, bucket?: StorageBucket) {
   return 'default'
 }
 
+
+export type SourceKind = 'official' | 'official-patch' | 'oem'
+
+export function fileCategoryMeta(file: FileMetadata): { label: string; color: string; kind: string } {
+  const cat = (file.driver_category || '').toLowerCase()
+  const path = (file.path || '').toLowerCase()
+  const name = (file.driver_name || file.path || '').toLowerCase()
+
+  if (isBuildOutput(file)) return { label: '构建产物', color: 'green', kind: 'output' }
+
+  if (file.type === 'driver') {
+    if (cat === 'community' || path.includes('/community/') || /vmkusb|net-community|nvme-community|re-driver|r8125|r8168/.test(name)) {
+      return { label: '社区驱动', color: 'magenta', kind: 'community' }
+    }
+    if (cat === 'oem-addon' || path.includes('/oem-addon/') || name.includes('addon')) {
+      return { label: '品牌 Addon', color: 'volcano', kind: 'oem-addon' }
+    }
+    if (cat === 'raid' || path.includes('/raid/') || /smartpqi|lsi-mr3|lsi_mr3|lsi-msgpt|lsi-uklst|nhpsa|lsu-/.test(name)) {
+      return { label: '阵列卡', color: 'gold', kind: 'raid' }
+    }
+    if (cat === 'network' || path.includes('/network/') || /bnxtnet|i40en|icen|igbn|ixgben|nmlx|qfle|elxnet/.test(name)) {
+      return { label: '网卡', color: 'blue', kind: 'network' }
+    }
+    if (cat === 'storage' || path.includes('/storage/') || /ahci|nvme|pvscsi|lpfc|elxiscsi/.test(name)) {
+      return { label: '存储/HBA', color: 'cyan', kind: 'storage' }
+    }
+    return { label: '驱动', color: 'default', kind: 'other' }
+  }
+
+  // ISO / Depot：区分官方原版、官方升级补丁包、Dell/H3C/浪潮/HPE 品牌定制
+  if (cat === 'oem-dell' || path.includes('/oem-dell/') || name.includes('dell')) {
+    return { label: file.type === 'depot' ? 'Dell 离线包' : 'Dell 定制', color: 'cyan', kind: 'oem' }
+  }
+  if (cat === 'oem-h3c' || path.includes('/oem-h3c/') || name.startsWith('h3c-')) {
+    return { label: file.type === 'depot' ? 'H3C 离线包' : 'H3C 定制', color: 'purple', kind: 'oem' }
+  }
+  if (cat === 'oem-inspur' || path.includes('/oem-inspur/') || name.includes('inspur')) {
+    return { label: file.type === 'depot' ? '浪潮离线包' : '浪潮定制', color: 'orange', kind: 'oem' }
+  }
+  if (cat === 'oem-hpe' || path.includes('/oem-hpe/') || name.includes('-hpe-')) {
+    return { label: file.type === 'depot' ? 'HPE 离线包' : 'HPE 定制', color: 'green', kind: 'oem' }
+  }
+  if (file.type === 'depot' || cat === 'official-patch' || path.includes('/official-patch/')) {
+    return { label: '官方升级包', color: 'geekblue', kind: 'official-patch' }
+  }
+  return { label: '官方原版', color: 'blue', kind: 'official' }
+}
+
 export function compactSize(value?: number) {
   return value ? formatBytes(value) : '-'
 }
@@ -150,10 +198,10 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
   const isWarn = !isError && /(^|\s)warn(ing)?(\s|:|\]|$)/i.test(trimmed)
 
   if (isError) {
-    return { raw: line, chinese: `【错误】${trimmed}`, kind: 'error', badge: '错误' }
+    return { raw: line, chinese: `${trimmed}`, kind: 'error', badge: '错误' }
   }
   if (isWarn) {
-    return { raw: line, chinese: `【警告】${trimmed}`, kind: 'warn', badge: '警告' }
+    return { raw: line, chinese: `${trimmed}`, kind: 'warn', badge: '警告' }
   }
 
   // [TIMING] 阶段耗时
@@ -163,7 +211,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     const ms = Number(timing[2])
     return {
       raw: line,
-      chinese: `【阶段耗时】${label}：${(ms / 1000).toFixed(2)} 秒`,
+      chinese: `${label}：${(ms / 1000).toFixed(2)} 秒`,
       kind: 'timing',
       badge: '耗时',
       dedupeKey: `timing:${dedupeKey}`,
@@ -176,7 +224,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     const rest = progress[2]?.trim() || ''
     return {
       raw: line,
-      chinese: `【构建进度】${progress[1]}%${rest ? ` · ${translateProgressText(rest)}` : ''}`,
+      chinese: `${progress[1]}%${rest ?` · ${translateProgressText(rest)}` : ''}`,
       kind: 'progress',
       badge: '进度',
     }
@@ -192,11 +240,11 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
 
   const rules: Array<[RegExp, string, ChineseLogKind, string]> = [
     [/starting native .*(iso )?build/i, '启动 Linux 原生重封装引擎', 'step', '引擎'],
-    [/^using base iso[:\s]+(.+)$/i, '实际使用的基础镜像：$1', 'step', '基础镜像'],
+    [/^using base iso[:\s]+(.+)$/i, '实际使用的基础镜像：$1', 'step', '镜像'],
     [/^processing driver[:\s]+(.+)$/i, '正在处理驱动包：$1', 'step', '驱动'],
     [/^injected vib[:\s]+(.+)$/i, '已注入 VIB 驱动：$1', 'step', '驱动'],
     [/^injected kernel module[:\s]+(.+)$/i, '已注入内核模块：$1', 'step', '驱动'],
-    [/^patching boot\.cfg.*$/i, '正在修改引导配置并生成无人值守安装脚本', 'step', '安装配置'],
+    [/^patching boot\.cfg.*$/i, '正在修改引导配置并生成无人值守安装脚本', 'step', '参数'],
     [/^extracting (base )?iso.*$/i, '正在解包基础镜像', 'step', '解包'],
     [/^extracting and injecting drivers.*$/i, '正在解包并注入驱动', 'step', '驱动'],
     [/iso image produced[:\s]+(\d+).*sectors/i, '镜像已生成，共 $1 个扇区', 'step', '封装'],
@@ -204,21 +252,25 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     [/^iso created[:\s]+(.+)$/i, '输出的 ISO：$1', 'success', '产物'],
     [/^rebuilding .*iso.*$/i, '正在重新封装可引导镜像', 'step', '封装'],
     [/^starting build\.*$/i, '开始构建', 'step', '构建'],
-    [/^cloning profile[:\s]+(.+)$/i, '克隆镜像配置：$1', 'step', 'Profile'],
-    [/^using image profile[:\s]+(.+)$/i, '使用镜像配置：$1', 'step', 'Profile'],
+    [/^cloning profile[:\s]+(.+)$/i, '克隆镜像配置：$1', 'step', '配置'],
+    [/^using image profile[:\s]+(.+)$/i, '使用镜像配置：$1', 'step', '配置'],
     [/^exporting iso\.*$/i, '正在导出 ISO', 'step', '导出'],
     [/^export strategy[:\s]+(.+)$/i, '导出方式：$1', 'step', '导出'],
     [/^loading esxi depot/i, '正在加载 ESXi 软件仓库', 'step', '仓库'],
-    [/^getting image profile/i, '正在读取镜像配置', 'step', 'Profile'],
+    [/^getting image profile/i, '正在读取镜像配置', 'step', '配置'],
     [/^no esxi image profiles found/i, '软件仓库中没有可用的镜像配置', 'error', '仓库'],
-    [/^iso uploaded to (.+)$/i, '定制 ISO 已写入存储：$1', 'success', '产物入库'],
+    [/^iso uploaded to (.+)$/i, '定制 ISO 已写入存储：$1', 'success', '入库'],
+    [/^enabled boot tweak: cpuUniformityHardCheckPanic=FALSE.*$/i, '已注入 Intel 大小核防紫屏内核参数 (并写入装后持久化)', 'step', '参数'],
+    [/^enabled boot tweak: allowLegacyCPU=true.*$/i, '已注入放行老旧 CPU 参数 (allowLegacyCPU=true)', 'step', '参数'],
+    [/^enabled boot tweak: autoPartitionOSDataSize=8192.*$/i, '已启用 8GB 精简系统盘 (autoPartitionOSDataSize=8192)', 'step', '参数'],
+    [/^enabled boot tweak: ignoreHeadless=TRUE.*$/i, '已启用无头模式引导 (ignoreHeadless=TRUE)', 'step', '参数'],
     [/^done$/i, '该阶段处理完成', 'step', '完成'],
     [/^using .* engine/i, '$&', 'step', '引擎'],
   ]
 
   for (const [re, text, kind, badge] of scriptRules) {
     if (re.test(trimmed)) {
-      return { raw: line, chinese: `【${badge}】${text}`, kind, badge }
+      return { raw: line, chinese: `${text}`, kind, badge }
     }
   }
 
@@ -226,7 +278,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     if (re.test(trimmed)) {
       return {
         raw: line,
-        chinese: `【${badge}】${trimmed.replace(re, text)}`,
+        chinese: `${trimmed.replace(re, text)}`,
         kind,
         badge,
       }
@@ -236,15 +288,15 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
   if (/iso uploaded to|persisting artifact|artifact saved/i.test(trimmed)) {
     return {
       raw: line,
-      chinese: `【产物入库】${trimmed}`,
+      chinese: `${trimmed}`,
       kind: 'success',
-      badge: '产物入库',
+      badge: '入库',
     }
   }
   if (/build completed successfully|iso generated successfully/i.test(trimmed)) {
     return {
       raw: line,
-      chinese: '【完成】构建流程已成功结束',
+      chinese: '构建流程已成功结束',
       kind: 'success',
       badge: '完成',
     }
@@ -264,11 +316,11 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     )
   ) {
     if (/^type = iso/i.test(trimmed)) {
-      return { raw: line, chinese: '【解包】确认为 ISO 镜像', kind: 'step', badge: '解包' }
+      return { raw: line, chinese: '确认为 ISO 镜像', kind: 'step', badge: '解包' }
     }
     if (/^physical size = (\d+)/i.test(trimmed)) {
       const size = trimmed.replace(/^physical size = /i, '')
-      return { raw: line, chinese: `【解包】镜像体积 ${size} 字节`, kind: 'step', badge: '解包', dedupeKey: 'unpack:size' }
+      return { raw: line, chinese: `镜像体积 ${size} 字节`, kind: 'step', badge: '解包', dedupeKey: 'unpack:size' }
     }
     return null
   }
@@ -276,7 +328,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
   if (/^extracting archive: (.+)$/i.test(trimmed)) {
     return {
       raw: line,
-      chinese: `【解包】开始解包：${trimmed.replace(/^extracting archive:\s*/i, '')}`,
+      chinese: `开始解包：${trimmed.replace(/^extracting archive:\s*/i, '')}`,
       kind: 'step',
       badge: '解包',
     }

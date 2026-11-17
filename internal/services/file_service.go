@@ -523,6 +523,7 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		if inferred := inferESXiVersionFromDepotName(metadata.DriverName); inferred != "" {
 			metadata.ESXiVersion = inferred
 		}
+		metadata.DriverCategory = category
 		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeDepot)
 	case isDriverPrefix(prefix) && strings.EqualFold(filepath.Ext(cleanPath), ".iso"):
 		metadata.Type = models.FileTypeISO
@@ -541,6 +542,7 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		metadata.Type = models.FileTypeISO
 		if prefix != "output" {
 			metadata.ESXiVersion = version
+			metadata.DriverCategory = category
 		}
 		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeISO)
 	}
@@ -549,10 +551,14 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 	ext := strings.ToLower(path.Ext(cleanPath))
 	switch ext {
 	case ".iso":
-		metadata.Type = models.FileTypeISO
+		if metadata.Type == "" {
+			metadata.Type = models.FileTypeISO
+		}
 	case ".vib":
-		metadata.Type = models.FileTypeDriver
-		metadata.DriverType = "vib"
+		if metadata.Type == "" {
+			metadata.Type = models.FileTypeDriver
+			metadata.DriverType = "vib"
+		}
 	case ".zip":
 		if metadata.Type == "" {
 			name := strings.ToLower(path.Base(cleanPath))
@@ -620,11 +626,42 @@ func versionTagFromFilename(filename string) string {
 	return name
 }
 
+func inferSourceCategory(objectPath, fileType string) string {
+	low := strings.ToLower(objectPath)
+	name := strings.ToLower(path.Base(objectPath))
+	switch {
+	case strings.Contains(low, "/oem-dell/") || strings.Contains(name, "dell"):
+		return "oem-dell"
+	case strings.Contains(low, "/oem-h3c/") || strings.HasPrefix(name, "h3c-"):
+		return "oem-h3c"
+	case strings.Contains(low, "/oem-inspur/") || strings.Contains(name, "inspur"):
+		return "oem-inspur"
+	case strings.Contains(low, "/oem-hpe/") || strings.Contains(name, "-hpe-"):
+		return "oem-hpe"
+	case fileType == models.FileTypeDepot:
+		return "official-patch"
+	default:
+		return "official"
+	}
+}
+
 func fileDescription(objectPath, fileType string) string {
+	low := strings.ToLower(objectPath)
 	name := strings.ToLower(displayNameFromFilename(objectPath))
 	switch fileType {
 	case models.FileTypeDepot:
-		return "ESXi Depot升级包"
+		switch inferSourceCategory(objectPath, models.FileTypeDepot) {
+		case "oem-dell":
+			return "Dell 定制离线包"
+		case "oem-h3c":
+			return "H3C 定制离线包"
+		case "oem-inspur":
+			return "浪潮定制离线包"
+		case "oem-hpe":
+			return "HPE 定制离线包"
+		default:
+			return "官方升级补丁包"
+		}
 	case models.FileTypeDriver:
 		switch {
 		case strings.Contains(name, "vmkusb") || strings.Contains(name, "usb-nic") || strings.Contains(name, "usb_nic"):
@@ -635,11 +672,40 @@ func fileDescription(objectPath, fileType string) string {
 			return "RAID驱动"
 		case strings.HasPrefix(name, "scsi-") || strings.HasPrefix(name, "sata-") || strings.HasPrefix(name, "nvme-"):
 			return "存储驱动"
+		case strings.Contains(name, "addon"):
+			return "OEM硬件扩展包"
+		case strings.Contains(low, "/community/"):
+			return "社区驱动"
+		case strings.Contains(low, "/raid/"):
+			return "阵列卡驱动"
+		case strings.Contains(low, "/network/"):
+			return "服务器网卡驱动"
+		case strings.Contains(low, "/storage/"):
+			return "存储控制器驱动"
 		default:
 			return "驱动包"
 		}
 	case models.FileTypeISO:
-		return "ISO镜像"
+		if strings.HasPrefix(strings.TrimLeft(low, "/"), "output/") {
+			return "ISO镜像"
+		}
+		switch inferSourceCategory(objectPath, models.FileTypeISO) {
+		case "oem-dell":
+			return "Dell 定制 ISO"
+		case "oem-h3c":
+			return "H3C 定制 ISO"
+		case "oem-inspur":
+			return "浪潮定制 ISO"
+		case "oem-hpe":
+			return "HPE 定制 ISO"
+		case "official":
+			if strings.Contains(low, "isos/") {
+				return "官方原版 ISO"
+			}
+			return "ISO镜像"
+		default:
+			return "ISO镜像"
+		}
 	default:
 		return objectPath
 	}

@@ -22,6 +22,7 @@ type BuildISOPayload struct {
 	ImageProfile  string   `json:"image_profile"`
 	RootPassword  string   `json:"root_password,omitempty"`
 	InstallMode   string   `json:"install_mode,omitempty"`
+	BootOptions   []string `json:"boot_options,omitempty"`
 }
 
 func NewBuildISOTask(p *BuildISOPayload) (*asynq.Task, error) {

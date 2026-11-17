@@ -13,21 +13,28 @@ import {
   SafetyCertificateOutlined,
   SearchOutlined,
   ThunderboltOutlined,
+  HddOutlined,
+  ApiOutlined,
+  SettingOutlined,
 } from '../components/icons'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Descriptions,
+  Divider,
   Drawer,
   Empty,
   Form,
   Input,
+  List,
   Popconfirm,
   Progress,
-  Segmented,
+  Radio,
   Space,
+  Steps,
   Switch,
   Table,
   Tag,
@@ -48,9 +55,9 @@ import {
   listBuilds,
   startBuildPreflight,
 } from '../api/builds'
-import { listDepots, listDrivers } from '../api/files'
+import { listDepots, listDrivers, listISOs } from '../api/files'
 import { PageHeader } from '../components/PageHeader'
-import { PhaseTimingBreakdown } from '../components/TaskWorkspace'
+import { StepDiscIcon, StepDriverIcon, StepLaunchIcon, StepParamIcon } from '../components/StepSvgIcons'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { BuildTask, FileMetadata } from '../types'
 import { buildPublicObjectUrl, formatDate, parseDrivers } from '../utils'
@@ -62,8 +69,10 @@ import {
   copyText,
   dedupeChineseLogs,
   esxiVersions,
+  fileCategoryMeta,
   fileName,
   formatLogToChinese,
+  isBuildOutput,
 } from './pipelineUtils'
 
 type DepotOption = {
@@ -76,6 +85,12 @@ type DepotOption = {
 
 type LogViewMode = 'chinese' | 'raw'
 type LogFilterType = 'all' | 'issues'
+
+function shortVersion(value?: string) {
+  if (!value) return '-'
+  const match = value.match(/(\d+\.\d+(?:\.\d+)?)/)
+  return match ? match[1] : value
+}
 
 function depotKey(bucketId: number, file: FileMetadata) {
   return `${bucketId}:${file.id}:${file.path}`
@@ -119,6 +134,9 @@ export default function BuildPage() {
   const [depotPath, setDepotPath] = useState<string>(() => searchParams.get('depot') || '')
   const [driverPaths, setDriverPaths] = useState<string[]>([])
   const [installMode, setInstallMode] = useState<'unattended' | 'interactive'>('unattended')
+  const [sourceKindFilter, setSourceKindFilter] = useState<'all' | 'official' | 'official-patch' | 'oem'>('all')
+  const [driverCategoryFilter, setDriverCategoryFilter] = useState<'all' | 'community' | 'raid' | 'network' | 'storage' | 'oem-addon'>('all')
+  const [bootOptions, setBootOptions] = useState<string[]>(['hybrid_cpu', 'osdata_8g'])
   const [driverSearch, setDriverSearch] = useState('')
 
   // 预检
@@ -153,20 +171,32 @@ export default function BuildPage() {
       enabled: Boolean(bucket.id),
     })),
   })
+  const isoQueries = useQueries({
+    queries: buckets.map((bucket) => ({
+      queryKey: ['build-isos', bucket.id],
+      queryFn: () => (listISOs ? listISOs(bucket.id) : Promise.resolve([])),
+      enabled: Boolean(bucket.id),
+    })),
+  })
 
-  const depotOptions = useMemo<DepotOption[]>(
-    () =>
-      buckets.flatMap((bucket, index) =>
-        (depotQueries[index]?.data ?? []).map((file) => ({
-          key: depotKey(bucket.id, file),
-          bucketId: bucket.id,
-          bucketName: bucket.name,
-          bucketType: bucket.type === 'local' ? 'local' : 's3',
-          file,
-        }))
-      ),
-    [buckets, depotQueries]
-  )
+  const depotOptions = useMemo<DepotOption[]>(() => {
+    const out: DepotOption[] = []
+    const seen = new Set<string>()
+    buckets.forEach((bucket, index) => {
+      const bType = bucket.type === 'local' ? 'local' : 's3'
+      const depots = depotQueries[index]?.data ?? []
+      const isos = (isoQueries[index]?.data ?? []).filter(
+        (file) => !isBuildOutput(file) && (!file.esxi_version || file.esxi_version === version)
+      )
+      for (const file of [...isos, ...depots]) {
+        const key = depotKey(bucket.id, file)
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push({ key, bucketId: bucket.id, bucketName: bucket.name, bucketType: bType, file })
+      }
+    })
+    return out
+  }, [buckets, depotQueries, isoQueries, version])
 
   const selectedBucketId = bucketId ?? buckets.find((b) => b.is_default)?.id ?? buckets[0]?.id
   const selectedBucket = buckets.find((b) => b.id === selectedBucketId)
@@ -177,6 +207,10 @@ export default function BuildPage() {
     enabled: Boolean(selectedBucketId),
   })
   const drivers = driversQuery.data ?? []
+  const filteredDepotOptions = useMemo(() => {
+    if (sourceKindFilter === 'all') return depotOptions
+    return depotOptions.filter((item) => fileCategoryMeta(item.file).kind === sourceKindFilter)
+  }, [depotOptions, sourceKindFilter])
   const selectedDepot = depotOptions.find(
     (item) => item.bucketId === selectedBucketId && item.file.path === depotPath
   )
@@ -305,14 +339,17 @@ export default function BuildPage() {
 
   const filteredDrivers = useMemo(() => {
     const kw = driverSearch.trim().toLowerCase()
-    if (!kw) return drivers
-    return drivers.filter(
-      (d) =>
+    return drivers.filter((d) => {
+      const catOk = driverCategoryFilter === 'all' || fileCategoryMeta(d).kind === driverCategoryFilter
+      if (!catOk) return false
+      if (!kw) return true
+      return (
         d.path.toLowerCase().includes(kw) ||
         (d.driver_name && d.driver_name.toLowerCase().includes(kw)) ||
         (d.driver_description && d.driver_description.toLowerCase().includes(kw))
-    )
-  }, [drivers, driverSearch])
+      )
+    })
+  }, [drivers, driverSearch, driverCategoryFilter])
 
   const allDriversSelected =
     filteredDrivers.length > 0 && filteredDrivers.every((d) => effectiveDriverPaths.includes(d.path))
@@ -322,46 +359,37 @@ export default function BuildPage() {
       title: '驱动包',
       key: 'name',
       render: (_, file) => (
-        <div className="table-cell-stack">
-          <Typography.Text strong ellipsis style={{ maxWidth: 280 }}>
-            {file.driver_name || fileName(file)}
-          </Typography.Text>
-          <Typography.Text
-            type="secondary"
-            className="mono"
-            ellipsis={{ tooltip: file.path }}
-            style={{ fontSize: 11 }}
-          >
-            {file.driver_description || file.path}
-          </Typography.Text>
+        <div>
+          <Typography.Text strong>{file.driver_name || fileName(file)}</Typography.Text>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+              {file.path}
+            </Typography.Text>
+          </div>
         </div>
       ),
     },
     {
       title: '版本',
       dataIndex: 'driver_version',
-      width: 88,
-      render: (v) => <span className="mono tabular-nums">{v || '-'}</span>,
+      width: 120,
+      render: (v) => <Typography.Text code>{shortVersion(v)}</Typography.Text>,
     },
     {
       title: '大小',
       dataIndex: 'size',
-      width: 84,
-      render: (v) => <span className="mono tabular-nums">{compactSize(v)}</span>,
+      width: 96,
+      render: (v) => <Typography.Text>{compactSize(v)}</Typography.Text>,
     },
     {
       title: '标记',
       key: 'flag',
-      width: 90,
+      width: 92,
       render: (_, file) =>
         file.conflicts_with || file.depends_on || file.cache_status === 'missing' ? (
-          <Tooltip title="存在冲突、依赖或缓存缺失标记">
-            <Tag color="warning">待确认</Tag>
-          </Tooltip>
+          <Tag color="warning">待确认</Tag>
         ) : (
-          <Tooltip title="无冲突或依赖标记，不代表已验证硬件兼容性">
-            <Tag>无标记</Tag>
-          </Tooltip>
+          <Tag>无标记</Tag>
         ),
     },
   ]
@@ -384,6 +412,7 @@ export default function BuildPage() {
         custom_iso_name: values.custom_iso_name ? values.custom_iso_name.trim() : undefined,
         root_password: values.root_password ? values.root_password.trim() : 'niuniu',
         install_mode: installMode,
+        boot_options: bootOptions,
       })
     })
   }
@@ -408,11 +437,14 @@ export default function BuildPage() {
   const customName = Form.useWatch('custom_iso_name', form)
   const rootPwd = Form.useWatch('root_password', form)
 
+  const stepState = (idx: number) =>
+    idx < step - 1 ? 'finish' : idx === step - 1 ? 'process' : 'wait'
+
   const stepItems = [
-    { title: '基础镜像', description: '版本与安装源' },
-    { title: '驱动注入', description: '可选' },
-    { title: '安装参数', description: '模式与命名' },
-    { title: '确认并运行', description: '核对后执行' },
+    { title: '基础镜像', description: '版本与安装源', icon: <StepDiscIcon state={stepState(0)} /> },
+    { title: '驱动注入', description: '可选', icon: <StepDriverIcon state={stepState(1)} /> },
+    { title: '安装参数', description: '模式与命名', icon: <StepParamIcon state={stepState(2)} /> },
+    { title: '确认并运行', description: '核对后执行', icon: <StepLaunchIcon state={stepState(3)} /> },
   ]
 
   const canLeaveStep1 = Boolean(depotPath)
@@ -423,374 +455,390 @@ export default function BuildPage() {
 
       <PageHeader
         title="构建流水线"
-        subTitle="按步骤完成配置，最后确认后运行，日志在同页下方输出"
+        subTitle="按步骤完成配置，最后确认后运行"
         extra={
           <>
             <Button icon={<HistoryOutlined />} onClick={() => setHistoryDrawerOpen(true)}>
-              历史流水线（{recentBuilds.length}）
+              历史（{recentBuilds.length}）
             </Button>
             <Button icon={<CloudUploadOutlined />} onClick={() => go('/storage')}>
-              存储与挂载
+              存储
             </Button>
           </>
         }
       />
 
-      <Card className="wizard-card" variant="outlined">
-        <div className="step-head">
-          <div className="step-head-row">
-            <span className="step-head-count">
-              {step}
-              <em>/4</em>
-            </span>
-            <span className="step-head-name">{stepItems[step - 1].title}</span>
-            <span className="step-head-hint">{stepItems[step - 1].description}</span>
-          </div>
-          <div className="step-head-bar" aria-hidden="true">
-            <i style={{ width: `${(step / 4) * 100}%` }} />
-          </div>
-        </div>
+      {viewingHistory && (
+        <Alert
+          type="info"
+          showIcon
+          message={'正在查看历史任务 ' + activeTaskId}
+          action={
+            <Button size="small" disabled={!submittedTaskId} onClick={() => setActiveTaskId(submittedTaskId)}>
+              回到本次
+            </Button>
+          }
+        />
+      )}
 
-        <div className="wizard-body">
+      <Card className="wizard-card">
+        <Steps
+          current={step - 1}
+          items={stepItems}
+          size="small"
+          responsive={false}
+          onChange={(n) => {
+            const target = n + 1
+            if (target <= step || canLeaveStep1) setStep(target)
+          }}
+        />
+        <Divider style={{ margin: '20px 0 18px' }} />
 
-          {/* 步骤 1 */}
-          {step === 1 && (
-            <div className="wizard-stage">
-              <label className="field-label">目标 ESXi 版本</label>
-              <Segmented
-                block
+        {step === 1 && (
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+            <div className="field-block">
+              <Typography.Text type="secondary" className="field-block-label">
+                目标 ESXi 版本
+              </Typography.Text>
+              <Radio.Group
+                optionType="button"
+                buttonStyle="solid"
                 value={version}
-                onChange={(v) => {
-                  setVersion(String(v))
+                onChange={(e) => {
+                  setVersion(String(e.target.value))
                   setDepotPath('')
                   setDriverPaths([])
                   setPreflightId(null)
                 }}
-                options={esxiVersions.map((v) => ({ value: v, label: v }))}
+                options={esxiVersions.map((v) => ({ value: v, label: 'ESXi ' + v }))}
               />
+            </div>
 
-              <label className="field-label" style={{ marginTop: 16 }}>
-                选择安装源
-              </label>
-
-              {depotOptions.length === 0 ? (
+            <div className="field-block">
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <Typography.Text type="secondary" className="field-block-label">
+                  选择安装源
+                </Typography.Text>
+                <Radio.Group
+                  size="small"
+                  optionType="button"
+                  value={sourceKindFilter}
+                  onChange={(e) => setSourceKindFilter(e.target.value)}
+                  options={[
+                    { value: 'all', label: '全部 (' + depotOptions.length + ')' },
+                    { value: 'official', label: '官方原版' },
+                    { value: 'official-patch', label: '升级补丁' },
+                    { value: 'oem', label: '品牌定制' },
+                  ]}
+                />
+              </div>
+              {filteredDepotOptions.length === 0 ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={`暂无 ESXi ${version} 的可用镜像源`}
+                  description={'暂无 ESXi ' + version + ' 的可用镜像源'}
+                  style={{ marginTop: 8 }}
                 >
-                  <Button type="primary" onClick={() => go('/storage')} icon={<CloudUploadOutlined />}>
+                  <Button type="primary" onClick={() => go('/storage')}>
                     去存储上传
                   </Button>
                 </Empty>
               ) : (
-                <div className="source-card-list" role="radiogroup" aria-label="安装源">
-                  {depotOptions.map((item) => {
-                    const active = item.key === selectedDepot?.key
-                    const engine = engineOf(item.file.path)
-                    return (
-                      <div
-                        key={item.key}
-                        role="radio"
-                        aria-checked={active}
-                        tabIndex={0}
-                        className={`source-card ${active ? 'source-card-active' : ''}`}
-                        onClick={() => {
-                          setBucketId(item.bucketId)
-                          setDepotPath(item.file.path)
-                          setDriverPaths([])
-                          setPreflightId(null)
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            setBucketId(item.bucketId)
-                            setDepotPath(item.file.path)
-                            setDriverPaths([])
-                            setPreflightId(null)
-                          }
-                        }}
-                      >
-                        <div className="source-main">
-                          <strong>{fileName(item.file)}</strong>
-                          <span className="source-meta">
-                            {item.bucketType === 's3' ? 'S3' : '本地'} · {compactSize(item.file.size)} ·{' '}
-                            {cacheStatusText(item.file, selectedBucket)}
-                          </span>
-                        </div>
-                        <span className={`source-engine ${engine.color}`}>{engine.short}</span>
-                        {active && <CheckCircleFilled className="source-check" />}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-
-              {selectedDepot && (
-                <div className="preflight-bar">
-                  <Button
-                    size="small"
-                    icon={<SafetyCertificateOutlined />}
-                    loading={preflightMutation.isPending}
-                    onClick={() => {
-                      if (!selectedBucketId || !depotPath) return
-                      preflightMutation.mutate({
-                        bucket_id: selectedBucketId,
-                        depot_path: depotPath,
-                        driver_paths: effectiveDriverPaths,
-                      })
-                    }}
-                  >
-                    预检源文件
-                  </Button>
-                  {!preflightFresh && preflightId && (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      参数已变更，需重新预检
-                    </Typography.Text>
-                  )}
-                  {preflightFresh && preflightQuery.data && (
-                    <Alert
-                      style={{ flex: 1, minWidth: 200 }}
-                      type={
-                        preflightQuery.data.status === 'ready'
-                          ? 'success'
-                          : preflightQuery.data.status === 'running'
-                            ? 'info'
-                            : 'warning'
-                      }
-                      showIcon
-                      message={
-                        preflightQuery.data.status === 'ready'
-                          ? '源文件预检通过'
-                          : preflightQuery.data.status === 'running'
-                            ? '正在预检…'
-                            : `预检未通过：${preflightQuery.data.message || preflightQuery.data.status}`
-                      }
-                    />
-                  )}
-                  {preflightFresh && preflightQuery.isError && (
-                    <Alert
-                      style={{ flex: 1, minWidth: 200 }}
-                      type="error"
-                      showIcon
-                      message={`预检查询失败：${String(preflightQuery.error)}`}
-                    />
-                  )}
-                </div>
+                <Radio.Group
+                  value={selectedDepot?.key ?? ''}
+                  onChange={(e) => {
+                    const opt = depotOptions.find((o) => o.key === e.target.value)
+                    if (!opt) return
+                    setBucketId(opt.bucketId)
+                    setDepotPath(opt.file.path)
+                    setDriverPaths([])
+                    setPreflightId(null)
+                  }}
+                  style={{ width: '100%', marginTop: 8 }}
+                >
+                  <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                    {filteredDepotOptions.map((item) => {
+                      const meta = fileCategoryMeta(item.file)
+                      return (
+                      <Radio key={item.key} value={item.key} style={{ width: '100%', alignItems: 'flex-start' }}>
+                        <Space direction="vertical" size={2}>
+                          <Space size={6} wrap>
+                            <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.label}</Tag>
+                            <Typography.Text strong>{fileName(item.file)}</Typography.Text>
+                            <Tag color={engineOf(item.file.path).color === 'iso' ? 'cyan' : 'gold'}>
+                              {engineOf(item.file.path).short}
+                            </Tag>
+                          </Space>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {(item.bucketType === 's3' ? 'S3 挂载' : '本地存储') +
+                              ' · ' +
+                              item.bucketName +
+                              ' · ' +
+                              compactSize(item.file.size)}
+                          </Typography.Text>
+                          <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                            {item.file.path}
+                          </Typography.Text>
+                        </Space>
+                      </Radio>
+                      )
+                    })}
+                  </Space>
+                </Radio.Group>
               )}
             </div>
-          )}
 
-          {/* 步骤 2 */}
-          {step === 2 && (
-            <div className="wizard-stage">
-              <div className="driver-toolbar-mini">
-                <Input
-                  allowClear
-                  prefix={<SearchOutlined />}
-                  placeholder="搜索驱动包名称或路径"
-                  value={driverSearch}
-                  onChange={(e) => setDriverSearch(e.target.value)}
-                  style={{ flex: 1, minWidth: 180 }}
-                />
+            {selectedDepot && (
+              <Space wrap align="center">
                 <Button
+                  size="small"
+                  icon={<SafetyCertificateOutlined />}
+                  loading={preflightMutation.isPending}
                   onClick={() => {
-                    const paths = filteredDrivers.map((d) => d.path)
-                    if (allDriversSelected) {
-                      setDriverPaths(effectiveDriverPaths.filter((p) => !paths.includes(p)))
-                    } else {
-                      setDriverPaths(Array.from(new Set([...effectiveDriverPaths, ...paths])))
-                    }
+                    if (!selectedBucketId || !depotPath) return
+                    preflightMutation.mutate({
+                      bucket_id: selectedBucketId,
+                      depot_path: depotPath,
+                      driver_paths: effectiveDriverPaths,
+                    })
                   }}
                 >
-                  {allDriversSelected ? '取消全选' : '全选当前'}
+                  预检源文件
                 </Button>
-                <Button type="text" danger disabled={effectiveDriverPaths.length === 0} onClick={() => setDriverPaths([])}>
-                  清空
-                </Button>
-                <span
-                  className="driver-count"
-                  aria-label={`已选 ${selectedDrivers.length} 个`}
-                >
-                  已选 <strong>{selectedDrivers.length}</strong> 个
-                </span>
-              </div>
-
-              <Table
-                size="small"
-                rowKey="path"
-                bordered
-                pagination={false}
-                scroll={{ y: 260 }}
-                loading={driversQuery.isLoading}
-                dataSource={filteredDrivers}
-                columns={driverColumns}
-                rowSelection={{
-                  selectedRowKeys: effectiveDriverPaths,
-                  onChange: (keys) => setDriverPaths(keys as string[]),
-                }}
-                locale={{
-                  emptyText: (
-                    <Empty
-                      image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description={driversQuery.isError ? '驱动加载失败' : '当前版本暂无可选驱动（可以不选直接构建）'}
-                    />
-                  ),
-                }}
-              />
-
-              {selectedDrivers.length > 0 && (
-                <div className="selected-chips">
-                  {selectedDrivers.map((d) => (
-                    <Tag
-                      key={d.path}
-                      color="blue"
-                      closable
-                      onClose={() => setDriverPaths(effectiveDriverPaths.filter((p) => p !== d.path))}
-                    >
-                      {d.driver_name || fileName(d)}
-                    </Tag>
-                  ))}
-                </div>
-              )}
-
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                「无标记」只表示没有冲突或依赖标记，不代表已验证硬件兼容性。
-              </Typography.Text>
-            </div>
-          )}
-
-          {/* 步骤 3 */}
-          {step === 3 && (
-            <div className="wizard-stage">
-              <label className="field-label">安装模式</label>
-              <div className="mode-grid">
-                <div
-                  role="radio"
-                  aria-checked={installMode === 'unattended'}
-                  tabIndex={0}
-                  className={`mode-card ${installMode === 'unattended' ? 'mode-card-active' : ''}`}
-                  onClick={() => setInstallMode('unattended')}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setInstallMode('unattended')}
-                >
-                  <strong>
-                    <ThunderboltOutlined style={{ color: '#2563eb' }} /> 无人值守
-                  </strong>
-                  <span>开机自动格式化首块磁盘完成安装，首次启动自动注册驱动。</span>
-                </div>
-                <div
-                  role="radio"
-                  aria-checked={installMode === 'interactive'}
-                  tabIndex={0}
-                  className={`mode-card ${installMode === 'interactive' ? 'mode-card-active' : ''}`}
-                  onClick={() => setInstallMode('interactive')}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setInstallMode('interactive')}
-                >
-                  <strong>
-                    <CheckCircleOutlined style={{ color: '#059669' }} /> 交互式
-                  </strong>
-                  <span>保留官方图形安装向导，手动选择目标磁盘，驱动照常预载。</span>
-                </div>
-              </div>
-
-              <Form form={form} layout="vertical" initialValues={{ root_password: 'niuniu', custom_iso_name: '' }}>
-                <div className="param-two-col">
-                  <Form.Item name="root_password" label="Root 密码" extra="留空使用默认 niuniu">
-                    <Input.Password placeholder="niuniu" />
-                  </Form.Item>
-                  <Form.Item
-                    name="custom_iso_name"
-                    label={
-                      <Space size={6}>
-                        <span>输出文件名</span>
-                        <Button
-                          type="link"
-                          size="small"
-                          style={{ padding: 0, height: 'auto', fontSize: 11 }}
-                          onClick={() => form.setFieldsValue({ custom_iso_name: formulaPlaceholder })}
-                        >
-                          填入建议名
-                        </Button>
-                      </Space>
+                {!preflightFresh && preflightId && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    参数已变更，需重新预检
+                  </Typography.Text>
+                )}
+                {preflightFresh && preflightQuery.data && (
+                  <Alert
+                    type={
+                      preflightQuery.data.status === 'ready'
+                        ? 'success'
+                        : preflightQuery.data.status === 'running'
+                          ? 'info'
+                          : 'warning'
                     }
-                    extra="留空自动按公式命名"
-                  >
-                    <Input className="mono" placeholder={formulaPlaceholder} allowClear />
-                  </Form.Item>
-                </div>
-              </Form>
-            </div>
-          )}
+                    showIcon
+                    message={
+                      preflightQuery.data.status === 'ready'
+                        ? '源文件预检通过'
+                        : preflightQuery.data.status === 'running'
+                          ? '正在预检…'
+                          : '预检未通过：' + (preflightQuery.data.message || preflightQuery.data.status)
+                    }
+                  />
+                )}
+              </Space>
+            )}
+          </Space>
+        )}
 
-          {/* 步骤 4 */}
-          {step === 4 && (
-            <div className="wizard-stage">
-              <Descriptions bordered size="small" column={1} className="confirm-desc">
-                <Descriptions.Item label="ESXi 版本">ESXi {version}</Descriptions.Item>
-                <Descriptions.Item label="基础镜像">
-                  <div className="table-cell-stack">
-                    <Typography.Text strong>{selectedDepot ? fileName(selectedDepot.file) : '未选择'}</Typography.Text>
-                    <Typography.Text type="secondary" className="mono" style={{ fontSize: 11 }}>
-                      {depotPath || '-'}
-                    </Typography.Text>
-                  </div>
-                </Descriptions.Item>
-                <Descriptions.Item label="实际引擎">
-                  <Tag color={engineOf(depotPath).color === 'iso' ? 'cyan' : 'amber'}>{engineOf(depotPath).label}</Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="注入驱动">
-                  {selectedDrivers.length === 0
-                    ? '不注入驱动'
-                    : selectedDrivers.map((d) => d.driver_name || fileName(d)).join('、')}
-                </Descriptions.Item>
-                <Descriptions.Item label="安装模式">
-                  {installMode === 'unattended' ? '无人值守（自动格式化首块磁盘）' : '交互式（手动选择磁盘）'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Root 密码">
-                  <span className="mono">{rootPwd || 'niuniu'}</span>
-                </Descriptions.Item>
-                <Descriptions.Item label="输出文件名">
-                  <span className="mono">{customName?.trim() || `${formulaPlaceholder}（自动）`}</span>
-                </Descriptions.Item>
-              </Descriptions>
-
-              <Alert
-                type="warning"
-                showIcon
-                style={{ marginTop: 12 }}
-                message="构建会覆盖同名输出文件"
-                description="输出路径已存在时任务会直接失败，不会复用旧产物；日志会打印实际使用的基础镜像。"
+        {step === 2 && (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Space wrap>
+              <Input
+                allowClear
+                prefix={<SearchOutlined />}
+                placeholder="搜索驱动"
+                value={driverSearch}
+                onChange={(e) => setDriverSearch(e.target.value)}
+                style={{ width: 180 }}
               />
-
+              <Radio.Group
+                size="small"
+                optionType="button"
+                value={driverCategoryFilter}
+                onChange={(e) => setDriverCategoryFilter(e.target.value)}
+                options={[
+                  { value: 'all', label: '全部' },
+                  { value: 'community', label: '社区驱动' },
+                  { value: 'raid', label: '阵列卡' },
+                  { value: 'network', label: '网卡' },
+                  { value: 'storage', label: '存储' },
+                  { value: 'oem-addon', label: '品牌 Addon' },
+                ]}
+              />
               <Button
-                type="primary"
-                size="large"
-                block
-                icon={<PlayCircleOutlined />}
-                style={{ marginTop: 14, height: 46, fontSize: 15 }}
-                loading={createMutation.isPending}
-                onClick={runPipeline}
+                size="small"
+                onClick={() => {
+                  const paths = filteredDrivers.map((d) => d.path)
+                  if (allDriversSelected) {
+                    setDriverPaths(effectiveDriverPaths.filter((x) => !paths.includes(x)))
+                  } else {
+                    setDriverPaths(Array.from(new Set([...effectiveDriverPaths, ...paths])))
+                  }
+                }}
               >
-                开始构建
+                {allDriversSelected ? '取消全选' : '全选当前'}
               </Button>
-            </div>
-          )}
-        </div>
+              <Button size="small" type="text" danger disabled={effectiveDriverPaths.length === 0} onClick={() => setDriverPaths([])}>
+                清空
+              </Button>
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 12 }}
+                aria-label={'已选 ' + selectedDrivers.length + ' 个'}
+              >
+                已选 {selectedDrivers.length} 个
+              </Typography.Text>
+            </Space>
 
-        <div className="wizard-footer">
+            <Table
+              size="small"
+              rowKey="path"
+              columns={driverColumns}
+              dataSource={filteredDrivers}
+              loading={driversQuery.isLoading}
+              pagination={false}
+              scroll={{ x: 620 }}
+              rowSelection={{
+                selectedRowKeys: effectiveDriverPaths,
+                onChange: (keys) => setDriverPaths(keys as string[]),
+              }}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={driversQuery.isError ? '驱动加载失败' : '当前版本暂无可选驱动（可以不选直接构建）'}
+                  />
+                ),
+              }}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              「无标记」只表示没有冲突或依赖标记，不代表已验证硬件兼容性。
+            </Typography.Text>
+          </Space>
+        )}
+
+        {step === 3 && (
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+            <Radio.Group value={installMode} onChange={(e) => setInstallMode(e.target.value)}>
+              <Space direction="vertical" size={8}>
+                <Radio value="unattended">无人值守 —— 开机自动格式化首块磁盘完成安装，首次启动自动注册驱动</Radio>
+                <Radio value="interactive">交互式 —— 保留官方安装向导，手动选择目标磁盘，驱动照常预载</Radio>
+              </Space>
+            </Radio.Group>
+
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                硬件兼容与内核魔改参数（自动写入引导并持久化）
+              </Typography.Text>
+              <Checkbox.Group
+                value={bootOptions}
+                onChange={(vals) => setBootOptions(vals as string[])}
+                style={{ width: '100%' }}
+              >
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <Checkbox value="hybrid_cpu">
+                    <strong>Intel 大小核兼容 (12/13/14代/Ultra)</strong>
+                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
+                      注入 <code>cpuUniformityHardCheckPanic=FALSE</code>，防止大小核混合架构启动或重启时紫屏（PSOD）。
+                    </Typography.Text>
+                  </Checkbox>
+                  <Checkbox value="osdata_8g">
+                    <strong>精简系统盘占用至 8GB</strong>
+                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
+                      限制 <code>autoPartitionOSDataSize=8192</code>，防止 ESX-OSData 分区吞掉 120GB+ 宝贵固态空间。
+                    </Typography.Text>
+                  </Checkbox>
+                  <Checkbox value="legacy_cpu">
+                    <strong>放行不受支持的老旧 CPU</strong>
+                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
+                      注入 <code>allowLegacyCPU=true</code>，让 E5 v3/v4 或老旧酷睿跳过 CPU 弃用警告继续装机。
+                    </Typography.Text>
+                  </Checkbox>
+                  <Checkbox value="headless">
+                    <strong>无头模式引导 (Headless)</strong>
+                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
+                      注入 <code>ignoreHeadless=TRUE</code>，针对无核显或不接显示器的软路由/服务器防卡死。
+                    </Typography.Text>
+                  </Checkbox>
+                </Space>
+              </Checkbox.Group>
+            </div>
+
+            <Divider style={{ margin: '8px 0' }} />
+
+            <Form form={form} layout="vertical" initialValues={{ root_password: 'niuniu', custom_iso_name: '' }}>
+              <Form.Item name="root_password" label="Root 密码" extra="留空使用默认 niuniu">
+                <Input.Password placeholder="niuniu" style={{ maxWidth: 280 }} />
+              </Form.Item>
+              <Form.Item name="custom_iso_name" label="输出文件名" extra="留空自动按公式命名">
+                <Input className="mono" placeholder={formulaPlaceholder} allowClear style={{ maxWidth: 420 }} />
+              </Form.Item>
+            </Form>
+          </Space>
+        )}
+
+        {step === 4 && (
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+            <Descriptions bordered size="small" column={1} className="confirm-desc">
+              <Descriptions.Item label="ESXi 版本">ESXi {version}</Descriptions.Item>
+              <Descriptions.Item label="基础镜像">
+                {selectedDepot ? fileName(selectedDepot.file) : '未选择'}
+              </Descriptions.Item>
+              <Descriptions.Item label="实际引擎">
+                <Tag color={engineOf(depotPath).color === 'iso' ? 'cyan' : 'gold'}>
+                  {engineOf(depotPath).short}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="注入驱动">
+                {selectedDrivers.length === 0
+                  ? '不注入驱动'
+                  : selectedDrivers.map((d) => d.driver_name || fileName(d)).join('、')}
+              </Descriptions.Item>
+              <Descriptions.Item label="硬件魔改参数">
+                {bootOptions.length === 0 ? '未启用' : (
+                  <Space size={4} wrap>
+                    {bootOptions.includes('hybrid_cpu') && <Tag color="blue">大小核防紫屏</Tag>}
+                    {bootOptions.includes('osdata_8g') && <Tag color="green">8GB精简系统盘</Tag>}
+                    {bootOptions.includes('legacy_cpu') && <Tag color="orange">老旧CPU放行</Tag>}
+                    {bootOptions.includes('headless') && <Tag>无头模式</Tag>}
+                  </Space>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="安装模式">
+                {installMode === 'unattended' ? '无人值守' : '交互式'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Root 密码">
+                <span className="mono">{rootPwd || 'niuniu'}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="输出文件名">
+                <span className="mono">{customName?.trim() || formulaPlaceholder + '（自动）'}</span>
+              </Descriptions.Item>
+            </Descriptions>
+
+            <Alert
+              type="warning"
+              showIcon
+              message="构建会覆盖同名输出文件"
+              description="输出路径已存在时任务会直接失败，不会复用旧产物。"
+            />
+
+            <Button
+              type="primary"
+              size="large"
+              block
+              icon={<PlayCircleOutlined />}
+              loading={createMutation.isPending}
+              onClick={runPipeline}
+            >
+              开始构建
+            </Button>
+          </Space>
+        )}
+
+        <Divider style={{ margin: '18px 0 14px' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            ESXi {version} · {selectedDrivers.length} 个驱动 ·{' '}
-            {installMode === 'unattended' ? '无人值守' : '交互式'}
+            ESXi {version} · {selectedDrivers.length} 个驱动 · {installMode === 'unattended' ? '无人值守' : '交互式'}
           </Typography.Text>
           <Space>
-            <Button disabled={step === 1} onClick={() => setStep((s) => Math.max(1, s - 1))}>
+            <Button disabled={step === 1} onClick={() => setStep((x) => Math.max(1, x - 1))}>
               上一步
             </Button>
             {step < 4 && (
-              <Button
-                type="primary"
-                disabled={step === 1 && !canLeaveStep1}
-                onClick={() => setStep((s) => Math.min(4, s + 1))}
-              >
+              <Button type="primary" disabled={step === 1 && !canLeaveStep1} onClick={() => setStep((x) => Math.min(4, x + 1))}>
                 下一步
               </Button>
             )}
@@ -798,181 +846,121 @@ export default function BuildPage() {
         </div>
       </Card>
 
-      {/* 日志与产物 */}
-      <section id="pipeline-output" className="pipeline-output-section" aria-label="构建日志与产物">
-        {activeTask ? (
-          <div className="task-context-bar">
-            <Space size={8} wrap align="center">
-              <Typography.Text strong>{viewingHistory ? '正在查看历史任务' : '本次提交任务'}</Typography.Text>
-              <Typography.Text className="mono" copyable style={{ fontSize: 12 }}>
+      <Card
+        size="small"
+        className="log-card"
+        title={
+          <Space size={8} wrap>
+            <span className="log-card-title">构建日志</span>
+            {activeTask && (
+              <Typography.Text type="secondary" copyable className="log-task-id">
                 {activeTask.task_id}
               </Typography.Text>
-              <BuildStatusTag status={activeTask.status} />
-              <Tag color="geekblue">ESXi {activeTask.esxi_version}</Tag>
-              <Tag>{parseDrivers(activeTask.drivers).length} 个驱动</Tag>
-              {activeTask.build_duration ? <Tag>耗时 {activeTask.build_duration}s</Tag> : null}
-              {isTaskRunning ? (
-                <Tag color="processing" className="tabular-nums">
-                  进度 {displayProgress}%
-                </Tag>
-              ) : null}
-              {wsState === 'closed' && isTaskRunning && <Tag color="warning">日志连接断开，正在重连</Tag>}
-            </Space>
-            <Space size={8} wrap>
-              {isTaskRunning && <Progress percent={displayProgress} size="small" style={{ width: 150 }} />}
-              <Button size="small" icon={<ReloadOutlined />} onClick={() => activeTaskQuery.refetch()}>
-                刷新
-              </Button>
-              {viewingHistory && (
-                <Button size="small" disabled={!submittedTaskId} onClick={() => setActiveTaskId(submittedTaskId)}>
-                  回到本次任务
-                </Button>
-              )}
-            </Space>
-          </div>
-        ) : (
-          <div className="task-context-bar task-context-empty">
-            <Typography.Text type="secondary">
-              还没有本次构建任务。走完四步后点击「开始构建」，日志会显示在这里。
-            </Typography.Text>
-          </div>
-        )}
-
-        {activeTask?.status === 'completed' && activeTask.output_iso && (
-          <div className="artifact-banner-card">
-            <div className="artifact-banner-main">
-              <Space size={8} wrap align="center">
-                <Tag color="success" className="artifact-tag">
-                  定制 ISO 构建完成
-                </Tag>
-                <Typography.Text strong className="mono" style={{ fontSize: 13 }}>
-                  {activeTask.output_iso}
-                </Typography.Text>
-                {activeTask.output_iso_size ? (
-                  <Tag color="blue" className="mono tabular-nums">
-                    {(activeTask.output_iso_size / 1024 / 1024).toFixed(1)} MB
-                  </Tag>
-                ) : null}
-              </Space>
-              {activeTask.output_iso_sha256 && (
-                <div className="artifact-sha-row">
-                  <span style={{ color: '#64748b' }}>SHA-256:</span>{' '}
-                  <Typography.Text copyable code className="mono" style={{ fontSize: 11 }}>
-                    {activeTask.output_iso_sha256}
-                  </Typography.Text>
-                </div>
-              )}
-            </div>
-            <Space size={8} wrap>
+            )}
+            {viewingHistory && <Tag>历史</Tag>}
+          </Space>
+        }
+        extra={
+          <Space size={8} wrap>
+            {activeTask && <BuildStatusTag status={activeTask.status} />}
+            {activeTask?.status === 'completed' && activeTask.output_iso && (
               <Button
+                size="small"
                 type="primary"
                 icon={<DownloadOutlined />}
-                onClick={() =>
-                  window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')
-                }
+                onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
               >
                 下载 ISO
               </Button>
-              {remoteArtifactUrl && (
-                <Button href={remoteArtifactUrl} target="_blank" rel="noreferrer">
-                  公网直链
-                </Button>
-              )}
-            </Space>
-          </div>
-        )}
-
-        {activeTask?.status === 'failed' && (
-          <Alert
-            type="error"
-            showIcon
-            message="本次构建失败"
-            description={activeTask.error_message || '下方日志里可以看到具体失败原因'}
-          />
-        )}
-
-        {activeTask && (
-          <PhaseTimingBreakdown
-            logs={rawLogs}
-            buildDuration={activeTask.build_duration}
-            isCompleted={activeTask.status === 'completed'}
-          />
-        )}
-
-        <div className="log-console-container">
-          <div className="log-console-header">
-            <Space size={10} wrap align="center">
-              <span className="terminal-traffic-lights">
-                <i />
-                <i />
-                <i />
-              </span>
-              <span className="log-console-title mono">
-                {activeTaskId ? `流水线日志 · ${activeTaskId}` : '流水线日志'}
-              </span>
-              {activeTask && <BuildStatusTag status={activeTask.status} />}
-            </Space>
-            <Space size={10} wrap align="center">
-              <Segmented<LogViewMode>
-                size="small"
-                value={logViewMode}
-                onChange={setLogViewMode}
-                options={[
-                  { value: 'chinese', label: '中文解析' },
-                  { value: 'raw', label: '原始日志' },
-                ]}
-              />
-              <Segmented<LogFilterType>
-                size="small"
-                value={logFilter}
-                onChange={setLogFilter}
-                options={[
-                  { value: 'all', label: '全部' },
-                  { value: 'issues', label: '仅错误/警告' },
-                ]}
-              />
-              <Space size={4}>
-                <span style={{ color: '#94a3b8', fontSize: 11 }}>自动滚动</span>
-                <Switch size="small" checked={autoScroll} onChange={setAutoScroll} />
-              </Space>
-              <Tooltip title="复制当前视图日志">
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<CopyOutlined style={{ color: '#cbd5e1' }} />}
-                  aria-label="复制日志"
-                  onClick={copyLogs}
-                />
-              </Tooltip>
-            </Space>
-          </div>
-
-          <div ref={logTerminalRef} className="log-terminal-body" role="log" aria-live="polite" aria-label="构建日志">
-            {logViewMode === 'chinese' ? (
-              filteredChineseLogs.length === 0 ? (
-                <div className="terminal-empty-text">
-                  {rawLogs.length > 0 ? '当前没有错误或警告' : '等待构建输出…'}
-                </div>
-              ) : (
-                filteredChineseLogs.map((item, index) => (
-                  <div key={`cn-${index}`} className={`chinese-log-row log-kind-${item.kind}`}>
-                    <span className="log-row-badge">{item.badge}</span>
-                    <span className="log-row-text">{item.chinese}</span>
-                  </div>
-                ))
-              )
-            ) : filteredRawLogs.length === 0 ? (
-              <div className="terminal-empty-text">暂无原始日志</div>
-            ) : (
-              filteredRawLogs.map((line, index) => (
-                <div key={`raw-${index}`} className="raw-log-line">
-                  {line}
-                </div>
-              ))
             )}
+            <Radio.Group
+              size="small"
+              optionType="button"
+              buttonStyle="solid"
+              value={logViewMode}
+              onChange={(e) => setLogViewMode(e.target.value as LogViewMode)}
+              options={[
+                { value: 'chinese', label: '中文' },
+                { value: 'raw', label: '原始' },
+              ]}
+            />
+            <Button size="small" onClick={() => setLogFilter(logFilter === 'all' ? 'issues' : 'all')}>
+              {logFilter === 'all' ? '仅看错误' : '全部日志'}
+            </Button>
+            <Button size="small" onClick={copyLogs}>
+              复制
+            </Button>
+          </Space>
+        }
+        styles={{ body: { padding: 0, maxHeight: 380, overflow: 'auto' } }}
+      >
+        {!activeTask ? (
+          <div style={{ padding: 24 }}>
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有构建任务，走完四步后点击「开始构建」" />
           </div>
-        </div>
-      </section>
+        ) : logViewMode === 'chinese' ? (
+          filteredChineseLogs.length === 0 ? (
+            <div style={{ padding: 24 }}>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={rawLogs.length > 0 ? '没有错误或警告' : '等待输出…'}
+              />
+            </div>
+          ) : (
+            <List
+              size="small"
+              dataSource={filteredChineseLogs}
+              renderItem={(item, index) => (
+                <List.Item
+                  key={index}
+                  className={
+                    item.kind === 'error'
+                      ? 'log-row log-row-error'
+                      : item.kind === 'warn'
+                        ? 'log-row log-row-warn'
+                        : 'log-row'
+                  }
+                >
+                  <span className="log-lineno">{String(index + 1).padStart(2, '0')}</span>
+                  <Tag
+                    className="log-badge"
+                    color={
+                      item.kind === 'error'
+                        ? 'error'
+                        : item.kind === 'warn'
+                          ? 'warning'
+                          : item.kind === 'success'
+                            ? 'success'
+                            : item.kind === 'timing'
+                              ? 'blue'
+                              : undefined
+                    }
+                  >
+                    {item.badge}
+                  </Tag>
+                  <Typography.Text
+                    type={item.kind === 'error' ? 'danger' : item.kind === 'warn' ? 'warning' : undefined}
+                    className="log-msg"
+                  >
+                    {item.chinese}
+                  </Typography.Text>
+                </List.Item>
+              )}
+            />
+          )
+        ) : (
+          <List
+            size="small"
+            dataSource={filteredRawLogs}
+            renderItem={(line, index) => (
+              <List.Item key={index} className="log-row">
+                <span className="log-lineno">{String(index + 1).padStart(2, '0')}</span>
+                <Typography.Text className="log-msg log-msg-raw">{line}</Typography.Text>
+              </List.Item>
+            )}
+          />
+        )}
+      </Card>
 
       <Drawer
         title="历史流水线"

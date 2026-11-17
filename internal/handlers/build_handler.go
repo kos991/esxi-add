@@ -45,6 +45,7 @@ type createBuildRequest struct {
 	ImageProfile  string   `json:"image_profile"`
 	RootPassword  string   `json:"root_password"`
 	InstallMode   string   `json:"install_mode"`
+	BootOptions   []string `json:"boot_options"`
 }
 
 func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
@@ -82,6 +83,8 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 	if err := h.validatePreflightSelection(c.UserContext(), &buildPreflightRequest{BucketID: req.BucketID, ESXiVersion: req.ESXiVersion, DepotPath: req.DepotPath, DriverPaths: req.DriverPaths}); err != nil {
 		return c.Status(400).JSON(utils.ErrorResponse(err.Error()))
 	}
+	validBootOpts := normalizeBootOptions(req.BootOptions)
+	bootOptsJSON, _ := json.Marshal(validBootOpts)
 	driversJSON, err := json.Marshal(req.DriverPaths)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
@@ -100,6 +103,7 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		ImageProfile:    req.ImageProfile,
 		RootPassword:    req.RootPassword,
 		InstallMode:     req.InstallMode,
+		BootOptions:     string(bootOptsJSON),
 		Progress:        0,
 	}
 
@@ -121,6 +125,7 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 		ImageProfile:  req.ImageProfile,
 		RootPassword:  req.RootPassword,
 		InstallMode:   req.InstallMode,
+		BootOptions:   validBootOpts,
 	})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
@@ -338,4 +343,23 @@ func validateCreateBuildRequest(req *createBuildRequest) error {
 		return fmt.Errorf("invalid install_mode: must be 'unattended' or 'interactive'")
 	}
 	return nil
+}
+
+func normalizeBootOptions(opts []string) []string {
+	allowed := map[string]bool{
+		"hybrid_cpu": true,
+		"legacy_cpu": true,
+		"osdata_8g":  true,
+		"headless":   true,
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(opts))
+	for _, raw := range opts {
+		k := strings.ToLower(strings.TrimSpace(raw))
+		if allowed[k] && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }

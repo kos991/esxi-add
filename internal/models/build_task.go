@@ -22,6 +22,7 @@ type BuildTask struct {
 	ImageProfile    string         `json:"image_profile"`
 	RootPassword    string         `gorm:"column:root_password" json:"root_password,omitempty"`
 	InstallMode     string         `gorm:"column:install_mode" json:"install_mode,omitempty"`
+	BootOptions     string         `gorm:"column:boot_options;type:text" json:"boot_options,omitempty"`
 	Progress        int            `gorm:"default:0" json:"progress"`
 	LogOutput       string         `gorm:"type:text" json:"log_output"`
 	OutputISO       string         `gorm:"column:output_iso" json:"output_iso"`

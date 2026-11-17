@@ -36,6 +36,7 @@ vi.mock('../api/files', () => ({
       size: 682757230,
     },
   ]),
+  listISOs: vi.fn(async () => []),
   listDrivers: vi.fn(async () => [
     {
       id: 20,
@@ -123,8 +124,8 @@ describe('构建流水线（分步引导）', () => {
 
     expect(await screen.findByText('基础镜像')).toBeInTheDocument()
     expect((await screen.findAllByText(/VMware-ESXi-8\.0U3k-depot\.zip/)).length).toBeGreaterThan(0)
-    expect(screen.getByText(/还没有本次构建任务/)).toBeInTheDocument()
-    expect(screen.queryByText('本次提交任务')).not.toBeInTheDocument()
+    expect(screen.getByText(/还没有构建任务/)).toBeInTheDocument()
+    expect(screen.queryByText('task-new')).not.toBeInTheDocument()
     expect(screen.queryByText('history.iso')).not.toBeInTheDocument()
   })
 
@@ -159,6 +160,7 @@ describe('构建流水线（分步引导）', () => {
         depot_path: 'depots/8.0/VMware-ESXi-8.0U3k-depot.zip',
         driver_paths: ['drivers/net-community.vib'],
         install_mode: 'unattended',
+        boot_options: expect.arrayContaining(['hybrid_cpu', 'osdata_8g']),
       })
     )
   })
@@ -175,7 +177,7 @@ describe('构建流水线（分步引导）', () => {
     await screen.findByText('确认并运行')
     fireEvent.click(startBtn())
 
-    await waitFor(() => expect(screen.getByText('本次提交任务')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('task-new')).toBeInTheDocument())
     expect(screen.getByText('task-new')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText(/输入准备：0\.12 秒/)).toBeInTheDocument())
   })
@@ -196,7 +198,7 @@ describe('中文日志解析', () => {
   it('错误优先于 xorriso 步骤匹配', () => {
     const parsed = formatLogToChinese('xorriso : FAILURE : Cannot open drive')
     expect(parsed?.kind).toBe('error')
-    expect(parsed?.chinese).toContain('错误')
+    expect(parsed?.chinese).toContain('xorriso')
   })
 
   it('同一阶段别名只保留一条，原始日志仍完整', () => {

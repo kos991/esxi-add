@@ -3,7 +3,7 @@ import {
   DeploymentUnitOutlined,
   GithubOutlined,
 } from '../components/icons'
-import { ConfigProvider, Segmented, theme } from 'antd'
+import { ConfigProvider, Menu, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import type { ReactNode } from 'react'
 
@@ -78,14 +78,16 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
           <span>ESXi Builder</span>
         </a>
 
-        <Segmented
-          size="small"
-          value={page}
-          onChange={(v) => navigate(v === 'storage' ? '/storage' : '/build')}
-          options={[
-            { value: 'build', label: <span className="seg-label"><DeploymentUnitOutlined /> 构建</span> },
-            { value: 'storage', label: <span className="seg-label"><DatabaseOutlined /> 存储</span> },
+        <Menu
+          mode="horizontal"
+          selectedKeys={[page]}
+          onClick={({ key }) => navigate(key === 'storage' ? '/storage' : '/build')}
+          items={[
+            { key: 'build', icon: <DeploymentUnitOutlined />, label: '构建流水线' },
+            { key: 'storage', icon: <DatabaseOutlined />, label: '存储与挂载' },
           ]}
+          className="topnav"
+          disabledOverflow
         />
 
         <a
