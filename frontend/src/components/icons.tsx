@@ -39,6 +39,8 @@ export const CheckCircleOutlined = make('CheckCircleOutlined', <><path d="M22 11
 export const CheckCircleFilled = make('CheckCircleFilled', <><circle cx="12" cy="12" r="10" stroke="none" /><polyline points="7.5 12.5 10.5 15.5 16.5 9" stroke="#fff" strokeWidth={2.2} fill="none" /></>, true)
 export const ClockCircleOutlined = make('ClockCircleOutlined', <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>)
 export const CloseCircleOutlined = make('CloseCircleOutlined', <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>)
+export const CloseCircleFilled = make('CloseCircleFilled', <><circle cx="12" cy="12" r="10" stroke="none"/><line x1="15" y1="9" x2="9" y2="15" stroke="#fff" strokeWidth={2}/><line x1="9" y1="9" x2="15" y2="15" stroke="#fff" strokeWidth={2}/></>, true)
+export const CloseOutlined = make('CloseOutlined', <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>)
 export const CloudServerOutlined = make('CloudServerOutlined', <><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></>)
 export const CloudUploadOutlined = make('CloudUploadOutlined', <><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></>)
 export const CopyOutlined = make('CopyOutlined', <><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>)

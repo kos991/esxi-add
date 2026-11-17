@@ -72,6 +72,7 @@ import {
   bucketType,
   cacheStatusColor,
   cacheStatusText,
+  cleanDisplayVersion,
   compactSize,
   copyText,
   esxiVersions,
@@ -79,6 +80,7 @@ import {
   fileName,
   isBuildOutput,
 } from './pipelineUtils'
+import { resolveDriverMeta } from '../utils/driverMetadata'
 
 type UploadType = 'depot' | 'driver' | 'iso'
 type AssetTab = 'depot' | 'driver' | 'output' | 'iso'
@@ -514,24 +516,42 @@ export default function StorageFilesPage() {
     {
       title: '文件',
       key: 'name',
-      render: (_, file) => (
-        <div className="table-cell-stack">
-          <Space size={6} wrap>
-            <Typography.Text strong>{assetTitle(file)}</Typography.Text>
-            {file.driver_version && <Tag style={{ marginInlineEnd: 0 }}>v{file.driver_version}</Tag>}
-            <Tag color={fileCategoryMeta(file).color}>{fileCategoryMeta(file).label}</Tag>
-          </Space>
-          <Typography.Text
-            className="mono table-path"
-            type="secondary"
-            copyable
-            ellipsis
-            style={{ maxWidth: 460, fontSize: 11 }}
-          >
-            {file.path}
-          </Typography.Text>
-        </div>
-      ),
+      render: (_, file) => {
+        const cleanVer = cleanDisplayVersion(file)
+        const driverMeta = file.type === 'driver' ? resolveDriverMeta(file) : null
+        return (
+          <div className="table-cell-stack">
+            <Space size={6} wrap align="center">
+              <Typography.Text strong style={{ fontSize: 13 }}>
+                {assetTitle(file)}
+              </Typography.Text>
+              {cleanVer && <Tag style={{ marginInlineEnd: 0 }}>v{cleanVer}</Tag>}
+              {driverMeta?.hardwareChip && (
+                <Tag color="cyan" style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                  {driverMeta.hardwareChip}
+                </Tag>
+              )}
+              <Tag color={fileCategoryMeta(file).color}>{fileCategoryMeta(file).label}</Tag>
+            </Space>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <Typography.Text
+                className="mono table-path"
+                type="secondary"
+                copyable
+                ellipsis
+                style={{ maxWidth: 440, fontSize: 11 }}
+              >
+                {file.path}
+              </Typography.Text>
+              {driverMeta?.summary && (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  · {driverMeta.summary}
+                </Typography.Text>
+              )}
+            </div>
+          </div>
+        )
+      },
     },
     {
       title: '适用版本',

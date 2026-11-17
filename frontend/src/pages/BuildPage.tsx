@@ -2,6 +2,8 @@ import {
   CheckCircleFilled,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  CloseCircleFilled,
+  CloseOutlined,
   CloudUploadOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -74,6 +76,7 @@ import {
   formatLogToChinese,
   isBuildOutput,
 } from './pipelineUtils'
+import { resolveDriverMeta, resolveDepotMeta } from '../utils/driverMetadata'
 
 type DepotOption = {
   key: string
@@ -337,16 +340,50 @@ export default function BuildPage() {
     onError: (err) => messageApi.error(`删除失败：${String(err)}`),
   })
 
+  const driverCategories = [
+    { key: 'all', label: '全部' },
+    { key: 'community', label: '社区驱动' },
+    { key: 'raid', label: '阵列卡' },
+    { key: 'network', label: '网卡' },
+    { key: 'storage', label: '存储' },
+    { key: 'oem-addon', label: '品牌 Addon' },
+  ]
+
+  const categoryStats = useMemo(() => {
+    const map: Record<string, { total: number; selected: number }> = {
+      all: { total: drivers.length, selected: effectiveDriverPaths.length },
+      community: { total: 0, selected: 0 },
+      raid: { total: 0, selected: 0 },
+      network: { total: 0, selected: 0 },
+      storage: { total: 0, selected: 0 },
+      'oem-addon': { total: 0, selected: 0 },
+    }
+    for (const d of drivers) {
+      const kind = fileCategoryMeta(d).kind
+      if (map[kind]) {
+        map[kind].total += 1
+        if (effectiveDriverPaths.includes(d.path)) {
+          map[kind].selected += 1
+        }
+      }
+    }
+    return map
+  }, [drivers, effectiveDriverPaths])
+
   const filteredDrivers = useMemo(() => {
     const kw = driverSearch.trim().toLowerCase()
     return drivers.filter((d) => {
       const catOk = driverCategoryFilter === 'all' || fileCategoryMeta(d).kind === driverCategoryFilter
       if (!catOk) return false
       if (!kw) return true
+      const meta = resolveDriverMeta(d)
       return (
         d.path.toLowerCase().includes(kw) ||
         (d.driver_name && d.driver_name.toLowerCase().includes(kw)) ||
-        (d.driver_description && d.driver_description.toLowerCase().includes(kw))
+        (d.driver_description && d.driver_description.toLowerCase().includes(kw)) ||
+        meta.zhName.toLowerCase().includes(kw) ||
+        (meta.hardwareChip && meta.hardwareChip.toLowerCase().includes(kw)) ||
+        meta.summary.toLowerCase().includes(kw)
       )
     })
   }, [drivers, driverSearch, driverCategoryFilter])
@@ -356,41 +393,78 @@ export default function BuildPage() {
 
   const driverColumns: ColumnsType<FileMetadata> = [
     {
-      title: '驱动包',
+      title: '驱动名称与适用硬件',
       key: 'name',
-      render: (_, file) => (
-        <div>
-          <Typography.Text strong>{file.driver_name || fileName(file)}</Typography.Text>
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
-              {file.path}
-            </Typography.Text>
+      render: (_, file) => {
+        const meta = resolveDriverMeta(file)
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Tag color={meta.categoryColor} style={{ marginInlineEnd: 0, fontWeight: 500 }}>
+                {meta.categoryLabel}
+              </Tag>
+              <Typography.Text strong style={{ fontSize: 13, color: '#0f172a' }}>
+                {meta.zhName}
+              </Typography.Text>
+              {file.driver_name && (
+                <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                  {file.driver_name}
+                </Typography.Text>
+              )}
+              {meta.hardwareChip && (
+                <Tag color="cyan" style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                  {meta.hardwareChip}
+                </Tag>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+              <Typography.Text
+                type="secondary"
+                copyable={{ text: file.path }}
+                ellipsis
+                style={{ fontFamily: 'monospace', maxWidth: 420 }}
+              >
+                {file.path}
+              </Typography.Text>
+              {meta.summary && (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  · {meta.summary}
+                </Typography.Text>
+              )}
+            </div>
           </div>
-        </div>
-      ),
+        )
+      },
     },
     {
       title: '版本',
       dataIndex: 'driver_version',
-      width: 120,
-      render: (v) => <Typography.Text code>{shortVersion(v)}</Typography.Text>,
+      width: 130,
+      render: (_, file) => {
+        const meta = resolveDriverMeta(file)
+        const ver = meta.cleanVersion || shortVersion(file.driver_version)
+        return <Typography.Text code style={{ fontSize: 11 }}>{ver || '-'}</Typography.Text>
+      },
     },
     {
       title: '大小',
       dataIndex: 'size',
       width: 96,
-      render: (v) => <Typography.Text>{compactSize(v)}</Typography.Text>,
+      render: (v) => <Typography.Text style={{ fontSize: 12 }}>{compactSize(v)}</Typography.Text>,
     },
     {
-      title: '标记',
+      title: '状态',
       key: 'flag',
-      width: 92,
-      render: (_, file) =>
-        file.conflicts_with || file.depends_on || file.cache_status === 'missing' ? (
-          <Tag color="warning">待确认</Tag>
-        ) : (
-          <Tag>无标记</Tag>
-        ),
+      width: 100,
+      render: (_, file) => {
+        if (file.conflicts_with || file.depends_on) {
+          return <Tag color="warning">待确认</Tag>
+        }
+        if (file.cache_status === 'cached' || file.cached) {
+          return <Tag color="success">已就绪</Tag>
+        }
+        return <Tag color="processing">可注入</Tag>
+      },
     },
   ]
 
@@ -495,43 +569,55 @@ export default function BuildPage() {
         <Divider style={{ margin: '20px 0 18px' }} />
 
         {step === 1 && (
-          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <div className="field-block">
-              <Typography.Text type="secondary" className="field-block-label">
+              <Typography.Text type="secondary" className="field-block-label" style={{ marginBottom: 6, display: 'block' }}>
                 目标 ESXi 版本
               </Typography.Text>
-              <Radio.Group
-                optionType="button"
-                buttonStyle="solid"
-                value={version}
-                onChange={(e) => {
-                  setVersion(String(e.target.value))
-                  setDepotPath('')
-                  setDriverPaths([])
-                  setPreflightId(null)
-                }}
-                options={esxiVersions.map((v) => ({ value: v, label: 'ESXi ' + v }))}
-              />
+              <div className="apple-segmented-group">
+                {esxiVersions.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={`apple-segmented-btn ${version === v ? 'active' : ''}`}
+                    onClick={() => {
+                      setVersion(v)
+                      setDepotPath('')
+                      setDriverPaths([])
+                      setPreflightId(null)
+                    }}
+                  >
+                    <span>ESXi {v}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="field-block">
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                 <Typography.Text type="secondary" className="field-block-label">
                   选择安装源
                 </Typography.Text>
-                <Radio.Group
-                  size="small"
-                  optionType="button"
-                  value={sourceKindFilter}
-                  onChange={(e) => setSourceKindFilter(e.target.value)}
-                  options={[
+                <div className="apple-segmented-group" style={{ padding: 2 }}>
+                  {[
                     { value: 'all', label: '全部 (' + depotOptions.length + ')' },
                     { value: 'official', label: '官方原版' },
                     { value: 'official-patch', label: '升级补丁' },
                     { value: 'oem', label: '品牌定制' },
-                  ]}
-                />
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`apple-segmented-btn ${sourceKindFilter === opt.value ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: 12 }}
+                      onClick={() => setSourceKindFilter(opt.value as any)}
+                    >
+                      <span>{opt.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
+
               {filteredDepotOptions.length === 0 ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -543,47 +629,101 @@ export default function BuildPage() {
                   </Button>
                 </Empty>
               ) : (
-                <Radio.Group
-                  value={selectedDepot?.key ?? ''}
-                  onChange={(e) => {
-                    const opt = depotOptions.find((o) => o.key === e.target.value)
-                    if (!opt) return
-                    setBucketId(opt.bucketId)
-                    setDepotPath(opt.file.path)
-                    setDriverPaths([])
-                    setPreflightId(null)
-                  }}
-                  style={{ width: '100%', marginTop: 8 }}
-                >
-                  <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                    {filteredDepotOptions.map((item) => {
-                      const meta = fileCategoryMeta(item.file)
-                      return (
-                      <Radio key={item.key} value={item.key} style={{ width: '100%', alignItems: 'flex-start' }}>
-                        <Space direction="vertical" size={2}>
-                          <Space size={6} wrap>
-                            <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.label}</Tag>
-                            <Typography.Text strong>{fileName(item.file)}</Typography.Text>
-                            <Tag color={engineOf(item.file.path).color === 'iso' ? 'cyan' : 'gold'}>
-                              {engineOf(item.file.path).short}
-                            </Tag>
-                          </Space>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {(item.bucketType === 's3' ? 'S3 挂载' : '本地存储') +
-                              ' · ' +
-                              item.bucketName +
-                              ' · ' +
-                              compactSize(item.file.size)}
-                          </Typography.Text>
-                          <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
-                            {item.file.path}
-                          </Typography.Text>
-                        </Space>
-                      </Radio>
-                      )
-                    })}
-                  </Space>
-                </Radio.Group>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                  {filteredDepotOptions.map((item) => {
+                    const catMeta = fileCategoryMeta(item.file)
+                    const depotMeta = resolveDepotMeta(item.file)
+                    const isSelected = (selectedDepot?.key ?? '') === item.key
+                    const eng = engineOf(item.file.path)
+                    return (
+                      <div
+                        key={item.key}
+                        className={`apple-source-card ${isSelected ? 'selected' : ''}`}
+                        onClick={() => {
+                          setBucketId(item.bucketId)
+                          setDepotPath(item.file.path)
+                          setDriverPaths([])
+                          setPreflightId(null)
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+                          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                            {isSelected ? (
+                              <CheckCircleFilled style={{ color: '#0071e3', fontSize: 20 }} />
+                            ) : (
+                              <div
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: '50%',
+                                  border: '2px solid #cbd5e1',
+                                  background: '#ffffff',
+                                }}
+                              />
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <Tag color={catMeta.color} style={{ marginInlineEnd: 0, fontWeight: 500, borderRadius: 999 }}>
+                                {depotMeta.badgeLabel || catMeta.label}
+                              </Tag>
+                              <Typography.Text strong style={{ fontSize: 13.5, color: '#0f172a' }}>
+                                {depotMeta.zhName}
+                              </Typography.Text>
+                              {depotMeta.cleanVersion && (
+                                <span
+                                  style={{
+                                    fontSize: 11,
+                                    background: '#e0f2fe',
+                                    color: '#0369a1',
+                                    padding: '1px 6px',
+                                    borderRadius: 4,
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {depotMeta.cleanVersion}
+                                </span>
+                              )}
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                {(item.bucketType === 's3' ? 'S3 挂载' : '本地存储') +
+                                  ' · ' +
+                                  item.bucketName +
+                                  ' · ' +
+                                  compactSize(item.file.size)}
+                              </Typography.Text>
+                              <Typography.Text
+                                type="secondary"
+                                ellipsis
+                                style={{ fontSize: 11, fontFamily: 'monospace', maxWidth: 380 }}
+                              >
+                                {fileName(item.file)}
+                              </Typography.Text>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ flexShrink: 0, textAlign: 'end' }}>
+                          <Tag
+                            color={eng.color === 'iso' ? 'success' : 'gold'}
+                            style={{
+                              borderRadius: 999,
+                              padding: '2px 10px',
+                              fontSize: 12,
+                              fontWeight: 500,
+                              marginInlineEnd: 0,
+                            }}
+                          >
+                            {eng.color === 'iso' ? '⚡ 原生 ISO · 约 10 秒' : '🛠️ 离线包 · PowerCLI'}
+                          </Tag>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
 
@@ -634,57 +774,93 @@ export default function BuildPage() {
         )}
 
         {step === 2 && (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Space wrap>
-              <Input
-                allowClear
-                prefix={<SearchOutlined />}
-                placeholder="搜索驱动"
-                value={driverSearch}
-                onChange={(e) => setDriverSearch(e.target.value)}
-                style={{ width: 180 }}
-              />
-              <Radio.Group
-                size="small"
-                optionType="button"
-                value={driverCategoryFilter}
-                onChange={(e) => setDriverCategoryFilter(e.target.value)}
-                options={[
-                  { value: 'all', label: '全部' },
-                  { value: 'community', label: '社区驱动' },
-                  { value: 'raid', label: '阵列卡' },
-                  { value: 'network', label: '网卡' },
-                  { value: 'storage', label: '存储' },
-                  { value: 'oem-addon', label: '品牌 Addon' },
-                ]}
-              />
-              <Button
-                size="small"
-                onClick={() => {
-                  const paths = filteredDrivers.map((d) => d.path)
-                  if (allDriversSelected) {
-                    setDriverPaths(effectiveDriverPaths.filter((x) => !paths.includes(x)))
-                  } else {
-                    setDriverPaths(Array.from(new Set([...effectiveDriverPaths, ...paths])))
-                  }
-                }}
-              >
-                {allDriversSelected ? '取消全选' : '全选当前'}
-              </Button>
-              <Button size="small" type="text" danger disabled={effectiveDriverPaths.length === 0} onClick={() => setDriverPaths([])}>
-                清空
-              </Button>
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 12 }}
-                aria-label={'已选 ' + selectedDrivers.length + ' 个'}
-              >
-                已选 {selectedDrivers.length} 个
-              </Typography.Text>
-            </Space>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {/* 苹果风格分类选择分段控制器 */}
+            <div className="apple-segmented-group" style={{ width: '100%', overflowX: 'auto', padding: 4 }}>
+              {driverCategories.map((cat) => {
+                const stats = categoryStats[cat.key] || { total: 0, selected: 0 }
+                const isActive = driverCategoryFilter === cat.key
+                return (
+                  <button
+                    key={cat.key}
+                    type="button"
+                    className={`apple-segmented-btn ${isActive ? 'active' : ''}`}
+                    onClick={() => setDriverCategoryFilter(cat.key as any)}
+                  >
+                    <span>{cat.label}</span>
+                    {stats.selected > 0 ? (
+                      <span
+                        style={{
+                          background: isActive ? '#0071e3' : '#16a34a',
+                          color: '#ffffff',
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: 9999,
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        已选 {stats.selected}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11, opacity: 0.65 }}>
+                        ({stats.total})
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
 
+            {/* 搜索与快捷操作栏 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <Space wrap size={10}>
+                <Input
+                  allowClear
+                  prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                  placeholder="搜索驱动名称 / 芯片型号 / 厂商..."
+                  value={driverSearch}
+                  onChange={(e) => setDriverSearch(e.target.value)}
+                  style={{ width: 260, borderRadius: 8 }}
+                />
+                <Button
+                  size="small"
+                  style={{ borderRadius: 6 }}
+                  onClick={() => {
+                    const paths = filteredDrivers.map((d) => d.path)
+                    if (allDriversSelected) {
+                      setDriverPaths(effectiveDriverPaths.filter((x) => !paths.includes(x)))
+                    } else {
+                      setDriverPaths(Array.from(new Set([...effectiveDriverPaths, ...paths])))
+                    }
+                  }}
+                >
+                  {allDriversSelected ? '取消全选当前' : '全选当前分类'}
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  disabled={effectiveDriverPaths.length === 0}
+                  onClick={() => setDriverPaths([])}
+                >
+                  清空全部已选
+                </Button>
+              </Space>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  当前分类：{filteredDrivers.length} 款 · 全局共选入
+                </Typography.Text>
+                <Tag color={selectedDrivers.length > 0 ? 'blue' : 'default'} style={{ borderRadius: 999, marginInlineEnd: 0 }}>
+                  {selectedDrivers.length} 个
+                </Tag>
+              </div>
+            </div>
+
+            {/* 驱动列表表格（整行可点击切换勾选） */}
             <Table
-              size="small"
+              size="middle"
               rowKey="path"
               columns={driverColumns}
               dataSource={filteredDrivers}
@@ -695,77 +871,288 @@ export default function BuildPage() {
                 selectedRowKeys: effectiveDriverPaths,
                 onChange: (keys) => setDriverPaths(keys as string[]),
               }}
+              onRow={(record) => ({
+                onClick: (e) => {
+                  const target = e.target as HTMLElement
+                  if (
+                    target.closest('.ant-typography-copy') ||
+                    target.closest('.ant-table-selection-column') ||
+                    target.closest('.ant-checkbox-wrapper') ||
+                    target.tagName === 'INPUT'
+                  ) {
+                    return
+                  }
+                  setDriverPaths((prev) => {
+                    const exists = prev.includes(record.path)
+                    return exists ? prev.filter((p) => p !== record.path) : [...prev, record.path]
+                  })
+                },
+                className: `apple-driver-table-row ${effectiveDriverPaths.includes(record.path) ? 'row-selected' : ''}`,
+              })}
               locale={{
                 emptyText: (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={driversQuery.isError ? '驱动加载失败' : '当前版本暂无可选驱动（可以不选直接构建）'}
+                    description={driversQuery.isError ? '驱动加载失败' : '当前分类暂无驱动（可直接进入下一步构建）'}
                   />
                 ),
               }}
             />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              「无标记」只表示没有冲突或依赖标记，不代表已验证硬件兼容性。
-            </Typography.Text>
+
+            {/* 表格正下方的【本次构建待注入驱动】全景清单（解决多选看不清的问题） */}
+            {selectedDrivers.length > 0 ? (
+              <div
+                style={{
+                  background: '#ffffff',
+                  border: '1.5px solid #bbf7d0',
+                  borderRadius: 14,
+                  padding: '14px 18px',
+                  boxShadow: '0 4px 16px rgba(22, 163, 74, 0.06)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                  <Space size={8}>
+                    <CheckCircleFilled style={{ color: '#16a34a', fontSize: 16 }} />
+                    <Typography.Text strong style={{ color: '#15803d', fontSize: 13.5 }}>
+                      本次构建已勾选注入 {selectedDrivers.length} 个扩展组件
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      （跨分类多选均已保留 · 点击 ✕ 可单项剔除）
+                    </Typography.Text>
+                  </Space>
+                  <Button
+                    size="small"
+                    type="link"
+                    danger
+                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    onClick={() => setDriverPaths([])}
+                  >
+                    清空全部已选
+                  </Button>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {selectedDrivers.map((d) => {
+                    const meta = resolveDriverMeta(d)
+                    return (
+                      <div
+                        key={d.path}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '5px 12px',
+                          borderRadius: 9999,
+                          background: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <Tag color={meta.categoryColor} style={{ marginInlineEnd: 0, padding: '0 6px', borderRadius: 999, fontSize: 11 }}>
+                          {meta.categoryLabel}
+                        </Tag>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: '#0f172a' }}>
+                          {meta.zhName}
+                        </span>
+                        {meta.hardwareChip && (
+                          <span
+                            style={{
+                              color: '#0284c7',
+                              fontSize: 11,
+                              background: '#e0f2fe',
+                              padding: '1px 6px',
+                              borderRadius: 999,
+                              fontWeight: 500,
+                            }}
+                          >
+                            {meta.hardwareChip}
+                          </span>
+                        )}
+                        <span
+                          role="button"
+                          aria-label={`移除 ${meta.zhName}`}
+                          style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', padding: 2, marginLeft: 2 }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDriverPaths((prev) => prev.filter((p) => p !== d.path))
+                          }}
+                        >
+                          <CloseCircleFilled style={{ color: '#94a3b8', fontSize: 15 }} />
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1.5px dashed #cbd5e1',
+                  borderRadius: 12,
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+                  💡 <strong>未勾选任何额外驱动</strong>：若官方镜像已原生支持您的硬件，可直接进入下一步构建纯净版 ISO。
+                </Typography.Text>
+              </div>
+            )}
           </Space>
         )}
 
         {step === 3 && (
-          <Space direction="vertical" size={14} style={{ width: '100%' }}>
-            <Radio.Group value={installMode} onChange={(e) => setInstallMode(e.target.value)}>
-              <Space direction="vertical" size={8}>
-                <Radio value="unattended">无人值守 —— 开机自动格式化首块磁盘完成安装，首次启动自动注册驱动</Radio>
-                <Radio value="interactive">交互式 —— 保留官方安装向导，手动选择目标磁盘，驱动照常预载</Radio>
-              </Space>
-            </Radio.Group>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <div>
+              <Typography.Text type="secondary" className="field-block-label" style={{ marginBottom: 8, display: 'block' }}>
+                选择安装部署模式
+              </Typography.Text>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                <div
+                  className={`apple-source-card ${installMode === 'unattended' ? 'selected' : ''}`}
+                  onClick={() => setInstallMode('unattended')}
+                  style={{ alignItems: 'flex-start', padding: '14px 16px' }}
+                >
+                  <div style={{ marginTop: 2, flexShrink: 0 }}>
+                    {installMode === 'unattended' ? (
+                      <CheckCircleFilled style={{ color: '#0071e3', fontSize: 18 }} />
+                    ) : (
+                      <div style={{ width: 16, height: 16, borderRadius: '50%', border: '2px solid #cbd5e1' }} />
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Typography.Text strong style={{ fontSize: 14 }}>
+                        ⚡ 无人值守全自动安装
+                      </Typography.Text>
+                      <Tag color="blue" style={{ marginInlineEnd: 0, borderRadius: 999, fontSize: 11 }}>推荐小主机</Tag>
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: 1.45 }}>
+                      开机自动抹除首块可用硬盘并快速完成安装，首次启动自动注册并加载全部注入驱动，插上 U 盘即可全自动装机。
+                    </Typography.Text>
+                  </div>
+                </div>
+
+                <div
+                  className={`apple-source-card ${installMode === 'interactive' ? 'selected' : ''}`}
+                  onClick={() => setInstallMode('interactive')}
+                  style={{ alignItems: 'flex-start', padding: '14px 16px' }}
+                >
+                  <div style={{ marginTop: 2, flexShrink: 0 }}>
+                    {installMode === 'interactive' ? (
+                      <CheckCircleFilled style={{ color: '#0071e3', fontSize: 18 }} />
+                    ) : (
+                      <div style={{ width: 16, height: 16, borderRadius: '50%', border: '2px solid #cbd5e1' }} />
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Typography.Text strong style={{ fontSize: 14 }}>
+                        🖥️ 交互式手动安装
+                      </Typography.Text>
+                      <Tag style={{ marginInlineEnd: 0, borderRadius: 999, fontSize: 11 }}>多盘服务器</Tag>
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: 1.45 }}>
+                      保留原生官方图形化安装向导，可在装机界面手动挑选目标系统盘、配置静态 IP，驱动照常预载生效。
+                    </Typography.Text>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <div>
-              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                硬件兼容与内核魔改参数（自动写入引导并持久化）
+              <Typography.Text type="secondary" className="field-block-label" style={{ marginBottom: 8, display: 'block' }}>
+                硬件兼容与内核魔改参数（自动写入引导配置并持久化）
               </Typography.Text>
-              <Checkbox.Group
-                value={bootOptions}
-                onChange={(vals) => setBootOptions(vals as string[])}
-                style={{ width: '100%' }}
-              >
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                  <Checkbox value="hybrid_cpu">
-                    <strong>Intel 大小核兼容 (12/13/14代/Ultra)</strong>
-                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
-                      注入 <code>cpuUniformityHardCheckPanic=FALSE</code>，防止大小核混合架构启动或重启时紫屏（PSOD）。
-                    </Typography.Text>
-                  </Checkbox>
-                  <Checkbox value="osdata_8g">
-                    <strong>精简系统盘占用至 8GB</strong>
-                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
-                      限制 <code>autoPartitionOSDataSize=8192</code>，防止 ESX-OSData 分区吞掉 120GB+ 宝贵固态空间。
-                    </Typography.Text>
-                  </Checkbox>
-                  <Checkbox value="legacy_cpu">
-                    <strong>放行不受支持的老旧 CPU</strong>
-                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
-                      注入 <code>allowLegacyCPU=true</code>，让 E5 v3/v4 或老旧酷睿跳过 CPU 弃用警告继续装机。
-                    </Typography.Text>
-                  </Checkbox>
-                  <Checkbox value="headless">
-                    <strong>无头模式引导 (Headless)</strong>
-                    <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginLeft: 24 }}>
-                      注入 <code>ignoreHeadless=TRUE</code>，针对无核显或不接显示器的软路由/服务器防卡死。
-                    </Typography.Text>
-                  </Checkbox>
-                </Space>
-              </Checkbox.Group>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10 }}>
+                {[
+                  {
+                    key: 'hybrid_cpu',
+                    title: 'Intel 大小核防紫屏 (12/13/14代/Ultra)',
+                    desc: '注入 cpuUniformityHardCheckPanic=FALSE，彻底解决异构大小核混合架构调度 PSOD 紫屏。',
+                    tag: '强烈推荐',
+                    color: 'blue',
+                  },
+                  {
+                    key: 'osdata_8g',
+                    title: '精简系统盘占用至 8GB',
+                    desc: '限制 autoPartitionOSDataSize=8192，防止 ESX-OSData 分区吞掉 120GB+ 宝贵固态空间。',
+                    tag: 'SSD 必备',
+                    color: 'green',
+                  },
+                  {
+                    key: 'legacy_cpu',
+                    title: '放行不受支持的老旧 CPU',
+                    desc: '注入 allowLegacyCPU=true，让 E5 v3/v4 或老旧酷睿跳过 CPU 弃用警告继续装机。',
+                    tag: '老机必备',
+                    color: 'orange',
+                  },
+                  {
+                    key: 'headless',
+                    title: '无头模式引导 (Headless)',
+                    desc: '注入 ignoreHeadless=TRUE，针对无独显/核显或不接显示器的软路由防启动卡死。',
+                    tag: '软路由',
+                    color: 'purple',
+                  },
+                ].map((item) => {
+                  const active = bootOptions.includes(item.key)
+                  return (
+                    <div
+                      key={item.key}
+                      onClick={() => {
+                        if (active) setBootOptions(bootOptions.filter((k) => k !== item.key))
+                        else setBootOptions([...bootOptions, item.key])
+                      }}
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: 10,
+                        border: active ? '1.5px solid #0071e3' : '1px solid #e2e8f0',
+                        background: active ? '#f0f7ff' : '#ffffff',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        display: 'flex',
+                        gap: 10,
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <Checkbox checked={active} style={{ marginTop: 2, pointerEvents: 'none' }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: active ? '#0071e3' : '#0f172a' }}>
+                            {item.title}
+                          </span>
+                          <Tag color={item.color} style={{ marginInlineEnd: 0, padding: '0 5px', fontSize: 10, borderRadius: 999 }}>
+                            {item.tag}
+                          </Tag>
+                        </div>
+                        <span style={{ fontSize: 11.5, color: '#64748b', lineHeight: 1.4 }}>
+                          {item.desc}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
 
             <Divider style={{ margin: '8px 0' }} />
 
             <Form form={form} layout="vertical" initialValues={{ root_password: 'niuniu', custom_iso_name: '' }}>
-              <Form.Item name="root_password" label="Root 密码" extra="留空使用默认 niuniu">
-                <Input.Password placeholder="niuniu" style={{ maxWidth: 280 }} />
-              </Form.Item>
-              <Form.Item name="custom_iso_name" label="输出文件名" extra="留空自动按公式命名">
-                <Input className="mono" placeholder={formulaPlaceholder} allowClear style={{ maxWidth: 420 }} />
-              </Form.Item>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+                <Form.Item name="root_password" label="Root 密码" extra="留空使用默认 niuniu" style={{ marginBottom: 0 }}>
+                  <Input.Password placeholder="niuniu" style={{ maxWidth: 320, borderRadius: 8 }} />
+                </Form.Item>
+                <Form.Item name="custom_iso_name" label="输出文件名" extra="留空自动按公式命名" style={{ marginBottom: 0 }}>
+                  <Input className="mono" placeholder={formulaPlaceholder} allowClear style={{ maxWidth: 420, borderRadius: 8 }} />
+                </Form.Item>
+              </div>
             </Form>
           </Space>
         )}
@@ -775,7 +1162,19 @@ export default function BuildPage() {
             <Descriptions bordered size="small" column={1} className="confirm-desc">
               <Descriptions.Item label="ESXi 版本">ESXi {version}</Descriptions.Item>
               <Descriptions.Item label="基础镜像">
-                {selectedDepot ? fileName(selectedDepot.file) : '未选择'}
+                {selectedDepot ? (
+                  <Space direction="vertical" size={2}>
+                    <Space size={6} wrap>
+                      <Tag color={fileCategoryMeta(selectedDepot.file).color} style={{ marginInlineEnd: 0, borderRadius: 999 }}>
+                        {resolveDepotMeta(selectedDepot.file).badgeLabel}
+                      </Tag>
+                      <Typography.Text strong>{resolveDepotMeta(selectedDepot.file).zhName}</Typography.Text>
+                    </Space>
+                    <Typography.Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                      {fileName(selectedDepot.file)}
+                    </Typography.Text>
+                  </Space>
+                ) : '未选择'}
               </Descriptions.Item>
               <Descriptions.Item label="实际引擎">
                 <Tag color={engineOf(depotPath).color === 'iso' ? 'cyan' : 'gold'}>
@@ -783,9 +1182,33 @@ export default function BuildPage() {
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="注入驱动">
-                {selectedDrivers.length === 0
-                  ? '不注入驱动'
-                  : selectedDrivers.map((d) => d.driver_name || fileName(d)).join('、')}
+                {selectedDrivers.length === 0 ? (
+                  <Typography.Text type="secondary">不注入额外驱动（使用安装源内置驱动）</Typography.Text>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {selectedDrivers.map((d) => {
+                      const meta = resolveDriverMeta(d)
+                      return (
+                        <div key={d.path} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <Tag color={meta.categoryColor} style={{ marginInlineEnd: 0 }}>
+                            {meta.categoryLabel}
+                          </Tag>
+                          <Typography.Text strong>{meta.zhName}</Typography.Text>
+                          {meta.hardwareChip && (
+                            <Tag color="cyan" style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                              {meta.hardwareChip}
+                            </Tag>
+                          )}
+                          {meta.cleanVersion && (
+                            <Typography.Text code style={{ fontSize: 11 }}>
+                              v{meta.cleanVersion}
+                            </Typography.Text>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="硬件魔改参数">
                 {bootOptions.length === 0 ? '未启用' : (
@@ -828,21 +1251,107 @@ export default function BuildPage() {
           </Space>
         )}
 
-        <Divider style={{ margin: '18px 0 14px' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            ESXi {version} · {selectedDrivers.length} 个驱动 · {installMode === 'unattended' ? '无人值守' : '交互式'}
-          </Typography.Text>
-          <Space>
-            <Button disabled={step === 1} onClick={() => setStep((x) => Math.max(1, x - 1))}>
-              上一步
-            </Button>
-            {step < 4 && (
-              <Button type="primary" disabled={step === 1 && !canLeaveStep1} onClick={() => setStep((x) => Math.min(4, x + 1))}>
-                下一步
+        {/* 苹果风格底部悬浮常驻操作栏 */}
+        <div className="apple-sticky-bar">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0, flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <span style={{ fontSize: 12.5, color: '#64748b' }}>底包:</span>
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: '#0f172a',
+                  maxWidth: 240,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {selectedDepot ? resolveDepotMeta(selectedDepot.file).zhName : '请先选择安装源'}
+              </span>
+              {selectedDepot && (
+                <Tag color={engineOf(depotPath).color === 'iso' ? 'cyan' : 'gold'} style={{ marginInlineEnd: 0, fontSize: 11, borderRadius: 999 }}>
+                  {engineOf(depotPath).short}
+                </Tag>
+              )}
+            </div>
+
+            <span style={{ color: '#cbd5e1' }}>·</span>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12.5, color: '#64748b' }}>驱动:</span>
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: selectedDrivers.length > 0 ? '#0071e3' : '#64748b',
+                }}
+              >
+                {selectedDrivers.length > 0 ? `${selectedDrivers.length} 个已选` : '0 (原生内置)'}
+              </span>
+              {selectedDrivers.slice(0, 2).map((d) => {
+                const m = resolveDriverMeta(d)
+                return (
+                  <span
+                    key={d.path}
+                    style={{
+                      fontSize: 11,
+                      background: '#f1f5f9',
+                      color: '#334155',
+                      padding: '1px 8px',
+                      borderRadius: 999,
+                      maxWidth: 130,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {m.hardwareChip || m.zhName}
+                  </span>
+                )
+              })}
+              {selectedDrivers.length > 2 && (
+                <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>
+                  +{selectedDrivers.length - 2}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            {step > 1 && (
+              <Button
+                style={{ borderRadius: 9999, height: 38, paddingInline: 18, fontWeight: 500 }}
+                onClick={() => setStep((x) => Math.max(1, x - 1))}
+              >
+                上一步
               </Button>
             )}
-          </Space>
+            {step < 4 ? (
+              <button
+                type="button"
+                className="apple-pill-btn"
+                disabled={step === 1 && !canLeaveStep1}
+                onClick={() => setStep((x) => Math.min(4, x + 1))}
+              >
+                <span>
+                  {step === 1 ? '下一步：选择驱动 →' : step === 2 ? '下一步：配置参数 →' : '下一步：确认构建 →'}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="apple-pill-btn"
+                style={{ background: '#16a34a', boxShadow: '0 2px 10px rgba(22, 163, 74, 0.3)' }}
+                disabled={createMutation.isPending}
+                onClick={runPipeline}
+              >
+                <PlayCircleOutlined />
+                <span>{createMutation.isPending ? '正在创建...' : '开始极速构建'}</span>
+              </button>
+            )}
+          </div>
         </div>
       </Card>
 

@@ -8,6 +8,7 @@ import { Tag } from 'antd'
 import type { ReactNode } from 'react'
 import type { BuildTask, FileMetadata, StorageBucket } from '../types'
 import { formatBytes } from '../utils'
+import { resolveDriverMeta, resolveDepotMeta, extractCleanDriverVersion } from '../utils/driverMetadata'
 
 export const esxiVersions = ['6.5', '6.7', '7.0', '8.0', '9.0']
 
@@ -58,8 +59,36 @@ export function fileName(file?: FileMetadata) {
 
 export function assetTitle(file?: FileMetadata) {
   if (!file) return '-'
-  const baseName = file.driver_name || fileName(file)
-  return file.driver_description ? `${baseName}（${file.driver_description}）` : baseName
+  if (file.type === 'driver') {
+    const meta = resolveDriverMeta(file)
+    if (meta.zhName && meta.zhName !== '驱动文件' && meta.zhName !== '未知驱动') {
+      return meta.zhName
+    }
+  } else if (file.type === 'depot' || file.type === 'iso') {
+    const meta = resolveDepotMeta(file)
+    if (meta.zhName && meta.zhName !== '未知安装源') {
+      return meta.zhName
+    }
+  }
+  return file.driver_name || fileName(file)
+}
+
+/**
+ * 提取干净合规的短版本号用于列表标签展示，彻底避免把文件名当作版本显示
+ */
+export function cleanDisplayVersion(file?: FileMetadata): string | undefined {
+  if (!file) return undefined
+  if (file.type === 'driver') {
+    const meta = resolveDriverMeta(file)
+    if (meta.cleanVersion) return meta.cleanVersion
+  } else if (file.type === 'depot' || file.type === 'iso') {
+    const meta = resolveDepotMeta(file)
+    if (meta.cleanVersion) return meta.cleanVersion
+  }
+  const raw = file.driver_version || ''
+  if (!raw) return undefined
+  // 如果当前版本字段明显就是文件名，则清洗
+  return extractCleanDriverVersion(raw) || undefined
 }
 
 /** 普通 ISO 与构建产出必须分开，产出路径固定以 output/ 开头。 */
