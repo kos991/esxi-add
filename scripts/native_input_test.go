@@ -58,6 +58,6 @@ func TestNativeBuildRejectsInvalidIsoAndExistingOutput(t *testing.T) {
  existingOutput := filepath.Join(dir, "existing.iso")
  if err := os.WriteFile(existingOutput, []byte("old-artifact"), 0600); err != nil { t.Fatal(err) }
  text, err := runNativeScript(t, "--depot-path", valid, "--output-path", existingOutput, "--work-dir", filepath.Join(dir, "w2"))
- if err == nil || !strings.Contains(text, "已存在") { t.Fatalf("existing output overwritten: %s", text) }
+ if err == nil || (!strings.Contains(text, "已存在") && !strings.Contains(text, "already exists")) { t.Fatalf("existing output overwritten: %s", text) }
  if data, _ := os.ReadFile(existingOutput); string(data) != "old-artifact" { t.Fatal("existing artifact modified") }
 }
