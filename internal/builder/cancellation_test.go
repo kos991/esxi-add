@@ -25,12 +25,22 @@ func TestExecuteBuildCancellationWithoutConsumer(t *testing.T) {
 	defer cancel()
 	events := make(chan BuildProgress)
 	done := make(chan error, 1)
-	go func() { done <- NewPowerShellExecutor(shell, script).ExecuteBuild(ctx, &BuildParams{}, events) }()
-	select {
-	case <-events:
-	case <-time.After(15 * time.Second):
-		t.Fatal("no child output")
+	source := filepath.Join(t.TempDir(), "source.zip")
+	if err := os.WriteFile(source, []byte("PK"), 0600); err != nil {
+		t.Fatal(err)
 	}
+	go func() { done <- NewPowerShellExecutor(shell, script).ExecuteBuild(ctx, &BuildParams{DepotPath: source}, events) }()
+	for {
+		select {
+		case ev := <-events:
+			if ev.Message == "output" || ev.Message == "error" {
+				goto childStarted
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("no child output")
+		}
+	}
+childStarted:
 	// Stop reading before cancellation: both sends and pipe reads must release.
 	cancel()
 	select {
