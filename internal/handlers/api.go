@@ -52,6 +52,8 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	protectedAPI.Put("/files/:id/rename", fileHandler.RenameFile)
 	protectedAPI.Delete("/files/:id", fileHandler.DeleteFile)
 	protectedAPI.Post("/files/refresh", fileHandler.RefreshCache)
+	protectedAPI.Post("/files/archive-outputs-s3", fileHandler.ArchiveOutputsToS3)
+	protectedAPI.Post("/files/:id/archive-s3", fileHandler.ArchiveToS3)
 
 	protectedAPI.Post("/builds", buildHandler.Create)
 	protectedAPI.Post("/builds/preflight", buildHandler.StartPreflight)
@@ -61,6 +63,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	protectedAPI.Delete("/builds/:id", buildHandler.Delete)
 	protectedAPI.Get("/builds/:id/logs", buildHandler.GetLogs)
 	protectedAPI.Get("/builds/:id/artifact", buildHandler.DownloadArtifact)
+	protectedAPI.Post("/builds/:id/archive-s3", buildHandler.ArchiveToS3)
 
 	workerAPI := api.Group("/worker")
 	workerAPI.Post("/builds/claim", workerHandler.ClaimBuild)

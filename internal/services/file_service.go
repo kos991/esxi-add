@@ -31,6 +31,32 @@ var activeUploads sync.Map
 var storageMutationMu sync.RWMutex
 var ErrUploadConflict = errors.New("an upload to this bucket/path is already in progress")
 
+type s3ObjectArchiveClient interface {
+	Upload(ctx context.Context, objectName string, reader io.Reader, size int64, contentType string) error
+	GetObjectInfo(ctx context.Context, objectName string) (minio.ObjectInfo, error)
+}
+
+var newArchiveS3Client = func(cfg *storage.S3Config) (s3ObjectArchiveClient, error) {
+	return storage.NewS3Client(cfg)
+}
+
+type ArchiveFileResult struct {
+	File             *models.FileMetadata `json:"file"`
+	SourceBucketID   uint                 `json:"source_bucket_id"`
+	TargetBucketID   uint                 `json:"target_bucket_id"`
+	TargetBucketName string               `json:"target_bucket_name"`
+	CleanedLocal     bool                 `json:"cleaned_local"`
+	FreedBytes       int64                `json:"freed_bytes"`
+}
+
+type ArchiveOutputsResult struct {
+	TransferredCount int      `json:"transferred_count"`
+	FreedBytes       int64    `json:"freed_bytes"`
+	TargetBucketID   uint     `json:"target_bucket_id"`
+	TargetBucketName string   `json:"target_bucket_name"`
+	Paths            []string `json:"paths"`
+}
+
 type FileService struct {
 	db        *gorm.DB
 	s3Client  *storage.S3Client
@@ -264,6 +290,513 @@ func (s *FileService) DeleteFile(ctx context.Context, id uint) error {
 	return nil
 }
 
+func (s *FileService) ResolveTargetS3Bucket(ctx context.Context, preferredID uint) (*models.StorageBucket, error) {
+	var bucket models.StorageBucket
+	if preferredID > 0 {
+		if err := s.db.WithContext(ctx).First(&bucket, preferredID).Error; err != nil {
+			return nil, fmt.Errorf("find target S3 bucket: %w", err)
+		}
+		if models.NormalizeStorageType(bucket.Type) != models.StorageTypeS3 {
+			return nil, fmt.Errorf("目标存储节点「%s」不是 S3 对象存储", bucket.Name)
+		}
+		return &bucket, nil
+	}
+	if err := s.db.WithContext(ctx).
+		Where("type = ? OR type = ''", models.StorageTypeS3).
+		Order("is_default DESC, id ASC").
+		First(&bucket).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("未配置可用的 S3 对象存储节点，请先在「存储与挂载」中挂载 S3")
+		}
+		return nil, fmt.Errorf("query S3 bucket: %w", err)
+	}
+	return &bucket, nil
+}
+
+func (s *FileService) ArchiveFileToS3(ctx context.Context, id uint, targetBucketID uint) (*ArchiveFileResult, error) {
+	storageMutationMu.Lock()
+	defer storageMutationMu.Unlock()
+
+	var file models.FileMetadata
+	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
+		return nil, err
+	}
+	return s.archiveFileRecordToS3Unlocked(ctx, file, targetBucketID)
+}
+
+func (s *FileService) ArchiveLocalOutputsToS3(ctx context.Context, sourceBucketID uint, targetBucketID uint) (*ArchiveOutputsResult, error) {
+	storageMutationMu.Lock()
+	defer storageMutationMu.Unlock()
+
+	targetBucket, err := s.ResolveTargetS3Bucket(ctx, targetBucketID)
+	if err != nil {
+		return nil, err
+	}
+
+	var localBuckets []models.StorageBucket
+	q := s.db.WithContext(ctx).Where("type = ?", models.StorageTypeLocal)
+	if sourceBucketID > 0 {
+		q = q.Where("id = ?", sourceBucketID)
+	}
+	if err := q.Find(&localBuckets).Error; err != nil {
+		return nil, err
+	}
+	if len(localBuckets) == 0 {
+		return &ArchiveOutputsResult{
+			TargetBucketID:   targetBucket.ID,
+			TargetBucketName: targetBucket.Name,
+			Paths:            []string{},
+		}, nil
+	}
+
+	localIDs := make([]uint, 0, len(localBuckets))
+	for _, b := range localBuckets {
+		localIDs = append(localIDs, b.ID)
+	}
+
+	var files []models.FileMetadata
+	if len(localIDs) > 0 {
+		if err := s.db.WithContext(ctx).
+			Where("storage_bucket_id IN ? AND (path LIKE 'output/%' OR path LIKE '/output/%' OR path LIKE 'build/%' OR path LIKE '/build/%')", localIDs).
+			Order("id ASC").
+			Find(&files).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	res := &ArchiveOutputsResult{
+		TargetBucketID:   targetBucket.ID,
+		TargetBucketName: targetBucket.Name,
+		Paths:            make([]string, 0, len(files)),
+	}
+	for _, f := range files {
+		item, err := s.archiveFileRecordToS3Unlocked(ctx, f, targetBucket.ID)
+		if err != nil {
+			return nil, err
+		}
+		res.TransferredCount++
+		res.FreedBytes += item.FreedBytes
+		if item.File != nil && item.File.Path != "" {
+			res.Paths = append(res.Paths, item.File.Path)
+		} else {
+			res.Paths = append(res.Paths, f.Path)
+		}
+	}
+
+	// Scan any unindexed leftover files in local output/ or build/ directories
+	for _, lb := range localBuckets {
+		store, sErr := storage.NewLocalStore(lb.LocalPath)
+		if sErr != nil {
+			continue
+		}
+		for _, pfx := range []string{"output/", "build/"} {
+			objs, lErr := store.ListObjects(ctx, pfx)
+			if lErr != nil {
+				continue
+			}
+			for _, obj := range objs {
+				cleanPath := strings.TrimLeft(obj.Key, "/")
+				if !strings.HasSuffix(strings.ToLower(cleanPath), ".iso") {
+					continue
+				}
+				baseName := displayNameFromFilename(cleanPath)
+				esxiVer := inferESXiVersionFromDepotName(baseName)
+				if s.db.Migrator().HasTable(&models.BuildTask{}) {
+					var task models.BuildTask
+					if tErr := s.db.WithContext(ctx).Where("output_iso = ?", cleanPath).Order("id DESC").First(&task).Error; tErr == nil && task.ESXiVersion != "" {
+						esxiVer = task.ESXiVersion
+					}
+				}
+				synthetic := models.FileMetadata{
+					StorageBucketID:   lb.ID,
+					Path:              cleanPath,
+					Type:              models.FileTypeISO,
+					ESXiVersion:       esxiVer,
+					DriverName:        baseName,
+					DriverVersion:     baseName,
+					DriverDescription: "ISO镜像",
+					Size:              obj.Size,
+				}
+				item, aErr := s.archiveFileRecordToS3Unlocked(ctx, synthetic, targetBucket.ID)
+				if aErr != nil {
+					return nil, aErr
+				}
+				res.TransferredCount++
+				res.FreedBytes += item.FreedBytes
+				if item.File != nil && item.File.Path != "" {
+					res.Paths = append(res.Paths, item.File.Path)
+				}
+			}
+		}
+	}
+
+	// Also migrate any legacy output/*.iso objects already in S3 into build/*.iso
+	migratedPaths, err := s.migrateS3LegacyOutputObjectsToBuildUnlocked(ctx, targetBucket)
+	if err != nil {
+		return nil, err
+	}
+	for _, mp := range migratedPaths {
+		res.TransferredCount++
+		res.Paths = append(res.Paths, mp)
+	}
+	return res, nil
+}
+
+func (s *FileService) migrateS3LegacyOutputObjectsToBuildUnlocked(ctx context.Context, targetBucket *models.StorageBucket) ([]string, error) {
+	if targetBucket == nil || models.NormalizeStorageType(targetBucket.Type) != models.StorageTypeS3 {
+		return nil, nil
+	}
+	client, err := s.newS3ClientForBucket(targetBucket)
+	if err != nil {
+		return nil, nil
+	}
+	objs, err := client.ListObjects(ctx, "output/")
+	if err != nil {
+		return nil, nil
+	}
+	var migrated []string
+	for _, obj := range objs {
+		oldKey := strings.TrimLeft(obj.Key, "/")
+		if !strings.HasPrefix(strings.ToLower(oldKey), "output/") || strings.HasSuffix(oldKey, "/") {
+			continue
+		}
+		newKey := normalizeS3BuildOutputPath(oldKey)
+		if newKey == "" || newKey == oldKey {
+			continue
+		}
+		if err := client.RenameObject(ctx, oldKey, newKey); err != nil {
+			return migrated, fmt.Errorf("迁移 S3 镜像 %s 至 %s 失败: %w", oldKey, newKey, err)
+		}
+		migrated = append(migrated, newKey)
+		now := time.Now()
+		lm := obj.LastModified
+		if lm.IsZero() {
+			lm = now
+		}
+		baseName := displayNameFromFilename(newKey)
+		esxiVer := inferESXiVersionFromDepotName(baseName)
+		var shaVal string
+		if s.db.Migrator().HasTable(&models.BuildTask{}) {
+			var task models.BuildTask
+			if err := s.db.WithContext(ctx).
+				Where("output_iso IN ?", []string{oldKey, newKey}).
+				Order("id DESC").
+				First(&task).Error; err == nil {
+				if task.ESXiVersion != "" {
+					esxiVer = task.ESXiVersion
+				}
+				shaVal = task.OutputISOSHA256
+			}
+			_ = s.db.WithContext(ctx).Model(&models.BuildTask{}).
+				Where("output_iso = ?", oldKey).
+				Updates(map[string]any{
+					"storage_bucket_id": targetBucket.ID,
+					"output_iso":        newKey,
+				}).Error
+		}
+		meta := models.FileMetadata{
+			StorageBucketID:   targetBucket.ID,
+			Path:              newKey,
+			Type:              models.FileTypeISO,
+			ESXiVersion:       esxiVer,
+			DriverName:        baseName,
+			DriverVersion:     baseName,
+			DriverDescription: "ISO镜像",
+			MD5:               md5FromETag(obj.ETag),
+			SHA256:            shaVal,
+			Size:              obj.Size,
+			ETag:              obj.ETag,
+			LastModified:      &lm,
+		}
+		_ = s.db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"deleted_at",
+				"type",
+				"esxi_version",
+				"driver_name",
+				"driver_description",
+				"driver_version",
+				"md5",
+				"sha256",
+				"size",
+				"etag",
+				"last_modified",
+				"updated_at",
+			}),
+		}).Create(&meta).Error
+		_ = s.db.WithContext(ctx).Unscoped().
+			Where("storage_bucket_id = ? AND path = ?", targetBucket.ID, oldKey).
+			Delete(&models.FileMetadata{}).Error
+	}
+	return migrated, nil
+}
+
+func normalizeS3BuildOutputPath(objectPath string) string {
+	clean := strings.TrimLeft(strings.ReplaceAll(strings.TrimSpace(objectPath), "\\", "/"), "/")
+	low := strings.ToLower(clean)
+	if strings.HasPrefix(low, "output/") || strings.HasPrefix(low, "build/") || strings.HasPrefix(low, "builds/") {
+		base := path.Base(clean)
+		if base != "" && base != "." && base != "/" {
+			return path.Join("build", base)
+		}
+	}
+	return clean
+}
+
+func (s *FileService) archiveFileRecordToS3Unlocked(ctx context.Context, file models.FileMetadata, targetBucketID uint) (*ArchiveFileResult, error) {
+	sourceBucket, err := s.getBucket(ctx, file.StorageBucketID)
+	if err != nil {
+		return nil, err
+	}
+	targetBucket, err := s.ResolveTargetS3Bucket(ctx, targetBucketID)
+	if err != nil {
+		return nil, err
+	}
+	if models.NormalizeStorageType(sourceBucket.Type) != models.StorageTypeLocal {
+		return &ArchiveFileResult{
+			File:             &file,
+			SourceBucketID:   sourceBucket.ID,
+			TargetBucketID:   targetBucket.ID,
+			TargetBucketName: targetBucket.Name,
+			CleanedLocal:     true,
+			FreedBytes:       0,
+		}, nil
+	}
+
+	localStore, err := storage.NewLocalStore(sourceBucket.LocalPath)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := localStore.Download(ctx, file.Path)
+	if err != nil {
+		return nil, fmt.Errorf("读取本地镜像失败 (%s): %w", file.Path, err)
+	}
+	defer reader.Close()
+
+	objInfo, err := localStore.GetObjectInfo(ctx, file.Path)
+	if err != nil {
+		return nil, fmt.Errorf("获取本地镜像信息失败 (%s): %w", file.Path, err)
+	}
+	fileSize := objInfo.Size
+	if fileSize <= 0 {
+		fileSize = file.Size
+	}
+
+	s3Client, err := newArchiveS3Client(&storage.S3Config{
+		Endpoint:        targetBucket.Endpoint,
+		AccessKeyID:     targetBucket.AccessKey,
+		SecretAccessKey: targetBucket.SecretKey,
+		BucketName:      targetBucket.BucketName,
+		Region:          targetBucket.Region,
+		UseSSL:          targetBucket.UseSSL,
+		PublicDomain:    targetBucket.PublicDomain,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	targetS3Path := normalizeS3BuildOutputPath(file.Path)
+
+	shaHasher := sha256.New()
+	md5Hasher := md5.New()
+	stream := io.TeeReader(reader, io.MultiWriter(shaHasher, md5Hasher))
+	if err := s3Client.Upload(ctx, targetS3Path, stream, fileSize, detectContentType(targetS3Path)); err != nil {
+		return nil, fmt.Errorf("上传镜像至 S3 失败: %w", err)
+	}
+	_ = reader.Close()
+
+	now := time.Now()
+	s3Meta := models.FileMetadata{
+		StorageBucketID:   targetBucket.ID,
+		Path:              targetS3Path,
+		Type:              file.Type,
+		ESXiVersion:       file.ESXiVersion,
+		DriverCategory:    file.DriverCategory,
+		DriverType:        file.DriverType,
+		DriverName:        file.DriverName,
+		DriverDescription: file.DriverDescription,
+		DriverVersion:     file.DriverVersion,
+		MD5:               hex.EncodeToString(md5Hasher.Sum(nil)),
+		SHA256:            hex.EncodeToString(shaHasher.Sum(nil)),
+		Size:              fileSize,
+		LastModified:      &now,
+	}
+	if s3Meta.Type == "" {
+		s3Meta.Type = models.FileTypeISO
+	}
+	if s3Info, infoErr := s3Client.GetObjectInfo(ctx, targetS3Path); infoErr == nil {
+		s3Meta.ETag = s3Info.ETag
+		if s3Info.Size > 0 {
+			s3Meta.Size = s3Info.Size
+		}
+		if !s3Info.LastModified.IsZero() {
+			lm := s3Info.LastModified
+			s3Meta.LastModified = &lm
+		}
+	}
+
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"deleted_at",
+			"type",
+			"esxi_version",
+			"driver_category",
+			"driver_type",
+			"driver_name",
+			"driver_description",
+			"driver_version",
+			"md5",
+			"sha256",
+			"size",
+			"etag",
+			"last_modified",
+			"updated_at",
+		}),
+	}).Create(&s3Meta).Error; err != nil {
+		return nil, fmt.Errorf("保存 S3 镜像元数据失败: %w", err)
+	}
+
+	if s.db.Migrator().HasTable(&models.BuildTask{}) {
+		archiveNote := fmt.Sprintf("ISO archived to S3 (%s: %s) and local generated ISO cleaned\n", targetBucket.Name, targetS3Path)
+		_ = s.db.WithContext(ctx).Model(&models.BuildTask{}).
+			Where("storage_bucket_id = ? AND output_iso IN ?", sourceBucket.ID, []string{file.Path, targetS3Path}).
+			Updates(map[string]any{
+				"storage_bucket_id": targetBucket.ID,
+				"output_iso":        targetS3Path,
+				"output_iso_size":   s3Meta.Size,
+				"output_iso_sha256": s3Meta.SHA256,
+				"log_output":        gorm.Expr("COALESCE(log_output, '') || ?", archiveNote),
+			}).Error
+	}
+
+	if err := localStore.DeleteObject(ctx, file.Path); err != nil {
+		return nil, fmt.Errorf("已上传至 S3，但清理本地镜像失败: %w", err)
+	}
+	_ = s.db.WithContext(ctx).Unscoped().Delete(&file).Error
+
+	_ = s.db.WithContext(ctx).
+		Where("storage_bucket_id = ? AND path = ?", targetBucket.ID, targetS3Path).
+		First(&s3Meta).Error
+
+	return &ArchiveFileResult{
+		File:             &s3Meta,
+		SourceBucketID:   sourceBucket.ID,
+		TargetBucketID:   targetBucket.ID,
+		TargetBucketName: targetBucket.Name,
+		CleanedLocal:     true,
+		FreedBytes:       fileSize,
+	}, nil
+}
+
+type ArchiveBuildResult struct {
+	Task             *models.BuildTask `json:"task"`
+	TargetBucketID   uint              `json:"target_bucket_id"`
+	TargetBucketName string            `json:"target_bucket_name"`
+	CleanedLocal     bool              `json:"cleaned_local"`
+	FreedBytes       int64             `json:"freed_bytes"`
+}
+
+func (s *FileService) ArchiveBuildArtifactToS3(ctx context.Context, taskIdentifier string, targetBucketID uint) (*ArchiveBuildResult, error) {
+	storageMutationMu.Lock()
+	defer storageMutationMu.Unlock()
+
+	var task models.BuildTask
+	if err := s.db.WithContext(ctx).Where("task_id = ?", taskIdentifier).First(&task).Error; err != nil {
+		return nil, err
+	}
+	if task.Status != models.BuildTaskStatusCompleted || strings.TrimSpace(task.OutputISO) == "" {
+		return nil, fmt.Errorf("构建任务尚未生成可用的 ISO 产物")
+	}
+
+	targetBucket, err := s.ResolveTargetS3Bucket(ctx, targetBucketID)
+	if err != nil {
+		return nil, err
+	}
+
+	var currentBucket models.StorageBucket
+	if err := s.db.WithContext(ctx).First(&currentBucket, task.StorageBucketID).Error; err != nil {
+		return nil, fmt.Errorf("find task storage bucket: %w", err)
+	}
+
+	var freedBytes int64
+	if models.NormalizeStorageType(currentBucket.Type) == models.StorageTypeLocal {
+		var localMeta models.FileMetadata
+		err := s.db.WithContext(ctx).
+			Where("storage_bucket_id = ? AND path = ?", currentBucket.ID, task.OutputISO).
+			First(&localMeta).Error
+		if err != nil {
+			baseName := displayNameFromFilename(task.OutputISO)
+			localMeta = models.FileMetadata{
+				StorageBucketID:   currentBucket.ID,
+				Path:              task.OutputISO,
+				Type:              models.FileTypeISO,
+				ESXiVersion:       task.ESXiVersion,
+				DriverName:        baseName,
+				DriverVersion:     baseName,
+				DriverDescription: "ISO镜像",
+				SHA256:            task.OutputISOSHA256,
+				Size:              task.OutputISOSize,
+			}
+		}
+		res, err := s.archiveFileRecordToS3Unlocked(ctx, localMeta, targetBucket.ID)
+		if err != nil {
+			return nil, err
+		}
+		freedBytes = res.FreedBytes
+	} else {
+		// If task already points to S3 under legacy output/, move it to build/
+		oldS3Key := strings.TrimLeft(task.OutputISO, "/")
+		newS3Key := normalizeS3BuildOutputPath(oldS3Key)
+		if newS3Key != "" && newS3Key != oldS3Key {
+			if client, cErr := s.newS3ClientForBucket(targetBucket); cErr == nil {
+				if rErr := client.RenameObject(ctx, oldS3Key, newS3Key); rErr == nil {
+					_ = s.db.WithContext(ctx).Model(&models.BuildTask{}).
+						Where("task_id = ?", task.TaskID).
+						Update("output_iso", newS3Key).Error
+					_ = s.db.WithContext(ctx).Model(&models.FileMetadata{}).
+						Where("storage_bucket_id = ? AND path = ?", targetBucket.ID, oldS3Key).
+						Update("path", newS3Key).Error
+				}
+			}
+		}
+		// Even if task already points to S3, ensure any leftover same-named ISO in local buckets is cleaned.
+		baseName := path.Base(strings.ReplaceAll(task.OutputISO, "\\", "/"))
+		candidatePaths := []string{task.OutputISO}
+		for _, pfx := range []string{"build", "output"} {
+			alt := path.Join(pfx, baseName)
+			if alt != task.OutputISO {
+				candidatePaths = append(candidatePaths, alt)
+			}
+		}
+		var localBuckets []models.StorageBucket
+		_ = s.db.WithContext(ctx).Where("type = ?", models.StorageTypeLocal).Find(&localBuckets).Error
+		for _, lb := range localBuckets {
+			if store, sErr := storage.NewLocalStore(lb.LocalPath); sErr == nil {
+				for _, p := range candidatePaths {
+					if info, iErr := store.GetObjectInfo(ctx, p); iErr == nil {
+						freedBytes += info.Size
+					}
+					_ = store.DeleteObject(ctx, p)
+				}
+			}
+			_ = s.db.WithContext(ctx).Unscoped().
+				Where("storage_bucket_id = ? AND path IN ?", lb.ID, candidatePaths).
+				Delete(&models.FileMetadata{}).Error
+		}
+	}
+
+	_ = s.db.WithContext(ctx).Where("task_id = ?", task.TaskID).First(&task).Error
+	return &ArchiveBuildResult{
+		Task:             &task,
+		TargetBucketID:   targetBucket.ID,
+		TargetBucketName: targetBucket.Name,
+		CleanedLocal:     true,
+		FreedBytes:       freedBytes,
+	}, nil
+}
+
 func (s *FileService) RenameFile(ctx context.Context, id uint, newName string) (*models.FileMetadata, error) {
 	storageMutationMu.Lock()
 	defer storageMutationMu.Unlock()
@@ -463,7 +996,7 @@ func buildObjectPath(fileType, esxiVersion, driverCategory, filename string) (st
 		}
 		return path.Join("drivers", esxiVersion, driverCategory, cleanName), nil
 	case models.FileTypeISO:
-		return path.Join("output", cleanName), nil
+		return path.Join("build", cleanName), nil
 	default:
 		return "", fmt.Errorf("unsupported file type: %s", fileType)
 	}
@@ -540,7 +1073,7 @@ func objectInfoToMetadata(bucketID uint, objectInfo minio.ObjectInfo) models.Fil
 		metadata.DriverDescription = fileDescription(cleanPath, models.FileTypeDriver)
 	case isISOPrefix(prefix):
 		metadata.Type = models.FileTypeISO
-		if prefix != "output" {
+		if !isBuildOutputPrefix(prefix) {
 			metadata.ESXiVersion = version
 			metadata.DriverCategory = category
 		}
@@ -686,7 +1219,8 @@ func fileDescription(objectPath, fileType string) string {
 			return "驱动包"
 		}
 	case models.FileTypeISO:
-		if strings.HasPrefix(strings.TrimLeft(low, "/"), "output/") {
+		trimmedLow := strings.TrimLeft(low, "/")
+		if strings.HasPrefix(trimmedLow, "build/") || strings.HasPrefix(trimmedLow, "builds/") || strings.HasPrefix(trimmedLow, "output/") {
 			return "ISO镜像"
 		}
 		switch inferSourceCategory(objectPath, models.FileTypeISO) {
@@ -812,8 +1346,12 @@ func isDriverPrefix(prefix string) bool {
 	return prefix == "driver" || prefix == "drivers"
 }
 
+func isBuildOutputPrefix(prefix string) bool {
+	return prefix == "build" || prefix == "builds" || prefix == "output"
+}
+
 func isISOPrefix(prefix string) bool {
-	return prefix == "iso" || prefix == "isos" || prefix == "output"
+	return prefix == "iso" || prefix == "isos" || isBuildOutputPrefix(prefix)
 }
 
 // Only well-known VMware driver archive names count; anything else stays unknown.

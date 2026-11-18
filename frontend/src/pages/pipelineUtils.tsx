@@ -3,7 +3,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   SyncOutlined,
-} from '@ant-design/icons'
+} from '../components/icons'
 import { Tag } from 'antd'
 import type { ReactNode } from 'react'
 import type { BuildTask, FileMetadata, StorageBucket } from '../types'
@@ -59,6 +59,9 @@ export function fileName(file?: FileMetadata) {
 
 export function assetTitle(file?: FileMetadata) {
   if (!file) return '-'
+  if (isBuildOutput(file)) {
+    return fileName(file)
+  }
   if (file.type === 'driver') {
     const meta = resolveDriverMeta(file)
     if (meta.zhName && meta.zhName !== '驱动文件' && meta.zhName !== '未知驱动') {
@@ -87,13 +90,14 @@ export function cleanDisplayVersion(file?: FileMetadata): string | undefined {
   }
   const raw = file.driver_version || ''
   if (!raw) return undefined
-  // 如果当前版本字段明显就是文件名，则清洗
   return extractCleanDriverVersion(raw) || undefined
 }
 
-/** 普通 ISO 与构建产出必须分开，产出路径固定以 output/ 开头。 */
+/** 普通 ISO 与构建产出必须分开，产出路径固定以 build/ 或 output/ 开头。 */
 export function isBuildOutput(file?: FileMetadata) {
-  return Boolean(file?.path && file.path.toLowerCase().startsWith('output/'))
+  if (!file?.path) return false
+  const low = file.path.toLowerCase().replace(/^\/+/, '')
+  return low.startsWith('build/') || low.startsWith('builds/') || low.startsWith('output/')
 }
 
 export function assetTypeText(file: FileMetadata) {
@@ -106,22 +110,50 @@ export function assetTypeText(file: FileMetadata) {
 
 export function cacheStatusText(file: FileMetadata, bucket?: StorageBucket) {
   if (bucketType(bucket) === 'local') return '本地直通'
-  if (file.cache_status === 'cached' || file.cached) return '已缓存就绪'
-  if (file.cache_status === 'stale') return '缓存需更新'
-  if (file.cache_status === 'invalid' || file.cache_valid === false) return '缓存失效'
-  return '未预热缓存'
+  if (file.cache_status === 'cached' || (file.cached && file.cache_valid !== false)) return '已缓存'
+  if (file.cache_status === 'stale') return '待更新'
+  if (file.cached && (file.cache_status === 'invalid' || file.cache_valid === false)) return '缓存异常'
+  return '云端就绪'
 }
 
 export function cacheStatusColor(file: FileMetadata, bucket?: StorageBucket) {
   const status = cacheStatusText(file, bucket)
-  if (status === '已缓存就绪' || status === '本地直通') return 'success'
-  if (status === '缓存需更新') return 'warning'
-  if (status === '缓存失效') return 'error'
-  return 'default'
+  if (status === '已缓存' || status === '本地直通') return 'success'
+  if (status === '待更新') return 'warning'
+  if (status === '缓存异常') return 'error'
+  return 'processing'
 }
 
 
 export type SourceKind = 'official' | 'official-patch' | 'oem'
+
+export type OemBrand = 'dell' | 'h3c' | 'inspur' | 'hpe'
+
+/** 品牌整包（已内置驱动，不走驱动注入），顺序即品牌镜像直下的分组顺序。 */
+export const OEM_BRANDS: Array<{ key: OemBrand; label: string; depotLabel: string; isoLabel: string; color: string }> = [
+  { key: 'dell', label: 'Dell', depotLabel: 'Dell 离线包', isoLabel: 'Dell 定制', color: 'cyan' },
+  { key: 'h3c', label: 'H3C', depotLabel: 'H3C 离线包', isoLabel: 'H3C 定制', color: 'purple' },
+  { key: 'inspur', label: '浪潮', depotLabel: '浪潮离线包', isoLabel: '浪潮定制', color: 'orange' },
+  { key: 'hpe', label: 'HPE', depotLabel: 'HPE 离线包', isoLabel: 'HPE 定制', color: 'green' },
+]
+
+/** 识别 ISO / Depot 所属品牌；驱动、构建产物与官方源返回 null。 */
+export function oemBrandOf(file: FileMetadata): OemBrand | null {
+  if (file.type === 'driver' || isBuildOutput(file)) return null
+  const cat = (file.driver_category || '').toLowerCase()
+  const path = (file.path || '').toLowerCase()
+  const name = (file.driver_name || file.path || '').toLowerCase()
+  if (cat === 'oem-dell' || path.includes('/oem-dell/') || name.includes('dell')) return 'dell'
+  if (cat === 'oem-h3c' || path.includes('/oem-h3c/') || name.startsWith('h3c-')) return 'h3c'
+  if (cat === 'oem-inspur' || path.includes('/oem-inspur/') || name.includes('inspur')) return 'inspur'
+  if (cat === 'oem-hpe' || path.includes('/oem-hpe/') || name.includes('-hpe-')) return 'hpe'
+  return null
+}
+
+/** Depot ZIP 需转 ISO 才能装机；ISO 可直接下载。 */
+export function isIsoPath(path?: string) {
+  return Boolean(path && path.toLowerCase().endsWith('.iso'))
+}
 
 export function fileCategoryMeta(file: FileMetadata): { label: string; color: string; kind: string } {
   const cat = (file.driver_category || '').toLowerCase()
@@ -131,39 +163,35 @@ export function fileCategoryMeta(file: FileMetadata): { label: string; color: st
   if (isBuildOutput(file)) return { label: '构建产物', color: 'green', kind: 'output' }
 
   if (file.type === 'driver') {
-    if (cat === 'community' || path.includes('/community/') || /vmkusb|net-community|nvme-community|re-driver|r8125|r8168/.test(name)) {
+    if (cat === 'modded' || path.includes('/modded/') || name.includes('mod_bootbank') || name.includes('-modded')) {
+      return { label: '魔改驱动', color: 'purple', kind: 'modded' }
+    }
+    if (cat === 'community' || path.includes('/community/') || /vmkusb|net-community|nvme-community|re-driver|r8125|r8168|net-igb/.test(name)) {
       return { label: '社区驱动', color: 'magenta', kind: 'community' }
     }
     if (cat === 'oem-addon' || path.includes('/oem-addon/') || name.includes('addon')) {
       return { label: '品牌 Addon', color: 'volcano', kind: 'oem-addon' }
     }
-    if (cat === 'raid' || path.includes('/raid/') || /smartpqi|lsi-mr3|lsi_mr3|lsi-msgpt|lsi-uklst|nhpsa|lsu-/.test(name)) {
-      return { label: '阵列卡', color: 'gold', kind: 'raid' }
-    }
-    if (cat === 'network' || path.includes('/network/') || /bnxtnet|i40en|icen|igbn|ixgben|nmlx|qfle|elxnet/.test(name)) {
-      return { label: '网卡', color: 'blue', kind: 'network' }
-    }
     if (cat === 'storage' || path.includes('/storage/') || /ahci|nvme|pvscsi|lpfc|elxiscsi/.test(name)) {
       return { label: '存储/HBA', color: 'cyan', kind: 'storage' }
+    }
+    if (cat === 'raid' || path.includes('/raid/') || /smartpqi|lsi-mr3|lsi_mr3|lsi-msgpt|lsi-uklst|nhpsa|lsu-|lsuv2-/.test(name)) {
+      return { label: '阵列卡', color: 'gold', kind: 'raid' }
+    }
+    if (cat === 'network' || path.includes('/network/') || /atlantic|bnxtnet|i40en|icen|igbn|ixgben|nmlx|qfle|elxnet/.test(name)) {
+      return { label: '网卡', color: 'blue', kind: 'network' }
     }
     return { label: '驱动', color: 'default', kind: 'other' }
   }
 
   // ISO / Depot：区分官方原版、官方升级补丁包、Dell/H3C/浪潮/HPE 品牌定制
-  if (cat === 'oem-dell' || path.includes('/oem-dell/') || name.includes('dell')) {
-    return { label: file.type === 'depot' ? 'Dell 离线包' : 'Dell 定制', color: 'cyan', kind: 'oem' }
-  }
-  if (cat === 'oem-h3c' || path.includes('/oem-h3c/') || name.startsWith('h3c-')) {
-    return { label: file.type === 'depot' ? 'H3C 离线包' : 'H3C 定制', color: 'purple', kind: 'oem' }
-  }
-  if (cat === 'oem-inspur' || path.includes('/oem-inspur/') || name.includes('inspur')) {
-    return { label: file.type === 'depot' ? '浪潮离线包' : '浪潮定制', color: 'orange', kind: 'oem' }
-  }
-  if (cat === 'oem-hpe' || path.includes('/oem-hpe/') || name.includes('-hpe-')) {
-    return { label: file.type === 'depot' ? 'HPE 离线包' : 'HPE 定制', color: 'green', kind: 'oem' }
+  const brand = oemBrandOf(file)
+  if (brand) {
+    const meta = OEM_BRANDS.find((b) => b.key === brand)!
+    return { label: file.type === 'depot' ? meta.depotLabel : meta.isoLabel, color: meta.color, kind: 'oem' }
   }
   if (file.type === 'depot' || cat === 'official-patch' || path.includes('/official-patch/')) {
-    return { label: '官方升级包', color: 'geekblue', kind: 'official-patch' }
+    return { label: '官方离线包', color: 'geekblue', kind: 'official-patch' }
   }
   return { label: '官方原版', color: 'blue', kind: 'official' }
 }
@@ -289,6 +317,7 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     [/^getting image profile/i, '正在读取镜像配置', 'step', '配置'],
     [/^no esxi image profiles found/i, '软件仓库中没有可用的镜像配置', 'error', '仓库'],
     [/^iso uploaded to (.+)$/i, '定制 ISO 已写入存储：$1', 'success', '入库'],
+    [/^iso archived to s3 \(([^:]+):\s*(.+)\) and local generated iso cleaned$/i, '已转存至 S3（$1 · $2）并自动清理本地生成的镜像', 'success', '归档'],
     [/^enabled boot tweak: cpuUniformityHardCheckPanic=FALSE.*$/i, '已注入 Intel 大小核防紫屏内核参数 (并写入装后持久化)', 'step', '参数'],
     [/^enabled boot tweak: allowLegacyCPU=true.*$/i, '已注入放行老旧 CPU 参数 (allowLegacyCPU=true)', 'step', '参数'],
     [/^enabled boot tweak: autoPartitionOSDataSize=8192.*$/i, '已启用 8GB 精简系统盘 (autoPartitionOSDataSize=8192)', 'step', '参数'],

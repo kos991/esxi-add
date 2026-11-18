@@ -13,16 +13,18 @@ import (
 const TypeBuildISO = "build:iso"
 
 type BuildISOPayload struct {
-	TaskID        string   `json:"task_id"`
-	BucketID      uint     `json:"bucket_id"`
-	DepotPath     string   `json:"depot_path"`
-	DriverPaths   []string `json:"driver_paths"`
-	ESXiVersion   string   `json:"esxi_version"`
-	CustomISOName string   `json:"custom_iso_name"`
-	ImageProfile  string   `json:"image_profile"`
-	RootPassword  string   `json:"root_password,omitempty"`
-	InstallMode   string   `json:"install_mode,omitempty"`
-	BootOptions   []string `json:"boot_options,omitempty"`
+	TaskID         string   `json:"task_id"`
+	BucketID       uint     `json:"bucket_id"`
+	DepotPath      string   `json:"depot_path"`
+	DriverPaths    []string `json:"driver_paths"`
+	ESXiVersion    string   `json:"esxi_version"`
+	CustomISOName  string   `json:"custom_iso_name"`
+	ImageProfile   string   `json:"image_profile"`
+	RootPassword   string   `json:"root_password,omitempty"`
+	InstallMode    string   `json:"install_mode,omitempty"`
+	BootOptions    []string `json:"boot_options,omitempty"`
+	ArchiveToS3    *bool    `json:"archive_to_s3,omitempty"`
+	TargetBucketID uint     `json:"target_bucket_id,omitempty"`
 }
 
 func NewBuildISOTask(p *BuildISOPayload) (*asynq.Task, error) {

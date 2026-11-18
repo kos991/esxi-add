@@ -18,6 +18,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/esxi-builder/esxi-iso-builder/internal/builder"
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
@@ -161,22 +162,41 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	}
 
 	persistStarted := time.Now()
-	outputObjectPath, shaValue, outputSize, err := storeBuildOutput(ctx, buildStore, outputLocalPath, outputFileName)
+	outputBucket, outputStore, err := h.resolveOutputStorage(ctx, payload)
 	if err != nil {
 		return err
 	}
+	outputObjectPath, shaValue, outputSize, err := storeBuildOutput(ctx, outputStore, outputLocalPath, outputFileName)
+	if err != nil {
+		return err
+	}
+	// Clean up temporary local build artifact immediately after upload succeeds.
+	_ = os.Remove(outputLocalPath)
 
 	completedAt := time.Now()
+	h.upsertOutputMetadata(ctx, outputBucket.ID, outputObjectPath, payload.ESXiVersion, outputFileName, shaValue, outputSize, completedAt)
+
+	isS3Output := models.NormalizeStorageType(outputBucket.Type) == models.StorageTypeS3
+	if isS3Output {
+		h.cleanupLocalGeneratedISO(ctx, outputObjectPath)
+	}
+
+	extraArchiveLog := ""
+	if isS3Output {
+		extraArchiveLog = fmt.Sprintf("ISO archived to S3 (%s: %s) and local generated ISO cleaned\n", outputBucket.Name, outputObjectPath)
+	}
+
 	updates := map[string]any{
 		"status":            models.BuildTaskStatusCompleted,
 		"progress":          100,
+		"storage_bucket_id": outputBucket.ID,
 		"output_iso":        outputObjectPath,
 		"output_iso_sha256": shaValue,
 		"output_iso_size":   outputSize,
 		"completed_at":      completedAt,
 		"build_duration":    int(completedAt.Sub(startedAt).Seconds()),
 		"error_message":     "",
-		"log_output":        gorm.Expr("COALESCE(log_output, '') || ?", fmt.Sprintf("[TIMING] powercli_process_ms=%d\n[TIMING] artifact_persist_ms=%d\nISO uploaded to %s\n", powerCLIDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), outputObjectPath)),
+		"log_output":        gorm.Expr("COALESCE(log_output, '') || ?", fmt.Sprintf("[TIMING] powercli_process_ms=%d\n[TIMING] artifact_persist_ms=%d\nISO uploaded to %s\n%s", powerCLIDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), outputObjectPath, extraArchiveLog)),
 	}
 	if err := h.db.WithContext(ctx).Model(&models.BuildTask{}).Where("task_id = ?", payload.TaskID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("finalize build task: %w", err)
@@ -184,6 +204,9 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 
 	if h.wsManager != nil {
 		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
+		if extraArchiveLog != "" {
+			h.wsManager.BroadcastLog(payload.TaskID, strings.TrimSpace(extraArchiveLog))
+		}
 		h.wsManager.BroadcastProgress(payload.TaskID, 100)
 	}
 
@@ -218,11 +241,14 @@ func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (b
 	if err := h.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {
 		return buildStorage{}, fmt.Errorf("find storage bucket: %w", err)
 	}
+	return h.resolveBucketStorage(bucket)
+}
 
-	if bucket.Type == models.StorageTypeLocal {
+func (h *BuildTaskHandler) resolveBucketStorage(bucket models.StorageBucket) (buildStorage, error) {
+	if models.NormalizeStorageType(bucket.Type) == models.StorageTypeLocal {
 		return newLocalBuildStorage(bucket.LocalPath)
 	}
-	if bucket.Type != "" && bucket.Type != models.StorageTypeS3 {
+	if bucket.Type != "" && models.NormalizeStorageType(bucket.Type) != models.StorageTypeS3 {
 		return buildStorage{}, fmt.Errorf("unsupported storage bucket type: %s", bucket.Type)
 	}
 
@@ -241,6 +267,108 @@ func (h *BuildTaskHandler) resolveStorage(ctx context.Context, bucketID uint) (b
 
 	cacheManager := storage.NewCacheManager(filepath.Join(h.workDir, "cache", fmt.Sprintf("bucket-%d", bucket.ID)), client)
 	return buildStorage{resolver: cacheManager, uploader: client}, nil
+}
+
+// resolveOutputStorage chooses the bucket where generated ISOs are persisted.
+// When ArchiveToS3 is enabled (or not explicitly disabled and an S3 bucket is mounted),
+// generated ISOs are uploaded directly to S3 so local generated copies can be cleaned up.
+func (h *BuildTaskHandler) resolveOutputStorage(ctx context.Context, payload BuildISOPayload) (models.StorageBucket, buildStorage, error) {
+	if payload.TargetBucketID > 0 {
+		var target models.StorageBucket
+		if err := h.db.WithContext(ctx).First(&target, payload.TargetBucketID).Error; err == nil {
+			store, sErr := h.resolveBucketStorage(target)
+			if sErr == nil {
+				return target, store, nil
+			}
+		}
+	}
+
+	var sourceBucket models.StorageBucket
+	if err := h.db.WithContext(ctx).First(&sourceBucket, payload.BucketID).Error; err != nil {
+		return models.StorageBucket{}, buildStorage{}, fmt.Errorf("find storage bucket: %w", err)
+	}
+
+	shouldTryS3 := models.NormalizeStorageType(sourceBucket.Type) == models.StorageTypeLocal &&
+		(payload.ArchiveToS3 == nil || *payload.ArchiveToS3)
+	if shouldTryS3 {
+		var s3Bucket models.StorageBucket
+		err := h.db.WithContext(ctx).
+			Where("type = ? OR type = ''", models.StorageTypeS3).
+			Order("is_default DESC, id ASC").
+			First(&s3Bucket).Error
+		if err == nil {
+			if s3Store, sErr := h.resolveBucketStorage(s3Bucket); sErr == nil {
+				return s3Bucket, s3Store, nil
+			}
+		}
+	}
+
+	store, err := h.resolveBucketStorage(sourceBucket)
+	if err != nil {
+		return models.StorageBucket{}, buildStorage{}, err
+	}
+	return sourceBucket, store, nil
+}
+
+func (h *BuildTaskHandler) upsertOutputMetadata(ctx context.Context, bucketID uint, objectPath, esxiVersion, outputFileName, shaValue string, size int64, completedAt time.Time) {
+	if !h.db.Migrator().HasTable(&models.FileMetadata{}) {
+		return
+	}
+	baseName := strings.TrimSuffix(outputFileName, filepath.Ext(outputFileName))
+	meta := models.FileMetadata{
+		StorageBucketID:   bucketID,
+		Path:              objectPath,
+		Type:              models.FileTypeISO,
+		ESXiVersion:       esxiVersion,
+		DriverName:        baseName,
+		DriverVersion:     baseName,
+		DriverDescription: "ISO镜像",
+		SHA256:            shaValue,
+		Size:              size,
+		LastModified:      &completedAt,
+	}
+	_ = h.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "storage_bucket_id"}, {Name: "path"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"deleted_at",
+			"type",
+			"esxi_version",
+			"driver_name",
+			"driver_description",
+			"driver_version",
+			"sha256",
+			"size",
+			"last_modified",
+			"updated_at",
+		}),
+	}).Create(&meta).Error
+}
+
+func (h *BuildTaskHandler) cleanupLocalGeneratedISO(ctx context.Context, objectPath string) {
+	var localBuckets []models.StorageBucket
+	if err := h.db.WithContext(ctx).Where("type = ?", models.StorageTypeLocal).Find(&localBuckets).Error; err != nil {
+		return
+	}
+	baseName := path.Base(strings.ReplaceAll(objectPath, "\\", "/"))
+	candidatePaths := []string{objectPath}
+	for _, pfx := range []string{"build", "output"} {
+		alt := path.Join(pfx, baseName)
+		if alt != objectPath {
+			candidatePaths = append(candidatePaths, alt)
+		}
+	}
+	for _, lb := range localBuckets {
+		if store, err := storage.NewLocalStore(lb.LocalPath); err == nil {
+			for _, p := range candidatePaths {
+				_ = store.DeleteObject(ctx, p)
+			}
+		}
+		if h.db.Migrator().HasTable(&models.FileMetadata{}) {
+			_ = h.db.WithContext(ctx).Unscoped().
+				Where("storage_bucket_id = ? AND path IN ?", lb.ID, candidatePaths).
+				Delete(&models.FileMetadata{}).Error
+		}
+	}
 }
 
 func newLocalBuildStorage(localPath string) (buildStorage, error) {
@@ -308,7 +436,7 @@ func storeBuildOutput(ctx context.Context, store buildStorage, outputLocalPath, 
 		return "", "", 0, fmt.Errorf("stat output iso: %w", err)
 	}
 
-	outputObjectPath := path.Join("output", outputFileName)
+	outputObjectPath := path.Join("build", outputFileName)
 	hasher := sha256.New()
 	if err := store.Upload(ctx, outputObjectPath, io.TeeReader(outputFile, hasher), outputInfo.Size(), "application/x-iso9660-image"); err != nil {
 		return "", "", 0, fmt.Errorf("upload output iso: %w", err)

@@ -11,6 +11,16 @@ export interface CreateBuildPayload {
   root_password?: string
   install_mode?: 'unattended' | 'interactive'
   boot_options?: string[]
+  archive_to_s3?: boolean
+  target_bucket_id?: number
+}
+
+export interface ArchiveBuildResult {
+  task: BuildTask
+  target_bucket_id: number
+  target_bucket_name: string
+  cleaned_local: boolean
+  freed_bytes: number
 }
 
 export interface PaginatedBuilds {
@@ -58,4 +68,14 @@ export async function deleteBuild(taskId: string): Promise<{ deleted: boolean; t
 
 export function getBuildArtifactUrl(taskId: string): string {
   return `/api/builds/${encodeURIComponent(taskId)}/artifact`
+}
+
+export async function archiveBuildToS3(
+  taskId: string,
+  targetBucketId?: number
+): Promise<ArchiveBuildResult> {
+  const response = await api.post(`/builds/${encodeURIComponent(taskId)}/archive-s3`, {
+    target_bucket_id: targetBucketId,
+  })
+  return response.data
 }

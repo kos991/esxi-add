@@ -19,6 +19,7 @@ import (
 
 	"github.com/esxi-builder/esxi-iso-builder/internal/models"
 	taskqueue "github.com/esxi-builder/esxi-iso-builder/internal/queue"
+	"github.com/esxi-builder/esxi-iso-builder/internal/services"
 	"github.com/esxi-builder/esxi-iso-builder/internal/storage"
 	"github.com/esxi-builder/esxi-iso-builder/internal/utils"
 )
@@ -37,15 +38,17 @@ type BuildHandler struct {
 }
 
 type createBuildRequest struct {
-	BucketID      uint     `json:"bucket_id"`
-	ESXiVersion   string   `json:"esxi_version"`
-	DepotPath     string   `json:"depot_path"`
-	DriverPaths   []string `json:"driver_paths"`
-	CustomISOName string   `json:"custom_iso_name"`
-	ImageProfile  string   `json:"image_profile"`
-	RootPassword  string   `json:"root_password"`
-	InstallMode   string   `json:"install_mode"`
-	BootOptions   []string `json:"boot_options"`
+	BucketID       uint     `json:"bucket_id"`
+	ESXiVersion    string   `json:"esxi_version"`
+	DepotPath      string   `json:"depot_path"`
+	DriverPaths    []string `json:"driver_paths"`
+	CustomISOName  string   `json:"custom_iso_name"`
+	ImageProfile   string   `json:"image_profile"`
+	RootPassword   string   `json:"root_password"`
+	InstallMode    string   `json:"install_mode"`
+	BootOptions    []string `json:"boot_options"`
+	ArchiveToS3    *bool    `json:"archive_to_s3,omitempty"`
+	TargetBucketID uint     `json:"target_bucket_id,omitempty"`
 }
 
 func NewBuildHandler(db *gorm.DB, client *asynq.Client, buildMode string) *BuildHandler {
@@ -116,16 +119,18 @@ func (h *BuildHandler) Create(c *fiber.Ctx) error {
 	}
 
 	task, err := taskqueue.NewBuildISOTask(&taskqueue.BuildISOPayload{
-		TaskID:        buildTask.TaskID,
-		BucketID:      req.BucketID,
-		DepotPath:     req.DepotPath,
-		DriverPaths:   req.DriverPaths,
-		ESXiVersion:   req.ESXiVersion,
-		CustomISOName: req.CustomISOName,
-		ImageProfile:  req.ImageProfile,
-		RootPassword:  req.RootPassword,
-		InstallMode:   req.InstallMode,
-		BootOptions:   validBootOpts,
+		TaskID:         buildTask.TaskID,
+		BucketID:       req.BucketID,
+		DepotPath:      req.DepotPath,
+		DriverPaths:    req.DriverPaths,
+		ESXiVersion:    req.ESXiVersion,
+		CustomISOName:  req.CustomISOName,
+		ImageProfile:   req.ImageProfile,
+		RootPassword:   req.RootPassword,
+		InstallMode:    req.InstallMode,
+		BootOptions:    validBootOpts,
+		ArchiveToS3:    req.ArchiveToS3,
+		TargetBucketID: req.TargetBucketID,
 	})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
@@ -265,6 +270,29 @@ func (h *BuildHandler) DownloadArtifact(c *fiber.Ctx) error {
 		return c.SendStream(reader, int(task.OutputISOSize))
 	}
 	return c.SendStream(reader)
+}
+
+func (h *BuildHandler) ArchiveToS3(c *fiber.Ctx) error {
+	taskID := strings.TrimSpace(c.Params("id"))
+	if taskID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("build task id is required"))
+	}
+
+	var req struct {
+		TargetBucketID uint `json:"target_bucket_id"`
+	}
+	_ = c.BodyParser(&req)
+
+	svc := services.NewFileService(h.db, nil)
+	res, err := svc.ArchiveBuildArtifactToS3(c.UserContext(), taskID, req.TargetBucketID)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = fiber.StatusNotFound
+		}
+		return c.Status(status).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(res))
 }
 
 func (h *BuildHandler) openArtifact(ctx context.Context, bucketID uint, objectPath string) (io.ReadCloser, error) {

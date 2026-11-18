@@ -140,12 +140,12 @@ func TestWorkerClaimDownloadAndUploadArtifactForLocalBucket(t *testing.T) {
 	}
 	if updated.Status != models.BuildTaskStatusCompleted ||
 		updated.Progress != 100 ||
-		updated.OutputISO != "output/custom.iso" ||
+		updated.OutputISO != "build/custom.iso" ||
 		updated.OutputISOSize != int64(len("iso-data")) ||
 		updated.OutputISOSHA256 == "" {
 		t.Fatalf("unexpected updated task: %+v", updated)
 	}
-	artifact, err := os.ReadFile(filepath.Join(root, "output", "custom.iso"))
+	artifact, err := os.ReadFile(filepath.Join(root, "build", "custom.iso"))
 	if err != nil {
 		t.Fatalf("read artifact: %v", err)
 	}

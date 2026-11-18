@@ -27,7 +27,7 @@ export function PageHeader({
         ) : null}
       </div>
       {extra ? (
-        <Space size={8} wrap className="page-header-extra">
+        <Space size={6} wrap className="page-header-extra">
           {extra}
         </Space>
       ) : null}

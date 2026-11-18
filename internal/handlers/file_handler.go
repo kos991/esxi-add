@@ -202,6 +202,63 @@ func (h *FileHandler) Download(c *fiber.Ctx) error {
 	return c.SendStream(reader)
 }
 
+func (h *FileHandler) ArchiveToS3(c *fiber.Ctx) error {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("invalid file id"))
+	}
+
+	var req struct {
+		TargetBucketID uint `json:"target_bucket_id"`
+	}
+	_ = c.BodyParser(&req)
+	if req.TargetBucketID == 0 {
+		if q := c.Query("target_bucket_id"); q != "" {
+			if parsed, pErr := strconv.ParseUint(q, 10, 64); pErr == nil {
+				req.TargetBucketID = uint(parsed)
+			}
+		}
+	}
+
+	res, err := h.fileService.ArchiveFileToS3(c.UserContext(), id, req.TargetBucketID)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = fiber.StatusNotFound
+		}
+		return c.Status(status).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(res))
+}
+
+func (h *FileHandler) ArchiveOutputsToS3(c *fiber.Ctx) error {
+	var req struct {
+		SourceBucketID uint `json:"source_bucket_id"`
+		TargetBucketID uint `json:"target_bucket_id"`
+	}
+	_ = c.BodyParser(&req)
+	if req.SourceBucketID == 0 {
+		if q := c.Query("bucket_id"); q != "" {
+			if parsed, pErr := strconv.ParseUint(q, 10, 64); pErr == nil {
+				req.SourceBucketID = uint(parsed)
+			}
+		}
+	}
+	if req.TargetBucketID == 0 {
+		if q := c.Query("target_bucket_id"); q != "" {
+			if parsed, pErr := strconv.ParseUint(q, 10, 64); pErr == nil {
+				req.TargetBucketID = uint(parsed)
+			}
+		}
+	}
+
+	res, err := h.fileService.ArchiveLocalOutputsToS3(c.UserContext(), req.SourceBucketID, req.TargetBucketID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(res))
+}
+
 func parseBucketID(c *fiber.Ctx) (uint, error) {
 	value := c.Query("bucket_id")
 	if value == "" {

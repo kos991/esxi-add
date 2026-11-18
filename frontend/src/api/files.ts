@@ -81,3 +81,41 @@ export async function downloadFile(id: number, name: string): Promise<void> {
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
+
+export interface ArchiveFileResult {
+  file: FileMetadata
+  source_bucket_id: number
+  target_bucket_id: number
+  target_bucket_name: string
+  cleaned_local: boolean
+  freed_bytes: number
+}
+
+export interface ArchiveOutputsResult {
+  transferred_count: number
+  freed_bytes: number
+  target_bucket_id: number
+  target_bucket_name: string
+  paths: string[]
+}
+
+export async function archiveFileToS3(
+  id: number,
+  targetBucketId?: number
+): Promise<ArchiveFileResult> {
+  const response = await api.post(`/files/${id}/archive-s3`, {
+    target_bucket_id: targetBucketId,
+  })
+  return response.data
+}
+
+export async function archiveOutputsToS3(
+  sourceBucketId?: number,
+  targetBucketId?: number
+): Promise<ArchiveOutputsResult> {
+  const response = await api.post('/files/archive-outputs-s3', {
+    source_bucket_id: sourceBucketId,
+    target_bucket_id: targetBucketId,
+  })
+  return response.data
+}

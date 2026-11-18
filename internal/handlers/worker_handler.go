@@ -228,7 +228,7 @@ func (h *WorkerHandler) UploadArtifact(c *fiber.Ctx) error {
 	}
 
 	outputName := taskqueue.BuildOutputFileName(task.CustomISOName, task.ESXiVersion)
-	outputObjectPath := path.Join("output", outputName)
+	outputObjectPath := path.Join("build", outputName)
 	hasher := sha256.New()
 	if err := store.Upload(c.UserContext(), outputObjectPath, io.TeeReader(file, hasher), fileHeader.Size, contentTypeFromName(outputName)); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))

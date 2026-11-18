@@ -165,8 +165,8 @@ func TestStoreBuildOutputLocalWritesOutputAndComputesMetadata(t *testing.T) {
 		t.Fatalf("store build output: %v", err)
 	}
 
-	if objectPath != "output/custom.iso" {
-		t.Fatalf("expected output/custom.iso, got %q", objectPath)
+	if objectPath != "build/custom.iso" {
+		t.Fatalf("expected build/custom.iso, got %q", objectPath)
 	}
 	if size != int64(len(content)) {
 		t.Fatalf("expected size %d, got %d", len(content), size)
@@ -175,11 +175,92 @@ func TestStoreBuildOutputLocalWritesOutputAndComputesMetadata(t *testing.T) {
 	if shaValue != hex.EncodeToString(sum[:]) {
 		t.Fatalf("expected sha %s, got %s", hex.EncodeToString(sum[:]), shaValue)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "output", "custom.iso"))
+	got, err := os.ReadFile(filepath.Join(root, "build", "custom.iso"))
 	if err != nil {
 		t.Fatalf("read stored output: %v", err)
 	}
 	if string(got) != string(content) {
 		t.Fatalf("stored output content mismatch")
+	}
+}
+
+func TestResolveOutputStorageRoutesLocalBuildToS3AndCleansLocal(t *testing.T) {
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.StorageBucket{}, &models.FileMetadata{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	localRoot := t.TempDir()
+	localOutputISO := filepath.Join(localRoot, "output", "custom.iso")
+	if err := os.MkdirAll(filepath.Dir(localOutputISO), 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(localOutputISO, []byte("leftover-local-iso"), 0o644); err != nil {
+		t.Fatalf("write leftover iso: %v", err)
+	}
+
+	localBucket := models.StorageBucket{
+		Name:      "Local Storage",
+		Type:      models.StorageTypeLocal,
+		LocalPath: localRoot,
+	}
+	s3Bucket := models.StorageBucket{
+		Name:       "bitiful",
+		Type:       models.StorageTypeS3,
+		Endpoint:   "s3.example:9000",
+		AccessKey:  "ak",
+		SecretKey:  "sk",
+		BucketName: "esxi-build",
+		IsDefault:  true,
+	}
+	if err := db.Create(&localBucket).Error; err != nil {
+		t.Fatalf("create local bucket: %v", err)
+	}
+	if err := db.Create(&s3Bucket).Error; err != nil {
+		t.Fatalf("create s3 bucket: %v", err)
+	}
+	if err := db.Create(&models.FileMetadata{
+		StorageBucketID: localBucket.ID,
+		Path:            "output/custom.iso",
+		Type:            models.FileTypeISO,
+		Size:            18,
+	}).Error; err != nil {
+		t.Fatalf("create local metadata: %v", err)
+	}
+
+	fakeS3 := &storage.S3Client{}
+	origNewS3 := newBuildS3Client
+	newBuildS3Client = func(cfg *storage.S3Config) (*storage.S3Client, error) {
+		return fakeS3, nil
+	}
+	defer func() { newBuildS3Client = origNewS3 }()
+
+	handler := NewBuildTaskHandler(db, nil, t.TempDir(), nil)
+	archive := true
+	outBucket, outStore, err := handler.resolveOutputStorage(ctx, BuildISOPayload{
+		BucketID:    localBucket.ID,
+		ArchiveToS3: &archive,
+	})
+	if err != nil {
+		t.Fatalf("resolve output storage: %v", err)
+	}
+	if outBucket.ID != s3Bucket.ID || outStore.uploader != fakeS3 {
+		t.Fatalf("expected output to route to S3 bucket %d, got %+v", s3Bucket.ID, outBucket)
+	}
+
+	handler.cleanupLocalGeneratedISO(ctx, "output/custom.iso")
+	if _, err := os.Stat(localOutputISO); !os.IsNotExist(err) {
+		t.Fatalf("expected local generated ISO to be removed, stat err=%v", err)
+	}
+	var count int64
+	if err := db.Model(&models.FileMetadata{}).Where("storage_bucket_id = ? AND path = ?", localBucket.ID, "output/custom.iso").Count(&count).Error; err != nil {
+		t.Fatalf("count local metadata: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected local metadata to be deleted after S3 archive, got %d", count)
 	}
 }

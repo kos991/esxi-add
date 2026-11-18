@@ -104,6 +104,57 @@ func TestCreateBuildExternalModeDoesNotRequireQueue(t *testing.T) {
 	}
 }
 
+func TestCreateBuildAcceptsOEMDepotWithoutDrivers(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.BuildTask{}, &models.FileMetadata{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// 品牌整包（已内置驱动）作为底包、零驱动直接转 ISO：前端「品牌镜像直下 · 一键转 ISO」依赖此行为
+	oemDepot := "depot/6.7/oem-dell/VMware-VMvisor-Installer-6.7.0.update03-Dell-A00-depot.zip"
+	if err := db.Create(&models.FileMetadata{
+		StorageBucketID: 3,
+		Path:            oemDepot,
+		Type:            models.FileTypeDepot,
+		ESXiVersion:     "6.7",
+		DriverCategory:  "oem-dell",
+	}).Error; err != nil {
+		t.Fatalf("create file metadata: %v", err)
+	}
+
+	app := fiber.New()
+	app.Post("/builds", NewBuildHandler(db, nil, "external").Create)
+
+	body := `{"bucket_id":3,"esxi_version":"6.7","depot_path":"` + oemDepot + `","driver_paths":[],"root_password":"niuniu","install_mode":"unattended","boot_options":["hybrid_cpu","osdata_8g"]}`
+	req := httptest.NewRequest(http.MethodPost, "/builds", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusCreated {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 201, got %d: %s", resp.StatusCode, raw)
+	}
+
+	var response struct {
+		Success bool             `json:"success"`
+		Data    models.BuildTask `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Data.DepotPath != oemDepot {
+		t.Fatalf("expected OEM depot as base, got %q", response.Data.DepotPath)
+	}
+	if response.Data.Drivers != "[]" {
+		t.Fatalf("expected no drivers to be stored, got %q", response.Data.Drivers)
+	}
+}
+
 func TestDeleteBuildAcceptsNumericID(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

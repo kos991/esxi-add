@@ -15,6 +15,7 @@ import {
   RocketOutlined,
   SearchOutlined,
   StarOutlined,
+  ThunderboltOutlined,
 } from '../components/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -55,6 +56,8 @@ import {
   updateBucket,
 } from '../api/buckets'
 import {
+  archiveFileToS3,
+  archiveOutputsToS3,
   deleteFile,
   downloadFile,
   listAllFiles,
@@ -66,8 +69,6 @@ import { PageHeader } from '../components/PageHeader'
 import type { FileMetadata, StorageBucket } from '../types'
 import { buildPublicObjectUrl, formatDate } from '../utils'
 import {
-  assetTitle,
-  assetTypeText,
   bucketLocation,
   bucketType,
   cacheStatusColor,
@@ -80,7 +81,7 @@ import {
   fileName,
   isBuildOutput,
 } from './pipelineUtils'
-import { resolveDriverMeta } from '../utils/driverMetadata'
+import { resolveDepotMeta, resolveDriverMeta } from '../utils/driverMetadata'
 
 type UploadType = 'depot' | 'driver' | 'iso'
 type AssetTab = 'depot' | 'driver' | 'output' | 'iso'
@@ -101,6 +102,7 @@ const defaultBucketPayload: BucketPayload = {
 
 const driverCategories = [
   { value: 'community', label: '社区驱动 (软路由/小主机)' },
+  { value: 'modded', label: '魔改驱动 (ESXi 8+ 解锁版)' },
   { value: 'raid', label: 'RAID 阵列卡驱动' },
   { value: 'network', label: '服务器网卡驱动' },
   { value: 'storage', label: '存储/HBA 驱动' },
@@ -189,6 +191,15 @@ export default function StorageFilesPage() {
     () => buckets.find((b) => b.id === selectedBucketId),
     [buckets, selectedBucketId]
   )
+  const s3Buckets = useMemo(
+    () => buckets.filter((b) => bucketType(b) !== 'local'),
+    [buckets]
+  )
+  const defaultS3Bucket = useMemo(
+    () => s3Buckets.find((b) => b.is_default) ?? s3Buckets[0],
+    [s3Buckets]
+  )
+  const isSelectedLocalBucket = Boolean(selectedBucket && bucketType(selectedBucket) === 'local')
 
   const filesQuery = useQuery({
     queryKey: ['all-files', selectedBucketId],
@@ -218,12 +229,21 @@ export default function StorageFilesPage() {
             ? !item.esxi_version
             : item.esxi_version === versionFilter
       const matchKind = kindFilter === 'all' || fileCategoryMeta(item).kind === kindFilter
-      const matchKw =
-        !kw ||
+      if (!matchVersion || !matchKind) return false
+      if (!kw) return true
+      const dMeta = item.type === 'driver' ? resolveDriverMeta(item) : null
+      const pMeta = item.type !== 'driver' ? resolveDepotMeta(item) : null
+      return (
         item.path.toLowerCase().includes(kw) ||
         (item.driver_name && item.driver_name.toLowerCase().includes(kw)) ||
-        (item.driver_description && item.driver_description.toLowerCase().includes(kw))
-      return matchVersion && matchKind && matchKw
+        (item.driver_description && item.driver_description.toLowerCase().includes(kw)) ||
+        (dMeta &&
+          (dMeta.zhName.toLowerCase().includes(kw) ||
+            dMeta.moduleCode.toLowerCase().includes(kw) ||
+            dMeta.subtitle.toLowerCase().includes(kw))) ||
+        (pMeta &&
+          (pMeta.zhName.toLowerCase().includes(kw) || pMeta.subtitle.toLowerCase().includes(kw)))
+      )
     })
   }, [assetTab, groups, searchKeyword, versionFilter, kindFilter])
 
@@ -242,6 +262,38 @@ export default function StorageFilesPage() {
   const invalidateBuckets = async () => {
     await queryClient.invalidateQueries({ queryKey: ['buckets'] })
   }
+
+  const archiveSingleFileMutation = useMutation({
+    mutationFn: (id: number) => archiveFileToS3(id, defaultS3Bucket?.id),
+    onSuccess: async (res) => {
+      messageApi.success(
+        `已转存至 S3「${res.target_bucket_name}」并清理本地镜像（释放 ${compactSize(res.freed_bytes)}）`
+      )
+      await queryClient.invalidateQueries({ queryKey: ['all-files'] })
+      await queryClient.invalidateQueries({ queryKey: ['build-isos'] })
+      await queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || err?.message || String(err)
+      messageApi.error(`转存 S3 失败：${msg}`)
+    },
+  })
+
+  const archiveAllOutputsMutation = useMutation({
+    mutationFn: () => archiveOutputsToS3(selectedBucketId, defaultS3Bucket?.id),
+    onSuccess: async (res) => {
+      messageApi.success(
+        `已将 ${res.transferred_count} 个生成镜像转存至 S3「${res.target_bucket_name}」并清理本地文件（释放 ${compactSize(res.freed_bytes)}）`
+      )
+      await queryClient.invalidateQueries({ queryKey: ['all-files'] })
+      await queryClient.invalidateQueries({ queryKey: ['build-isos'] })
+      await queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || err?.message || String(err)
+      messageApi.error(`批量转存 S3 失败：${msg}`)
+    },
+  })
 
   /** 挂载/刷新后做一次完整扫描；失败时明确提示，不假装成功。 */
   const scanBucket = async (id: number) => {
@@ -512,74 +564,152 @@ export default function StorageFilesPage() {
     }
   }
 
+  const kindFilterOptions = useMemo(() => {
+    if (assetTab === 'driver') {
+      return [
+        { value: 'all', label: '全部驱动' },
+        { value: 'community', label: '社区驱动' },
+        { value: 'modded', label: '魔改驱动' },
+        { value: 'raid', label: '阵列卡' },
+        { value: 'network', label: '网卡' },
+        { value: 'storage', label: '存储/HBA' },
+        { value: 'oem-addon', label: '品牌 Addon' },
+      ]
+    }
+    if (assetTab === 'depot' || assetTab === 'iso') {
+      return [
+        { value: 'all', label: '全部来源' },
+        { value: 'official', label: '官方原版' },
+        { value: 'official-patch', label: '官方离线/补丁' },
+        { value: 'oem', label: '品牌定制 (Dell/H3C/浪潮)' },
+      ]
+    }
+    return []
+  }, [assetTab])
+
   const columns: ColumnsType<FileMetadata> = [
     {
-      title: '文件',
+      title: assetTab === 'driver' ? '驱动名称与适用硬件' : '镜像 / 离线包说明',
       key: 'name',
       render: (_, file) => {
-        const cleanVer = cleanDisplayVersion(file)
-        const driverMeta = file.type === 'driver' ? resolveDriverMeta(file) : null
-        return (
-          <div className="table-cell-stack">
-            <Space size={6} wrap align="center">
-              <Typography.Text strong style={{ fontSize: 13 }}>
-                {assetTitle(file)}
-              </Typography.Text>
-              {cleanVer && <Tag style={{ marginInlineEnd: 0 }}>v{cleanVer}</Tag>}
-              {driverMeta?.hardwareChip && (
-                <Tag color="cyan" style={{ marginInlineEnd: 0, fontSize: 11 }}>
-                  {driverMeta.hardwareChip}
+        if (file.type === 'driver') {
+          const meta = resolveDriverMeta(file)
+          return (
+            <div className="apple-asset-cell">
+              <div className="apple-asset-line1">
+                <Tag
+                  color={meta.categoryColor}
+                  style={{ marginInlineEnd: 0, fontWeight: 500, borderRadius: 999, flexShrink: 0, fontSize: 11, paddingInline: 6 }}
+                >
+                  {meta.categoryLabel}
                 </Tag>
-              )}
-              <Tag color={fileCategoryMeta(file).color}>{fileCategoryMeta(file).label}</Tag>
-            </Space>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-              <Typography.Text
-                className="mono table-path"
-                type="secondary"
-                copyable
-                ellipsis
-                style={{ maxWidth: 440, fontSize: 11 }}
+                <span className="apple-asset-title" title={meta.zhName}>
+                  {meta.zhName}
+                </span>
+                {meta.moduleCode && (
+                  <Tooltip title={`存储路径：${file.path}`}>
+                    <span className="apple-module-code">{meta.moduleCode}</span>
+                  </Tooltip>
+                )}
+              </div>
+              <div className="apple-asset-sub">
+                <span className="apple-asset-sub-text" title={meta.subtitle}>
+                  {meta.subtitle}
+                </span>
+              </div>
+            </div>
+          )
+        }
+
+        const depotMeta = resolveDepotMeta(file)
+        return (
+          <div className="apple-asset-cell">
+            <div className="apple-asset-line1">
+              <Tag
+                color={depotMeta.badgeColor}
+                style={{ marginInlineEnd: 0, fontWeight: 500, borderRadius: 999, flexShrink: 0, fontSize: 11, paddingInline: 6 }}
               >
-                {file.path}
-              </Typography.Text>
-              {driverMeta?.summary && (
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  · {driverMeta.summary}
-                </Typography.Text>
+                {depotMeta.badgeLabel}
+              </Tag>
+              <span className="apple-asset-title" title={depotMeta.zhName}>
+                {depotMeta.zhName}
+              </span>
+            </div>
+            <div className="apple-asset-sub">
+              <span className="apple-asset-sub-text" title={depotMeta.subtitle}>
+                {depotMeta.subtitle}
+              </span>
+              {!isBuildOutput(file) && (
+                <Tooltip title={`存储路径：${file.path}`}>
+                  <span className="apple-asset-file-hint">{fileName(file)}</span>
+                </Tooltip>
               )}
             </div>
           </div>
         )
       },
     },
+    ...(assetTab === 'driver'
+      ? ([
+          {
+            title: '驱动版本',
+            key: 'clean_ver',
+            width: 112,
+            render: (_: unknown, file: FileMetadata) => {
+              const ver = cleanDisplayVersion(file)
+              return (
+                <span className="apple-module-code" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {ver || '-'}
+                </span>
+              )
+            },
+          },
+        ] as ColumnsType<FileMetadata>)
+      : []),
     {
-      title: '适用版本',
+      title: '适用系统',
       dataIndex: 'esxi_version',
-      width: 100,
+      width: 82,
       render: (v) =>
-        v ? <Tag color="geekblue">ESXi {v}</Tag> : <Tag color="default">未标注</Tag>,
+        v ? (
+          <Tag color="geekblue" style={{ borderRadius: 999, marginInlineEnd: 0, fontSize: 11, paddingInline: 6 }}>
+            ESXi {v}
+          </Tag>
+        ) : (
+          <Tag color="default" style={{ borderRadius: 999, marginInlineEnd: 0, fontSize: 11, paddingInline: 6 }}>
+            未标注
+          </Tag>
+        ),
     },
     {
       title: '大小',
       dataIndex: 'size',
-      width: 105,
-      render: (v) => <span className="mono tabular-nums">{compactSize(v)}</span>,
+      width: 82,
+      render: (v) => (
+        <span className="tabular-nums" style={{ fontSize: 12, color: '#475569', whiteSpace: 'nowrap' }}>
+          {compactSize(v)}
+        </span>
+      ),
     },
     {
-      title: '缓存',
+      title: '状态',
       key: 'cache',
-      width: 105,
+      width: 78,
       render: (_, file) => (
-        <Tag color={cacheStatusColor(file, selectedBucket)}>{cacheStatusText(file, selectedBucket)}</Tag>
+        <Tag
+          color={cacheStatusColor(file, selectedBucket)}
+          style={{ borderRadius: 999, marginInlineEnd: 0, fontSize: 11, paddingInline: 6 }}
+        >
+          {cacheStatusText(file, selectedBucket)}
+        </Tag>
       ),
     },
     {
       title: '修改时间',
       dataIndex: 'last_modified',
-      width: 158,
+      width: 126,
       render: (v) => (
-        <span className="tabular-nums" style={{ fontSize: 12, color: '#64748b' }}>
+        <span className="tabular-nums" style={{ fontSize: 11.5, color: '#64748b', whiteSpace: 'nowrap' }}>
           {formatDate(v || '')}
         </span>
       ),
@@ -587,23 +717,42 @@ export default function StorageFilesPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 250,
+      width: assetTab === 'depot' || assetTab === 'iso' || assetTab === 'output' ? 256 : 174,
       render: (_, file) => {
         const canUseAsBase =
           file.type === 'depot' || (file.type === 'iso' && !isBuildOutput(file))
+        // 品牌整包已内置驱动：不进驱动注入流水线。ZIP 走「转 ISO」，ISO 直接下载。
+        const isOem = canUseAsBase && fileCategoryMeta(file).kind === 'oem'
+        const isOemIso = isOem && file.path.toLowerCase().endsWith('.iso')
+        const canArchiveOutputToS3 =
+          isSelectedLocalBucket && Boolean(defaultS3Bucket) && isBuildOutput(file)
         return (
-          <Space size={4} wrap>
-            <Tooltip title="下载到本机">
-              <Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(file)}>
-                下载
-              </Button>
-            </Tooltip>
-            {canUseAsBase && (
+          <Space size={4} wrap={false}>
+            {canArchiveOutputToS3 && (
+              <Tooltip title={`转存至 S3「${defaultS3Bucket?.name}」并清理本地生成的镜像`}>
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  style={{ borderRadius: 999, paddingInline: 8 }}
+                  icon={<CloudUploadOutlined />}
+                  loading={
+                    archiveSingleFileMutation.isPending &&
+                    archiveSingleFileMutation.variables === file.id
+                  }
+                  onClick={() => archiveSingleFileMutation.mutate(file.id)}
+                >
+                  转存 S3
+                </Button>
+              </Tooltip>
+            )}
+            {canUseAsBase && !isOem && (
               <Tooltip title="带入构建流水线">
                 <Button
                   size="small"
                   type="primary"
                   ghost
+                  style={{ borderRadius: 999, paddingInline: 8 }}
                   icon={<RocketOutlined />}
                   onClick={() => {
                     const params = new URLSearchParams({
@@ -618,24 +767,64 @@ export default function StorageFilesPage() {
                 </Button>
               </Tooltip>
             )}
-            {selectedBucket?.public_domain && (
-              <Tooltip title="复制公网直链">
+            {isOem && !isOemIso && (
+              <Tooltip title="品牌包已内置驱动，零注入直接封装为 ISO">
                 <Button
                   size="small"
-                  icon={<CopyOutlined />}
-                  onClick={async () => {
-                    const url = buildPublicObjectUrl(selectedBucket.public_domain, file.path || '')
-                    if (!url) return
-                    const ok = await copyText(url)
-                    if (ok) messageApi.success('已复制公网直链')
-                    else messageApi.error('浏览器不允许访问剪贴板，请手动复制')
+                  type="primary"
+                  ghost
+                  style={{ borderRadius: 999, paddingInline: 8 }}
+                  icon={<ThunderboltOutlined />}
+                  onClick={() => {
+                    const params = new URLSearchParams({
+                      mode: 'oem',
+                      bucket: String(selectedBucketId),
+                      file: file.path,
+                      auto: '1',
+                    })
+                    if (file.esxi_version) params.set('version', file.esxi_version)
+                    go(`/build?${params.toString()}`)
                   }}
-                />
+                >
+                  转 ISO
+                </Button>
               </Tooltip>
             )}
+            <Tooltip title={isOemIso ? '品牌 ISO 已内置驱动，下载即可装机' : '下载到本机'}>
+              <Button
+                size="small"
+                type={isOemIso ? 'primary' : 'default'}
+                ghost={isOemIso}
+                style={isOemIso ? { borderRadius: 999, paddingInline: 8 } : { borderRadius: 6, paddingInline: 8 }}
+                icon={<DownloadOutlined />}
+                onClick={() => handleDownload(file)}
+              >
+                下载
+              </Button>
+            </Tooltip>
+            <Tooltip title={selectedBucket?.public_domain ? '复制公网直链' : '复制存储路径'}>
+              <Button
+                size="small"
+                style={{ borderRadius: 6 }}
+                icon={<CopyOutlined />}
+                onClick={async () => {
+                  const targetText = selectedBucket?.public_domain
+                    ? buildPublicObjectUrl(selectedBucket.public_domain, file.path || '')
+                    : file.path
+                  if (!targetText) return
+                  const ok = await copyText(targetText)
+                  if (ok) {
+                    messageApi.success(selectedBucket?.public_domain ? '已复制公网直链' : '已复制文件路径')
+                  } else {
+                    messageApi.error('浏览器不允许访问剪贴板，请手动复制')
+                  }
+                }}
+              />
+            </Tooltip>
             <Tooltip title="重命名">
               <Button
                 size="small"
+                style={{ borderRadius: 6 }}
                 icon={<EditOutlined />}
                 onClick={() => {
                   setRenaming(file)
@@ -649,7 +838,7 @@ export default function StorageFilesPage() {
               okText="删除"
               cancelText="取消"
             >
-              <Button size="small" danger icon={<DeleteOutlined />} />
+              <Button size="small" style={{ borderRadius: 6 }} danger icon={<DeleteOutlined />} />
             </Popconfirm>
           </Space>
         )
@@ -667,14 +856,11 @@ export default function StorageFilesPage() {
         subTitle="本地目录与 S3 / MinIO 多盘挂载，按基础源、驱动、产出分类管理"
         extra={
           <>
-            <Button icon={<HddOutlined />} onClick={openMountLocal}>
+            <Button size="small" icon={<HddOutlined />} onClick={openMountLocal}>
               挂载本地目录
             </Button>
-            <Button type="primary" icon={<CloudServerOutlined />} onClick={openMountS3}>
+            <Button size="small" type="primary" icon={<CloudServerOutlined />} onClick={openMountS3}>
               挂载 S3 对象存储
-            </Button>
-            <Button icon={<RocketOutlined />} onClick={() => go('/build')}>
-              构建流水线
             </Button>
           </>
         }
@@ -770,7 +956,7 @@ export default function StorageFilesPage() {
             })}
 
             <div className="drive-card drive-card-add" onClick={openMountS3}>
-              <PlusOutlined style={{ fontSize: 22, color: '#2563eb' }} />
+              <PlusOutlined style={{ fontSize: 18, color: '#2563eb' }} />
               <strong>挂载 S3 存储</strong>
               <span>MinIO / AWS / R2 / OSS</span>
             </div>
@@ -780,19 +966,27 @@ export default function StorageFilesPage() {
         <section className="drive-assets-section" aria-label="盘内文件">
           <Card
             bordered
+            className="apple-storage-card"
             title={
               selectedBucket ? (
-                <Space size={8} wrap align="center">
-                  <Typography.Text strong style={{ fontSize: 15 }}>
+                <Space size={6} wrap align="center">
+                  {bucketType(selectedBucket) === 'local' ? (
+                    <HddOutlined style={{ color: '#7c3aed', fontSize: 14 }} />
+                  ) : (
+                    <CloudServerOutlined style={{ color: '#0071e3', fontSize: 14 }} />
+                  )}
+                  <Typography.Text strong style={{ fontSize: 13.5, color: '#0f172a' }}>
                     {selectedBucket.name}
                   </Typography.Text>
-                  <Tag color={selectedBucket.type === 'local' ? 'purple' : 'blue'}>
+                  <Tag
+                    color={selectedBucket.type === 'local' ? 'purple' : 'blue'}
+                    style={{ borderRadius: 999, marginInlineEnd: 0, fontSize: 11, paddingInline: 7 }}
+                  >
                     {bucketLocation(selectedBucket)}
                   </Tag>
-                  <Tag>基础源 {groups.depot.length}</Tag>
-                  <Tag>驱动 {groups.driver.length}</Tag>
-                  <Tag>产出 {groups.output.length}</Tag>
-                  <Tag>ISO {groups.iso.length}</Tag>
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                    共 {allFiles.length} 个文件
+                  </Typography.Text>
                 </Space>
               ) : (
                 '请选择存储盘'
@@ -802,13 +996,20 @@ export default function StorageFilesPage() {
               <Space size={8} wrap>
                 <Button
                   size="small"
+                  style={{ borderRadius: 8 }}
                   icon={<ReloadOutlined />}
                   disabled={!selectedBucketId}
                   onClick={() => selectedBucketId && scanBucket(selectedBucketId)}
                 >
                   重新扫描
                 </Button>
-                <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={openUpload}>
+                <Button
+                  type="primary"
+                  size="small"
+                  style={{ borderRadius: 8, background: '#0071e3' }}
+                  icon={<CloudUploadOutlined />}
+                  onClick={openUpload}
+                >
                   上传文件
                 </Button>
               </Space>
@@ -819,92 +1020,155 @@ export default function StorageFilesPage() {
                 type="warning"
                 showIcon
                 closable
-                style={{ marginBottom: 10 }}
+                style={{ marginBottom: 12 }}
                 message="扫描未完成"
                 description={`文件列表可能不完整：${scanWarning}`}
               />
             )}
 
-            <div className="asset-top-filter-bar">
-              <Segmented<AssetTab>
-                value={assetTab}
-                onChange={setAssetTab}
-                options={[
-                  { value: 'depot', label: `基础源 ${groups.depot.length}` },
-                  { value: 'driver', label: `驱动 ${groups.driver.length}` },
-                  { value: 'output', label: `构建产出 ${groups.output.length}` },
-                  { value: 'iso', label: `普通 ISO ${groups.iso.length}` },
-                ]}
-              />
-              <Space size={8} wrap>
-                <Select
-                  style={{ width: 140 }}
-                  value={kindFilter}
-                  onChange={setKindFilter}
-                  options={[
-                    { value: 'all', label: '全部品牌/分类' },
-                    { value: 'official', label: '官方原版 ISO' },
-                    { value: 'official-patch', label: '官方升级补丁包' },
-                    { value: 'oem', label: '品牌定制 (Dell/H3C/浪潮)' },
-                    { value: 'community', label: '社区驱动' },
-                    { value: 'raid', label: '阵列卡驱动' },
-                    { value: 'network', label: '网卡驱动' },
-                    { value: 'storage', label: '存储/HBA' },
-                    { value: 'oem-addon', label: '品牌 Addon' },
-                  ]}
-                />
-                <Select
-                  style={{ width: 132 }}
-                  value={versionFilter}
-                  onChange={setVersionFilter}
-                  options={[
-                    { value: 'all', label: '全部版本' },
-                    ...esxiVersions.map((v) => ({ value: v, label: `ESXi ${v}` })),
-                    { value: 'unknown', label: '未标注版本' },
-                  ]}
-                />
+            <div className="apple-filter-stack">
+              {/* 第一行：主资产分类 Apple 分段胶囊 + 搜索框 */}
+              <div className="apple-filter-row">
+                <div className="apple-segmented-group" role="tablist" aria-label="资产分类">
+                  {(
+                    [
+                      { value: 'depot', label: '基础离线包', count: groups.depot.length },
+                      { value: 'driver', label: '扩展驱动', count: groups.driver.length },
+                      { value: 'iso', label: '安装镜像 ISO', count: groups.iso.length },
+                      { value: 'output', label: '构建产出', count: groups.output.length },
+                    ] as Array<{ value: AssetTab; label: string; count: number }>
+                  ).map((tab) => {
+                    const isActive = assetTab === tab.value
+                    return (
+                      <button
+                        key={tab.value}
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        className={`apple-segmented-btn ${isActive ? 'active' : ''}`}
+                        onClick={() => {
+                          setAssetTab(tab.value)
+                          setKindFilter('all')
+                        }}
+                      >
+                        <span>{tab.label}</span>
+                        <span className="apple-count-badge">{tab.count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+
                 <Input
                   allowClear
-                  prefix={<SearchOutlined />}
-                  placeholder="搜索文件名、驱动名"
-                  style={{ width: 210 }}
+                  size="small"
+                  prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                  placeholder="搜索名称 / 芯片型号 / 文件名..."
+                  style={{ width: 228, borderRadius: 7 }}
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
                 />
-              </Space>
+              </div>
+
+              {/* 第二行：上下文细分标签（与构建页第1/2步完全一致）+ ESXi 版本筛选胶囊 */}
+              <div className="apple-filter-row">
+                {kindFilterOptions.length > 0 ? (
+                  <div className="apple-segmented-group" style={{ padding: 2 }}>
+                    {kindFilterOptions.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`apple-segmented-btn ${kindFilter === opt.value ? 'active' : ''}`}
+                        style={{ padding: '2px 9px', fontSize: 11.5 }}
+                        onClick={() => setKindFilter(opt.value)}
+                      >
+                        <span>{opt.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div />
+                )}
+
+                <div className="apple-segmented-group" style={{ padding: 2 }}>
+                  {[
+                    { value: 'all', label: '全部版本' },
+                    ...esxiVersions.map((v) => ({ value: v, label: `ESXi ${v}` })),
+                    ...(unversionedCount > 0 ? [{ value: 'unknown', label: `未标注 (${unversionedCount})` }] : []),
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`apple-segmented-btn ${versionFilter === opt.value ? 'active' : ''}`}
+                      style={{ padding: '2px 9px', fontSize: 11.5 }}
+                      onClick={() => setVersionFilter(opt.value)}
+                    >
+                      <span>{opt.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            {versionFilter !== 'all' && versionFilter !== 'unknown' && unversionedCount > 0 && (
-              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-                另有 {unversionedCount} 个文件未标注 ESXi 版本，选择「未标注版本」可查看。
-              </Typography.Text>
+            {isSelectedLocalBucket && assetTab === 'output' && groups.output.length > 0 && defaultS3Bucket && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 10, borderRadius: 8 }}
+                message={
+                  <span>
+                    当前本地盘共有 <strong>{groups.output.length}</strong> 个生成的镜像（共占用{' '}
+                    <strong>{compactSize(groups.output.reduce((acc, f) => acc + (f.size || 0), 0))}</strong>
+                    ），可一键转存至 S3「<strong>{defaultS3Bucket.name}</strong>」并清理本地生成的镜像文件。
+                  </span>
+                }
+                action={
+                  <Popconfirm
+                    title={`确认将 ${groups.output.length} 个生成镜像转存至 S3「${defaultS3Bucket.name}」并删除本地副本？`}
+                    onConfirm={() => archiveAllOutputsMutation.mutate()}
+                    okText="立即转存并清理"
+                    cancelText="取消"
+                  >
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<CloudUploadOutlined />}
+                      loading={archiveAllOutputsMutation.isPending}
+                    >
+                      一键转存 S3 并清理本地
+                    </Button>
+                  </Popconfirm>
+                }
+              />
             )}
 
-            <Table
-              size="middle"
-              rowKey="id"
-              columns={columns}
-              dataSource={currentFiles}
-              loading={filesQuery.isLoading}
-              pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
-              scroll={{ x: 900 }}
-              locale={{
-                emptyText: (
-                  <Empty
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={
-                      filesQuery.isError
-                        ? `文件加载失败：${String(filesQuery.error)}`
-                        : '该分类暂无文件'
-                    }
-                  >
-                    <Button size="small" onClick={openUpload} icon={<CloudUploadOutlined />}>
-                      上传文件
-                    </Button>
-                  </Empty>
-                ),
-              }}
-            />
+            <div className="apple-table-region" tabIndex={0} role="region" aria-label="存储盘文件列表">
+              <Table
+                size="small"
+                tableLayout="fixed"
+                rowKey="id"
+                columns={columns}
+                dataSource={currentFiles}
+                loading={filesQuery.isLoading}
+                pagination={{ pageSize: 12, showSizeChanger: true, pageSizeOptions: ['12', '24', '50'], size: 'small' }}
+                scroll={{ x: 900 }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description={
+                        filesQuery.isError
+                          ? `文件加载失败：${String(filesQuery.error)}`
+                          : '当前筛选条件下暂无文件'
+                      }
+                    >
+                      <Button size="small" onClick={openUpload} icon={<CloudUploadOutlined />}>
+                        上传文件
+                      </Button>
+                    </Empty>
+                  ),
+                }}
+              />
+            </div>
           </Card>
         </section>
       </div>
