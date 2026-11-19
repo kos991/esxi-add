@@ -2,16 +2,24 @@ import {
   DatabaseOutlined,
   DeploymentUnitOutlined,
   GithubOutlined,
+  KeyOutlined,
+  LockOutlined,
+  SafetyCertificateOutlined,
 } from '../components/icons'
 import { ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import type { ReactNode } from 'react'
+import type { AuthStatus } from '../api/auth'
+import { DEFAULT_APP_VERSION } from '../contexts/AdminAuthContext'
 
 const HEADER_HEIGHT = 46
 
 type AppShellProps = {
   pathname: string
   navigate: (path: string) => void
+  version?: string
+  auth?: AuthStatus
+  onAdminClick?: () => void
   children: ReactNode
 }
 
@@ -24,10 +32,18 @@ function resolvePage(pathname: string): 'build' | 'storage' {
 
 /**
  * 只有两个页面，所以取消侧栏与抽屉导航：
- * 顶部一行 1120px 居中对齐的 logo + 胶囊双页切换 + 仓库入口。
+ * 顶部一行 1120px 居中对齐的 logo + 胶囊双页切换 + 右侧版本号/管理员/仓库入口。
  */
-export function AppShell({ pathname, navigate, children }: AppShellProps) {
+export function AppShell({
+  pathname,
+  navigate,
+  version,
+  auth,
+  onAdminClick,
+  children,
+}: AppShellProps) {
   const page = resolvePage(pathname)
+  const displayVersion = (version || auth?.version || DEFAULT_APP_VERSION).trim()
 
   return (
     <ConfigProvider
@@ -150,15 +166,55 @@ export function AppShell({ pathname, navigate, children }: AppShellProps) {
             </a>
           </nav>
 
-          <a
-            href="https://github.com/kos991/esxi-add"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="项目仓库"
-            className="topbar-github"
-          >
-            <GithubOutlined aria-hidden="true" />
-          </a>
+          <div className="topbar-actions">
+            <span className="topbar-version mono tabular-nums" title={`当前版本 ${displayVersion}`}>
+              {displayVersion}
+            </span>
+
+            {auth && (
+              <button
+                type="button"
+                className={`topbar-admin-btn ${
+                  auth.authenticated ? 'is-authenticated' : !auth.configured ? 'needs-setup' : ''
+                }`}
+                onClick={onAdminClick}
+                title={
+                  auth.authenticated
+                    ? '管理员已登录（点击改密或退出）'
+                    : auth.configured
+                      ? '管理员登录'
+                      : '首次使用：设置管理员密码'
+                }
+              >
+                {auth.authenticated ? (
+                  <>
+                    <SafetyCertificateOutlined aria-hidden="true" />
+                    <span>管理员</span>
+                  </>
+                ) : auth.configured ? (
+                  <>
+                    <LockOutlined aria-hidden="true" />
+                    <span>管理员</span>
+                  </>
+                ) : (
+                  <>
+                    <KeyOutlined aria-hidden="true" />
+                    <span>设置管理员</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            <a
+              href="https://github.com/kos991/esxi-add"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="项目仓库"
+              className="topbar-github"
+            >
+              <GithubOutlined aria-hidden="true" />
+            </a>
+          </div>
         </div>
       </header>
 

@@ -81,8 +81,14 @@ func (h *BucketHandler) List(c *fiber.Ctx) error {
 	if err := h.db.WithContext(c.UserContext()).Order("id ASC").Find(&buckets).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
 	}
+	admin := isAdminRequest(c)
 	for index := range buckets {
 		buckets[index] = bucketForResponse(buckets[index])
+		if !admin {
+			buckets[index].AccessKey = ""
+			buckets[index].Endpoint = ""
+			buckets[index].LocalPath = ""
+		}
 	}
 	return c.JSON(utils.SuccessResponse(buckets))
 }

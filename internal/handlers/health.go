@@ -4,15 +4,24 @@ import (
     "github.com/gofiber/fiber/v2"
     "gorm.io/gorm"
 
+    appconfig "github.com/esxi-builder/esxi-iso-builder/internal/config"
     "github.com/esxi-builder/esxi-iso-builder/internal/utils"
 )
 
 type HealthHandler struct {
-    db *gorm.DB
+    db         *gorm.DB
+    appVersion string
 }
 
 func NewHealthHandler(db *gorm.DB) *HealthHandler {
-    return &HealthHandler{db: db}
+    return &HealthHandler{
+        db:         db,
+        appVersion: appconfig.ResolveAppVersion(""),
+    }
+}
+
+func (h *HealthHandler) SetVersion(version string) {
+    h.appVersion = appconfig.ResolveAppVersion(version)
 }
 
 func (h *HealthHandler) Check(c *fiber.Ctx) error {
@@ -28,5 +37,6 @@ func (h *HealthHandler) Check(c *fiber.Ctx) error {
     return c.JSON(utils.SuccessResponse(fiber.Map{
         "status":   "healthy",
         "database": "connected",
+        "version":  appconfig.ResolveAppVersion(h.appVersion),
     }))
 }

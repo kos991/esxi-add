@@ -15,6 +15,7 @@ export CACHE_DIR="${CACHE_DIR:-/tmp/builds}"
 export TMPDIR="${TMPDIR:-/tmp}"
 export BUILD_MODE="${BUILD_MODE:-local}"
 export WORKER_TOKEN="${WORKER_TOKEN:-}"
+export ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 export FRONTEND_DIST_DIR="${FRONTEND_DIST_DIR:-/app/frontend/dist}"
 
 REDIS_DIR="${REDIS_DIR:-/tmp/redis}"

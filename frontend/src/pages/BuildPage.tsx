@@ -67,6 +67,7 @@ import {
 } from '../api/builds'
 import { downloadFile, getFilePresignedUrl, listDepots, listDrivers, listISOs } from '../api/files'
 import { PageHeader } from '../components/PageHeader'
+import { useAdminAuth } from '../contexts/AdminAuthContext'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { BuildTask, FileMetadata } from '../types'
 import { buildPublicObjectUrl, buildS3ObjectUrl, formatDate, parseDrivers } from '../utils'
@@ -181,6 +182,8 @@ export default function BuildPage() {
   const [logFilter, setLogFilter] = useState<LogFilterType>('all')
   const [autoScroll, setAutoScroll] = useState(true)
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false)
+  const { status: adminStatus, requireAdmin } = useAdminAuth()
+  const isAdmin = adminStatus.configured && adminStatus.authenticated
 
   useEffect(() => {
     const urlTask = searchParams.get('task')
@@ -980,7 +983,7 @@ export default function BuildPage() {
             <Button size="small" icon={<HistoryOutlined />} onClick={() => setHistoryDrawerOpen(true)}>
               历史（{recentBuilds.length}）
             </Button>
-            <Button size="small" icon={<CloudUploadOutlined />} onClick={() => go('/storage')}>
+            <Button size="small" icon={<CloudUploadOutlined />} onClick={() => requireAdmin(() => go('/storage'))}>
               存储
             </Button>
           </>
@@ -1934,7 +1937,7 @@ export default function BuildPage() {
                     type="primary"
                     icon={<CloudUploadOutlined />}
                     loading={archiveMutation.isPending && archiveMutation.variables === activeTask.task_id}
-                    onClick={() => archiveMutation.mutate(activeTask.task_id)}
+                    onClick={() => requireAdmin(() => archiveMutation.mutate(activeTask.task_id))}
                   >
                     转存 S3 并清理本地
                   </Button>
@@ -2209,14 +2212,26 @@ export default function BuildPage() {
                       </Tooltip>
                     </>
                   )}
-                  <Popconfirm
-                    title="删除该构建记录？"
-                    onConfirm={() => deleteMutation.mutate(r.task_id)}
-                    okText="删除"
-                    cancelText="取消"
-                  >
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
+                  {isAdmin ? (
+                    <Popconfirm
+                      title="删除该构建记录？"
+                      onConfirm={() => deleteMutation.mutate(r.task_id)}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />} aria-label="删除记录" />
+                    </Popconfirm>
+                  ) : (
+                    <Tooltip title="删除记录需管理员登录">
+                      <Button
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        aria-label="删除记录"
+                        onClick={() => requireAdmin(() => deleteMutation.mutate(r.task_id))}
+                      />
+                    </Tooltip>
+                  )}
                 </Space>
               ),
             },

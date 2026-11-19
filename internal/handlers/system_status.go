@@ -11,12 +11,16 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	appconfig "github.com/esxi-builder/esxi-iso-builder/internal/config"
 	"github.com/esxi-builder/esxi-iso-builder/internal/utils"
 )
 
-type SystemStatusHandler struct{}
+type SystemStatusHandler struct {
+	appVersion string
+}
 
 type SystemStatus struct {
+	Version   string        `json:"version"`
 	Timestamp time.Time     `json:"timestamp"`
 	Source    string        `json:"source"`
 	CPU       CPUStatus     `json:"cpu"`
@@ -54,16 +58,24 @@ type networkSample struct {
 }
 
 func NewSystemStatusHandler() *SystemStatusHandler {
-	return &SystemStatusHandler{}
+	return &SystemStatusHandler{
+		appVersion: appconfig.ResolveAppVersion(""),
+	}
+}
+
+func (h *SystemStatusHandler) SetVersion(version string) {
+	h.appVersion = appconfig.ResolveAppVersion(version)
 }
 
 func (h *SystemStatusHandler) Get(c *fiber.Ctx) error {
 	status := collectSystemStatus()
+	status.Version = appconfig.ResolveAppVersion(h.appVersion)
 	return c.JSON(utils.SuccessResponse(status))
 }
 
 func collectSystemStatus() SystemStatus {
 	status := SystemStatus{
+		Version:   appconfig.ResolveAppVersion(""),
 		Timestamp: time.Now().UTC(),
 		Source:    runtime.GOOS,
 		CPU: CPUStatus{

@@ -22,7 +22,8 @@ RUN --mount=type=cache,id=esxi-go-mod,target=/go/pkg/mod,sharing=locked \
 # Single-image runtime: Go app + built frontend + Redis + pinned VMware PowerCLI ImageBuilder.
 FROM vmware/powerclicore:latest
 
-ARG APP_VERSION=dev
+ARG APP_VERSION=v1.0.1
+ENV APP_VERSION=${APP_VERSION}
 LABEL org.opencontainers.image.title="ESXi ISO Builder" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.source="https://github.com/kos991/esxi-add"

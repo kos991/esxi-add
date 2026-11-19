@@ -63,6 +63,7 @@ func InitDB(path string) (*gorm.DB, error) {
 		"build_templates",
 		"build_stats",
 		"audit_logs",
+		"system_settings",
 	); err != nil {
 		return nil, err
 	}
@@ -74,6 +75,7 @@ func InitDB(path string) (*gorm.DB, error) {
 		&models.BuildTemplate{},
 		&models.BuildStats{},
 		&models.AuditLog{},
+		&models.SystemSetting{},
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate database: %w", err)
 	}
