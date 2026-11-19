@@ -178,3 +178,24 @@ func TestBuildScriptVerifiesOutputIsoExistsBeforeSuccess(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildScriptSkipsAlreadyIncludedPackages(t *testing.T) {
+	content, err := os.ReadFile("build-esxi-iso.ps1")
+	if err != nil {
+		t.Fatalf("read build script: %v", err)
+	}
+
+	script := string(content)
+	requiredSnippets := []string{
+		"$currentProfile.VibList",
+		"$existingVibKeys.ContainsKey($pkgKey)",
+		"already in ImageProfile",
+		"Skipping duplicate package (already in ImageProfile)",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("build script must contain %q so duplicate VIBs already in base depot do not abort the build", snippet)
+		}
+	}
+}
+

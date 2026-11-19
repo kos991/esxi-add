@@ -77,9 +77,32 @@ function Add-DriverSoftwarePackages {
         throw "no software packages found in driver file: $DriverPath"
     }
 
+    $currentProfile = Get-EsxImageProfile -Name $ImageProfile | Select-Object -First 1
+    $existingVibKeys = @{}
+    if ($null -ne $currentProfile -and $null -ne $currentProfile.VibList) {
+        foreach ($vib in $currentProfile.VibList) {
+            $existingVibKeys["$($vib.Name)@$($vib.Version)"] = $true
+        }
+    }
+
     foreach ($package in $packages) {
+        $pkgKey = "$($package.Name)@$($package.Version)"
+        if ($existingVibKeys.ContainsKey($pkgKey)) {
+            Write-Host "Skipping duplicate package (already in ImageProfile): $($package.Name) ($($package.Version))"
+            continue
+        }
         Write-Host "Adding package: $($package.Name)"
-        Add-EsxSoftwarePackage -ImageProfile $ImageProfile -SoftwarePackage $package -Force
+        try {
+            Add-EsxSoftwarePackage -ImageProfile $ImageProfile -SoftwarePackage $package -Force
+            $existingVibKeys[$pkgKey] = $true
+        } catch {
+            $errMsg = $_.Exception.Message
+            if ($errMsg -match 'already in ImageProfile') {
+                Write-Host "Skipping duplicate package (already in ImageProfile): $($package.Name)"
+                continue
+            }
+            throw
+        }
     }
 }
 
