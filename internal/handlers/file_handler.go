@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -200,6 +201,23 @@ func (h *FileHandler) Download(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderContentType, "application/octet-stream")
 	c.Set("X-Content-Type-Options", "nosniff")
 	return c.SendStream(reader)
+}
+
+func (h *FileHandler) PresignDownloadURL(c *fiber.Ctx) error {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("invalid file id"))
+	}
+	expiresSec := parsePositiveInt(c.Query("expires"), 86400)
+	res, err := h.fileService.GetFilePresignedURL(c.UserContext(), id, time.Duration(expiresSec)*time.Second)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = fiber.StatusNotFound
+		}
+		return c.Status(status).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(res))
 }
 
 func (h *FileHandler) ArchiveToS3(c *fiber.Ctx) error {

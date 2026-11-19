@@ -82,6 +82,24 @@ export async function downloadFile(id: number, name: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
+export interface PresignedFileUrlResult {
+  url: string
+  signed: boolean
+  expires_seconds: number
+  object_path: string
+  filename: string
+}
+
+export async function getFilePresignedUrl(
+  id: number,
+  expiresSeconds = 86400
+): Promise<PresignedFileUrlResult> {
+  const response = await api.get(`/files/${id}/presign`, {
+    params: { expires: expiresSeconds },
+  })
+  return response.data
+}
+
 export interface ArchiveFileResult {
   file: FileMetadata
   source_bucket_id: number

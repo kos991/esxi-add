@@ -60,6 +60,7 @@ import {
   archiveOutputsToS3,
   deleteFile,
   downloadFile,
+  getFilePresignedUrl,
   listAllFiles,
   refreshFiles,
   renameFile,
@@ -67,7 +68,7 @@ import {
 } from '../api/files'
 import { PageHeader } from '../components/PageHeader'
 import type { FileMetadata, StorageBucket } from '../types'
-import { buildPublicObjectUrl, formatDate } from '../utils'
+import { buildPublicObjectUrl, buildS3ObjectUrl, formatDate } from '../utils'
 import {
   bucketLocation,
   bucketType,
@@ -265,7 +266,16 @@ export default function StorageFilesPage() {
 
   const archiveSingleFileMutation = useMutation({
     mutationFn: (id: number) => archiveFileToS3(id, defaultS3Bucket?.id),
+    onMutate: () => {
+      messageApi.open({
+        key: 'storage-archive-s3-loading',
+        type: 'loading',
+        content: '正在将产出镜像转存至 S3 对象存储并清理本地副本，请稍候…',
+        duration: 0,
+      })
+    },
     onSuccess: async (res) => {
+      messageApi.destroy('storage-archive-s3-loading')
       messageApi.success(
         `已转存至 S3「${res.target_bucket_name}」并清理本地镜像（释放 ${compactSize(res.freed_bytes)}）`
       )
@@ -274,6 +284,7 @@ export default function StorageFilesPage() {
       await queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
     },
     onError: (err: any) => {
+      messageApi.destroy('storage-archive-s3-loading')
       const msg = err?.response?.data?.error || err?.message || String(err)
       messageApi.error(`转存 S3 失败：${msg}`)
     },
@@ -281,7 +292,16 @@ export default function StorageFilesPage() {
 
   const archiveAllOutputsMutation = useMutation({
     mutationFn: () => archiveOutputsToS3(selectedBucketId, defaultS3Bucket?.id),
+    onMutate: () => {
+      messageApi.open({
+        key: 'storage-archive-s3-loading',
+        type: 'loading',
+        content: '正在批量将产出镜像转存至 S3 对象存储并清理本地副本，请稍候…',
+        duration: 0,
+      })
+    },
     onSuccess: async (res) => {
+      messageApi.destroy('storage-archive-s3-loading')
       messageApi.success(
         `已将 ${res.transferred_count} 个生成镜像转存至 S3「${res.target_bucket_name}」并清理本地文件（释放 ${compactSize(res.freed_bytes)}）`
       )
@@ -290,6 +310,7 @@ export default function StorageFilesPage() {
       await queryClient.invalidateQueries({ queryKey: ['builds-recent'] })
     },
     onError: (err: any) => {
+      messageApi.destroy('storage-archive-s3-loading')
       const msg = err?.response?.data?.error || err?.message || String(err)
       messageApi.error(`批量转存 S3 失败：${msg}`)
     },
@@ -529,9 +550,52 @@ export default function StorageFilesPage() {
 
   const handleDownload = async (file: FileMetadata) => {
     try {
+      if (selectedBucket && selectedBucket.type !== 'local') {
+        const res = await getFilePresignedUrl(file.id)
+        if (res?.url) {
+          window.open(res.url, '_blank', 'noopener,noreferrer')
+          return
+        }
+      }
       await downloadFile(file.id, fileName(file))
     } catch (err: any) {
       messageApi.error(`下载失败：${err?.response?.data?.error || String(err)}`)
+    }
+  }
+
+  const handleCopyFileLink = async (file: FileMetadata) => {
+    const isS3 = selectedBucket && selectedBucket.type !== 'local'
+    if (isS3) {
+      try {
+        const res = await getFilePresignedUrl(file.id)
+        if (res?.url) {
+          const ok = await copyText(res.url)
+          if (ok) {
+            messageApi.success('已复制 S3 签名下载链接（24 小时有效）')
+            return
+          }
+        }
+      } catch {
+        // fallback to public or path
+      }
+    }
+    const targetText = isBuildOutput(file)
+      ? buildS3ObjectUrl(selectedBucket, file.path || '') || file.path
+      : selectedBucket?.public_domain
+        ? buildPublicObjectUrl(selectedBucket.public_domain, file.path || '')
+        : file.path
+    if (!targetText) return
+    const ok = await copyText(targetText)
+    if (ok) {
+      messageApi.success(
+        isBuildOutput(file)
+          ? '已复制产出镜像 S3 地址'
+          : selectedBucket?.public_domain
+            ? '已复制公网直链'
+            : '已复制文件路径'
+      )
+    } else {
+      messageApi.error('浏览器不允许访问剪贴板，请手动复制')
     }
   }
 
@@ -622,6 +686,9 @@ export default function StorageFilesPage() {
         }
 
         const depotMeta = resolveDepotMeta(file)
+        const outputS3Url = isBuildOutput(file)
+          ? buildS3ObjectUrl(selectedBucket, file.path) || file.path
+          : undefined
         return (
           <div className="apple-asset-cell">
             <div className="apple-asset-line1">
@@ -636,13 +703,24 @@ export default function StorageFilesPage() {
               </span>
             </div>
             <div className="apple-asset-sub">
-              <span className="apple-asset-sub-text" title={depotMeta.subtitle}>
-                {depotMeta.subtitle}
-              </span>
-              {!isBuildOutput(file) && (
-                <Tooltip title={`存储路径：${file.path}`}>
-                  <span className="apple-asset-file-hint">{fileName(file)}</span>
-                </Tooltip>
+              {outputS3Url ? (
+                <Typography.Text
+                  code
+                  copyable={{ text: outputS3Url }}
+                  ellipsis={{ tooltip: outputS3Url }}
+                  style={{ fontSize: 11.5, maxWidth: 460 }}
+                >
+                  {outputS3Url}
+                </Typography.Text>
+              ) : (
+                <>
+                  <span className="apple-asset-sub-text" title={depotMeta.subtitle}>
+                    {depotMeta.subtitle}
+                  </span>
+                  <Tooltip title={`存储路径：${file.path}`}>
+                    <span className="apple-asset-file-hint">{fileName(file)}</span>
+                  </Tooltip>
+                </>
               )}
             </div>
           </div>
@@ -790,7 +868,7 @@ export default function StorageFilesPage() {
                 </Button>
               </Tooltip>
             )}
-            <Tooltip title={isOemIso ? '品牌 ISO 已内置驱动，下载即可装机' : '下载到本机'}>
+            <Tooltip title={isOemIso ? '品牌 ISO 已内置驱动，下载即可装机' : isBuildOutput(file) ? '下载产出镜像' : '下载到本机'}>
               <Button
                 size="small"
                 type={isOemIso ? 'primary' : 'default'}
@@ -802,24 +880,27 @@ export default function StorageFilesPage() {
                 下载
               </Button>
             </Tooltip>
-            <Tooltip title={selectedBucket?.public_domain ? '复制公网直链' : '复制存储路径'}>
+            <Tooltip
+              title={
+                selectedBucket?.type !== 'local'
+                  ? '复制 S3 签名下载链接（24 小时有效）'
+                  : isBuildOutput(file)
+                    ? '复制产出镜像 S3 地址'
+                    : selectedBucket?.public_domain
+                      ? '复制公网直链'
+                      : '复制存储路径'
+              }
+            >
               <Button
                 size="small"
-                style={{ borderRadius: 6 }}
+                type={isBuildOutput(file) && !canArchiveOutputToS3 ? 'primary' : 'default'}
+                ghost={isBuildOutput(file) && !canArchiveOutputToS3}
+                style={isBuildOutput(file) ? { borderRadius: 999, paddingInline: 8 } : { borderRadius: 6 }}
                 icon={<CopyOutlined />}
-                onClick={async () => {
-                  const targetText = selectedBucket?.public_domain
-                    ? buildPublicObjectUrl(selectedBucket.public_domain, file.path || '')
-                    : file.path
-                  if (!targetText) return
-                  const ok = await copyText(targetText)
-                  if (ok) {
-                    messageApi.success(selectedBucket?.public_domain ? '已复制公网直链' : '已复制文件路径')
-                  } else {
-                    messageApi.error('浏览器不允许访问剪贴板，请手动复制')
-                  }
-                }}
-              />
+                onClick={() => handleCopyFileLink(file)}
+              >
+                {selectedBucket?.type !== 'local' ? (isBuildOutput(file) ? '复制签名链接' : undefined) : (isBuildOutput(file) ? '复制 S3 地址' : undefined)}
+              </Button>
             </Tooltip>
             <Tooltip title="重命名">
               <Button
@@ -1108,6 +1189,15 @@ export default function StorageFilesPage() {
                 </div>
               </div>
             </div>
+
+            {(archiveSingleFileMutation.isPending || archiveAllOutputsMutation.isPending) && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 10, borderRadius: 8 }}
+                message={`正在将产出镜像转存至 S3 对象存储${defaultS3Bucket ? `（${defaultS3Bucket.name}）` : ''}并清理本地副本，大文件上传期间请稍候…`}
+              />
+            )}
 
             {isSelectedLocalBucket && assetTab === 'output' && groups.output.length > 0 && defaultS3Bucket && (
               <Alert

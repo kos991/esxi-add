@@ -70,6 +70,24 @@ export function getBuildArtifactUrl(taskId: string): string {
   return `/api/builds/${encodeURIComponent(taskId)}/artifact`
 }
 
+export interface PresignedDownloadUrlResult {
+  url: string
+  signed: boolean
+  expires_seconds: number
+  object_path: string
+  filename: string
+}
+
+export async function getBuildArtifactPresignedUrl(
+  taskId: string,
+  expiresSeconds = 86400
+): Promise<PresignedDownloadUrlResult> {
+  const response = await api.get(`/builds/${encodeURIComponent(taskId)}/artifact-url`, {
+    params: { expires: expiresSeconds },
+  })
+  return response.data
+}
+
 export async function archiveBuildToS3(
   taskId: string,
   targetBucketId?: number

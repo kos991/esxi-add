@@ -59,16 +59,17 @@ import {
   createBuild,
   deleteBuild,
   getBuild,
+  getBuildArtifactPresignedUrl,
   getBuildArtifactUrl,
   getBuildPreflight,
   listBuilds,
   startBuildPreflight,
 } from '../api/builds'
-import { downloadFile, listDepots, listDrivers, listISOs } from '../api/files'
+import { downloadFile, getFilePresignedUrl, listDepots, listDrivers, listISOs } from '../api/files'
 import { PageHeader } from '../components/PageHeader'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { BuildTask, FileMetadata } from '../types'
-import { buildPublicObjectUrl, formatDate, parseDrivers } from '../utils'
+import { buildPublicObjectUrl, buildS3ObjectUrl, formatDate, parseDrivers } from '../utils'
 import {
   BuildStatusTag,
   cacheStatusColor,
@@ -80,6 +81,7 @@ import {
   fileCategoryMeta,
   fileName,
   formatLogToChinese,
+  isArchivingPhase,
   isBuildOutput,
   isIsoPath,
   OEM_BRANDS,
@@ -441,7 +443,16 @@ export default function BuildPage() {
 
   const archiveMutation = useMutation({
     mutationFn: (taskId: string) => archiveBuildToS3(taskId, defaultS3Bucket?.id),
+    onMutate: () => {
+      messageApi.open({
+        key: 'archive-s3-loading',
+        type: 'loading',
+        content: '正在将产出镜像转存至 S3 对象存储并清理本地副本，请稍候…',
+        duration: 0,
+      })
+    },
     onSuccess: (res) => {
+      messageApi.destroy('archive-s3-loading')
       messageApi.success(
         `已转存至 S3「${res.target_bucket_name}」并清理本地生成的镜像${res.freed_bytes > 0 ? `（释放 ${compactSize(res.freed_bytes)}）` : ''}`
       )
@@ -451,6 +462,7 @@ export default function BuildPage() {
       queryClient.invalidateQueries({ queryKey: ['build-isos'] })
     },
     onError: (err: any) => {
+      messageApi.destroy('archive-s3-loading')
       const msg = err?.response?.data?.error || err?.message || String(err)
       messageApi.error(`转存 S3 失败：${msg}`)
     },
@@ -503,22 +515,83 @@ export default function BuildPage() {
 
   const downloadSource = async (item: DepotOption) => {
     try {
+      const bucket = buckets.find((b) => b.id === item.bucketId)
+      if (bucket && bucket.type !== 'local') {
+        const res = await getFilePresignedUrl(item.file.id)
+        if (res?.url) {
+          window.open(res.url, '_blank', 'noopener,noreferrer')
+          return
+        }
+      }
       await downloadFile(item.file.id, fileName(item.file))
     } catch (err: any) {
       messageApi.error(`下载失败：${err?.response?.data?.error || String(err)}`)
     }
   }
 
-  const copySourceLink = (item: DepotOption) => {
+  const copySourceLink = async (item: DepotOption) => {
+    const bucket = buckets.find((b) => b.id === item.bucketId)
+    if (bucket && bucket.type !== 'local') {
+      try {
+        const res = await getFilePresignedUrl(item.file.id)
+        if (res?.url) {
+          return copyLink(res.url, '已复制 S3 签名下载链接（24 小时有效）')
+        }
+      } catch {
+        // fallback to public or raw path
+      }
+    }
     const publicUrl = bucketPublicUrl(item.bucketId, item.file.path)
     return copyLink(publicUrl || item.file.path, publicUrl ? '已复制公网直链' : '已复制文件路径')
   }
 
-  const copyArtifactLink = (task: BuildTask) => {
-    const publicUrl = task.output_iso ? bucketPublicUrl(task.storage_bucket_id, task.output_iso) : undefined
-    const fallback = new URL(getBuildArtifactUrl(task.task_id), window.location.origin).toString()
-    return copyLink(publicUrl || fallback, publicUrl ? '已复制 ISO 公网直链' : '已复制 ISO 下载链接')
+  const resolveTaskS3Url = (task?: BuildTask): string | undefined => {
+    if (!task?.output_iso) return undefined
+    const taskBucket = buckets.find((b) => b.id === task.storage_bucket_id)
+    if (taskBucket && taskBucket.type !== 'local') {
+      return buildS3ObjectUrl(taskBucket, task.output_iso) || task.output_iso
+    }
+    if (!taskBucket && defaultS3Bucket) {
+      return buildS3ObjectUrl(defaultS3Bucket, task.output_iso) || task.output_iso
+    }
+    return undefined
   }
+
+  const copyArtifactLink = async (task: BuildTask) => {
+    const taskBucket = buckets.find((b) => b.id === task.storage_bucket_id)
+    const isS3Task = (taskBucket && taskBucket.type !== 'local') || (!taskBucket && Boolean(defaultS3Bucket))
+    if (isS3Task) {
+      try {
+        const res = await getBuildArtifactPresignedUrl(task.task_id)
+        if (res?.url) {
+          return copyLink(res.url, '已复制 S3 签名下载链接（24 小时有效）')
+        }
+      } catch {
+        // fallback to static URL if presign fails
+      }
+    }
+    const s3Url = resolveTaskS3Url(task)
+    const target = s3Url || task.output_iso || getBuildArtifactUrl(task.task_id)
+    return copyLink(target, '已复制产出镜像 S3 地址')
+  }
+
+  const downloadTaskArtifact = async (task: BuildTask) => {
+    try {
+      const res = await getBuildArtifactPresignedUrl(task.task_id)
+      if (res?.url) {
+        window.open(res.url, '_blank', 'noopener,noreferrer')
+        return
+      }
+    } catch {
+      // fallback to backend artifact stream endpoint
+    }
+    window.open(getBuildArtifactUrl(task.task_id), '_blank', 'noopener,noreferrer')
+  }
+
+  const isActiveTaskArchiving =
+    isArchivingPhase(activeTask?.status, rawLogs) ||
+    (archiveMutation.isPending && archiveMutation.variables === activeTask?.task_id)
+  const activeTaskS3Url = resolveTaskS3Url(activeTask)
 
   const driverCategories = [
     { key: 'all', label: '全部' },
@@ -803,12 +876,25 @@ export default function BuildPage() {
               <>
                 <Progress percent={Math.round(percent)} size="small" status="active" style={{ flex: 1, margin: 0 }} />
                 <Typography.Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                  正在转换…
+                  {(taskId === activeTaskId
+                    ? isActiveTaskArchiving
+                    : isArchivingPhase(task?.status, task?.log_output?.split('\n')))
+                    ? '正在转存至 S3…'
+                    : '正在转换…'}
                 </Typography.Text>
               </>
             ) : task ? (
               <>
                 <BuildStatusTag status={task.status} />
+                {taskDone && (
+                  <Typography.Text
+                    code
+                    ellipsis={{ tooltip: resolveTaskS3Url(task) || task.output_iso }}
+                    style={{ fontSize: 11, flex: 1, minWidth: 0 }}
+                  >
+                    {resolveTaskS3Url(task) || task.output_iso}
+                  </Typography.Text>
+                )}
                 {taskFailed && task.error_message && (
                   <Typography.Text type="danger" ellipsis={{ tooltip: task.error_message }} style={{ fontSize: 11, flex: 1, minWidth: 0 }}>
                     {task.error_message}
@@ -842,16 +928,13 @@ export default function BuildPage() {
               <Button
                 size="small"
                 type="primary"
-                icon={<DownloadOutlined />}
-                onClick={() => window.open(getBuildArtifactUrl(task.task_id), '_blank', 'noopener,noreferrer')}
+                icon={<CopyOutlined />}
+                onClick={() => copyArtifactLink(task)}
               >
-                下载 ISO
+                复制 S3 地址
               </Button>
               <Button size="small" icon={<SettingOutlined />} onClick={() => customizeOemSource(item)}>
                 去定制
-              </Button>
-              <Button size="small" icon={<LinkOutlined />} onClick={() => copyArtifactLink(task)}>
-                复制链接
               </Button>
               <Button size="small" type="text" onClick={() => downloadSource(item)}>
                 下载原包
@@ -1817,30 +1900,54 @@ export default function BuildPage() {
         extra={
           <Space size={8} wrap>
             {activeTask && <BuildStatusTag status={activeTask.status} />}
+            {isActiveTaskArchiving && (
+              <Tag color="processing" style={{ marginInlineEnd: 0, borderRadius: 999 }}>
+                正在转存至 S3…
+              </Tag>
+            )}
             {activeTask?.status === 'completed' && activeTask.output_iso && (
               <>
                 {activeTaskBucket && activeTaskBucket.type !== 'local' ? (
-                  <Tag color="success" style={{ marginInlineEnd: 0, borderRadius: 999 }}>
-                    已存 S3（{activeTaskBucket.name}）· 本地已清理
-                  </Tag>
+                  <>
+                    <Tag color="success" style={{ marginInlineEnd: 0, borderRadius: 999 }}>
+                      已存 S3（{activeTaskBucket.name}）· 本地已清理
+                    </Tag>
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={() => downloadTaskArtifact(activeTask)}
+                    >
+                      下载 ISO
+                    </Button>
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<CopyOutlined />}
+                      onClick={() => copyArtifactLink(activeTask)}
+                    >
+                      复制签名链接
+                    </Button>
+                  </>
                 ) : defaultS3Bucket ? (
                   <Button
                     size="small"
+                    type="primary"
                     icon={<CloudUploadOutlined />}
                     loading={archiveMutation.isPending && archiveMutation.variables === activeTask.task_id}
                     onClick={() => archiveMutation.mutate(activeTask.task_id)}
                   >
                     转存 S3 并清理本地
                   </Button>
-                ) : null}
-                <Button
-                  size="small"
-                  type="primary"
-                  icon={<DownloadOutlined />}
-                  onClick={() => window.open(getBuildArtifactUrl(activeTask.task_id), '_blank', 'noopener,noreferrer')}
-                >
-                  下载 ISO
-                </Button>
+                ) : (
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<CopyOutlined />}
+                    onClick={() => copyArtifactLink(activeTask)}
+                  >
+                    复制签名链接
+                  </Button>
+                )}
               </>
             )}
             <Radio.Group
@@ -1862,8 +1969,63 @@ export default function BuildPage() {
             </Button>
           </Space>
         }
-        styles={{ body: { padding: 0, maxHeight: 380, overflow: 'auto' } }}
+        styles={{ body: { padding: 0, maxHeight: 420, overflow: 'auto' } }}
       >
+        {isActiveTaskArchiving && (
+          <Alert
+            type="info"
+            showIcon
+            message={`正在将产出镜像转存至 S3 对象存储${defaultS3Bucket ? `（${defaultS3Bucket.name}）` : ''}，大文件上传与校验期间请稍候…`}
+            style={{ margin: '10px 12px 0', borderRadius: 8 }}
+          />
+        )}
+        {activeTask?.status === 'completed' && activeTask.output_iso && (
+          <div
+            style={{
+              margin: '10px 12px 0',
+              padding: '10px 14px',
+              background: '#f0fdf4',
+              border: '1px solid #bbf7d0',
+              borderRadius: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+              <CheckCircleFilled style={{ color: '#16a34a', fontSize: 16, flexShrink: 0 }} />
+              <Typography.Text strong style={{ fontSize: 12.5, color: '#15803d', flexShrink: 0 }}>
+                产出镜像 S3 地址：
+              </Typography.Text>
+              <Typography.Text
+                code
+                ellipsis={{ tooltip: activeTaskS3Url || activeTask.output_iso }}
+                style={{ fontSize: 12.5, minWidth: 0 }}
+              >
+                {activeTaskS3Url || activeTask.output_iso}
+              </Typography.Text>
+            </div>
+            <Space size={8} wrap>
+              <Button
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => downloadTaskArtifact(activeTask)}
+              >
+                下载 ISO
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                icon={<CopyOutlined />}
+                onClick={() => copyArtifactLink(activeTask)}
+              >
+                复制签名链接
+              </Button>
+            </Space>
+          </div>
+        )}
         {!activeTask ? (
           <div style={{ padding: 24 }}>
             <Empty
@@ -1974,16 +2136,30 @@ export default function BuildPage() {
             {
               title: '任务 / 产物',
               key: 'task',
-              render: (_, r: BuildTask) => (
-                <div className="table-cell-stack">
-                  <Typography.Text strong ellipsis style={{ maxWidth: 260 }}>
-                    {r.custom_iso_name || `ESXi-${r.esxi_version || '8.0'}-custom.iso`}
-                  </Typography.Text>
-                  <Typography.Text type="secondary" className="mono" style={{ fontSize: 11 }}>
-                    {r.task_id}
-                  </Typography.Text>
-                </div>
-              ),
+              render: (_, r: BuildTask) => {
+                const s3Url = resolveTaskS3Url(r) || r.output_iso
+                return (
+                  <div className="table-cell-stack">
+                    <Typography.Text strong ellipsis style={{ maxWidth: 260 }}>
+                      {r.custom_iso_name || `ESXi-${r.esxi_version || '8.0'}-custom.iso`}
+                    </Typography.Text>
+                    {r.status === 'completed' && s3Url ? (
+                      <Typography.Text
+                        type="secondary"
+                        className="mono"
+                        ellipsis={{ tooltip: s3Url }}
+                        style={{ fontSize: 11, maxWidth: 320 }}
+                      >
+                        {s3Url}
+                      </Typography.Text>
+                    ) : (
+                      <Typography.Text type="secondary" className="mono" style={{ fontSize: 11 }}>
+                        {r.task_id}
+                      </Typography.Text>
+                    )}
+                  </div>
+                )
+              },
             },
             { title: '版本', dataIndex: 'esxi_version', width: 80 },
             {
@@ -2016,15 +2192,22 @@ export default function BuildPage() {
                     />
                   </Tooltip>
                   {r.status === 'completed' && r.output_iso && (
-                    <Tooltip title="下载 ISO">
-                      <Button
-                        size="small"
-                        icon={<DownloadOutlined />}
-                        onClick={() =>
-                          window.open(getBuildArtifactUrl(r.task_id), '_blank', 'noopener,noreferrer')
-                        }
-                      />
-                    </Tooltip>
+                    <>
+                      <Tooltip title="直链下载 ISO">
+                        <Button
+                          size="small"
+                          icon={<DownloadOutlined />}
+                          onClick={() => downloadTaskArtifact(r)}
+                        />
+                      </Tooltip>
+                      <Tooltip title="复制 S3 签名下载链接">
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          onClick={() => copyArtifactLink(r)}
+                        />
+                      </Tooltip>
+                    </>
                   )}
                   <Popconfirm
                     title="删除该构建记录？"

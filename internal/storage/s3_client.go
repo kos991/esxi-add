@@ -135,6 +135,32 @@ func (s *S3Client) GetPublicURL(objectName string) string {
 	return domain + "/" + strings.TrimLeft(strings.TrimSpace(objectName), "/")
 }
 
+// GetPresignedDownloadURL generates a temporary signed GET URL for downloading private S3 objects.
+func (s *S3Client) GetPresignedDownloadURL(ctx context.Context, objectName string, expires time.Duration, downloadFilename string) (string, error) {
+	cleanObject := strings.TrimLeft(strings.TrimSpace(objectName), "/")
+	if cleanObject == "" {
+		return "", fmt.Errorf("object name is required")
+	}
+	if expires <= 0 {
+		expires = 24 * time.Hour
+	}
+	if expires > 7*24*time.Hour {
+		expires = 7 * 24 * time.Hour
+	}
+
+	reqParams := make(url.Values)
+	if name := strings.TrimSpace(downloadFilename); name != "" {
+		safeName := strings.ReplaceAll(name, `"`, "")
+		reqParams.Set("response-content-disposition", fmt.Sprintf(`attachment; filename="%s"`, safeName))
+	}
+
+	presignedURL, err := s.client.PresignedGetObject(ctx, s.bucketName, cleanObject, expires, reqParams)
+	if err != nil {
+		return "", fmt.Errorf("presign object %s: %w", cleanObject, err)
+	}
+	return presignedURL.String(), nil
+}
+
 // NormalizePublicDomain returns an absolute public object host URL.
 func NormalizePublicDomain(rawDomain string) string {
 	domain := strings.TrimRight(strings.TrimSpace(rawDomain), "/")

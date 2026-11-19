@@ -160,3 +160,61 @@ func (s *FileService) OpenFile(ctx context.Context, id uint) (io.ReadCloser, str
 	}
 	return reader, path.Base(key), nil
 }
+
+type PresignedURLResult struct {
+	URL            string `json:"url"`
+	Signed         bool   `json:"signed"`
+	ExpiresSeconds int    `json:"expires_seconds"`
+	ObjectPath     string `json:"object_path"`
+	Filename       string `json:"filename"`
+}
+
+func (s *FileService) GetFilePresignedURL(ctx context.Context, id uint, expires time.Duration) (*PresignedURLResult, error) {
+	var file models.FileMetadata
+	if err := s.db.WithContext(ctx).First(&file, id).Error; err != nil {
+		return nil, err
+	}
+	return s.GetBucketObjectPresignedURL(ctx, file.StorageBucketID, file.Path, expires)
+}
+
+func (s *FileService) GetBucketObjectPresignedURL(ctx context.Context, bucketID uint, objectPath string, expires time.Duration) (*PresignedURLResult, error) {
+	cleanPath := strings.TrimLeft(strings.TrimSpace(objectPath), "/")
+	if cleanPath == "" {
+		return nil, fmt.Errorf("object path is required")
+	}
+
+	var bucket *models.StorageBucket
+	if bucketID > 0 {
+		b, err := s.getBucket(ctx, bucketID)
+		if err == nil {
+			bucket = b
+		}
+	}
+	if bucket == nil || models.NormalizeStorageType(bucket.Type) != models.StorageTypeS3 {
+		s3Bucket, err := s.ResolveTargetS3Bucket(ctx, 0)
+		if err != nil {
+			return nil, err
+		}
+		bucket = s3Bucket
+	}
+
+	if expires <= 0 {
+		expires = 24 * time.Hour
+	}
+	filename := path.Base(strings.ReplaceAll(cleanPath, "\\", "/"))
+	client, err := s.newS3ClientForBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+	signedURL, err := client.GetPresignedDownloadURL(ctx, cleanPath, expires, filename)
+	if err != nil {
+		return nil, err
+	}
+	return &PresignedURLResult{
+		URL:            signedURL,
+		Signed:         true,
+		ExpiresSeconds: int(expires.Seconds()),
+		ObjectPath:     cleanPath,
+		Filename:       filename,
+	}, nil
+}

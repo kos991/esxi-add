@@ -40,3 +40,39 @@ export function buildPublicObjectUrl(publicDomain?: string, objectPath?: string)
   const normalizedDomain = domain.includes('://') ? domain : `https://${domain}`
   return `${normalizedDomain.replace(/\/$/, '')}/${objectPath.trim().replace(/^\//, '')}`
 }
+
+export function buildS3ObjectUrl(
+  bucket?: {
+    type?: 's3' | 'local' | string
+    public_domain?: string
+    endpoint?: string
+    bucket_name?: string
+    use_ssl?: boolean
+  },
+  objectPath?: string
+): string | undefined {
+  if (!objectPath) return undefined
+  const cleanPath = objectPath.trim().replace(/^\/+/, '')
+  if (!cleanPath) return undefined
+  if (/^https?:\/\//i.test(cleanPath) || /^s3:\/\//i.test(cleanPath)) {
+    return cleanPath
+  }
+  if (!bucket || bucket.type === 'local') {
+    return undefined
+  }
+  if (bucket.public_domain?.trim()) {
+    return buildPublicObjectUrl(bucket.public_domain, cleanPath)
+  }
+  const endpoint = bucket.endpoint?.trim().replace(/\/+$/, '')
+  const bucketName = bucket.bucket_name?.trim().replace(/^\/+|\/+$/g, '')
+  if (endpoint && bucketName) {
+    const base = endpoint.includes('://')
+      ? endpoint
+      : `${bucket.use_ssl !== false ? 'https' : 'http'}://${endpoint}`
+    return `${base}/${bucketName}/${cleanPath}`
+  }
+  if (bucketName) {
+    return `s3://${bucketName}/${cleanPath}`
+  }
+  return undefined
+}

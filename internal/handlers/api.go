@@ -49,6 +49,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	protectedAPI.Get("/files/isos", fileHandler.ListISOs)
 	protectedAPI.Post("/files/upload", fileHandler.UploadFile)
 	protectedAPI.Get("/files/:id/download", fileHandler.Download)
+	protectedAPI.Get("/files/:id/presign", fileHandler.PresignDownloadURL)
 	protectedAPI.Put("/files/:id/rename", fileHandler.RenameFile)
 	protectedAPI.Delete("/files/:id", fileHandler.DeleteFile)
 	protectedAPI.Post("/files/refresh", fileHandler.RefreshCache)
@@ -63,6 +64,7 @@ func RegisterRoutes(app *fiber.App, db *gorm.DB, cfg *appconfig.Config, taskClie
 	protectedAPI.Delete("/builds/:id", buildHandler.Delete)
 	protectedAPI.Get("/builds/:id/logs", buildHandler.GetLogs)
 	protectedAPI.Get("/builds/:id/artifact", buildHandler.DownloadArtifact)
+	protectedAPI.Get("/builds/:id/artifact-url", buildHandler.GetArtifactDownloadURL)
 	protectedAPI.Post("/builds/:id/archive-s3", buildHandler.ArchiveToS3)
 
 	workerAPI := api.Group("/worker")

@@ -166,6 +166,25 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	if err != nil {
 		return err
 	}
+
+	isS3Output := models.NormalizeStorageType(outputBucket.Type) == models.StorageTypeS3
+	pendingObjectPath := path.Join("build", outputFileName)
+	pendingTargetDisplay := buildBucketObjectURL(outputBucket, pendingObjectPath)
+	archiveStartLog := fmt.Sprintf("Saving ISO to storage (%s: %s)...", outputBucket.Name, pendingTargetDisplay)
+	if isS3Output {
+		archiveStartLog = fmt.Sprintf("Archiving ISO to S3 (%s: %s)...", outputBucket.Name, pendingTargetDisplay)
+	}
+	_ = h.db.WithContext(ctx).Model(&models.BuildTask{}).
+		Where("task_id = ?", payload.TaskID).
+		Updates(map[string]any{
+			"progress":   96,
+			"log_output": gorm.Expr("COALESCE(log_output, '') || ?", archiveStartLog+"\n"),
+		}).Error
+	if h.wsManager != nil {
+		h.wsManager.BroadcastLog(payload.TaskID, archiveStartLog)
+		h.wsManager.BroadcastProgress(payload.TaskID, 96)
+	}
+
 	outputObjectPath, shaValue, outputSize, err := storeBuildOutput(ctx, outputStore, outputLocalPath, outputFileName)
 	if err != nil {
 		return err
@@ -176,14 +195,14 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	completedAt := time.Now()
 	h.upsertOutputMetadata(ctx, outputBucket.ID, outputObjectPath, payload.ESXiVersion, outputFileName, shaValue, outputSize, completedAt)
 
-	isS3Output := models.NormalizeStorageType(outputBucket.Type) == models.StorageTypeS3
 	if isS3Output {
 		h.cleanupLocalGeneratedISO(ctx, outputObjectPath)
 	}
 
+	finalTargetDisplay := buildBucketObjectURL(outputBucket, outputObjectPath)
 	extraArchiveLog := ""
 	if isS3Output {
-		extraArchiveLog = fmt.Sprintf("ISO archived to S3 (%s: %s) and local generated ISO cleaned\n", outputBucket.Name, outputObjectPath)
+		extraArchiveLog = fmt.Sprintf("ISO archived to S3 (%s: %s) and local generated ISO cleaned\n", outputBucket.Name, finalTargetDisplay)
 	}
 
 	updates := map[string]any{
@@ -196,14 +215,14 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 		"completed_at":      completedAt,
 		"build_duration":    int(completedAt.Sub(startedAt).Seconds()),
 		"error_message":     "",
-		"log_output":        gorm.Expr("COALESCE(log_output, '') || ?", fmt.Sprintf("[TIMING] powercli_process_ms=%d\n[TIMING] artifact_persist_ms=%d\nISO uploaded to %s\n%s", powerCLIDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), outputObjectPath, extraArchiveLog)),
+		"log_output":        gorm.Expr("COALESCE(log_output, '') || ?", fmt.Sprintf("[TIMING] powercli_process_ms=%d\n[TIMING] artifact_persist_ms=%d\nISO uploaded to %s\n%s", powerCLIDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), finalTargetDisplay, extraArchiveLog)),
 	}
 	if err := h.db.WithContext(ctx).Model(&models.BuildTask{}).Where("task_id = ?", payload.TaskID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("finalize build task: %w", err)
 	}
 
 	if h.wsManager != nil {
-		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", outputObjectPath))
+		h.wsManager.BroadcastLog(payload.TaskID, fmt.Sprintf("ISO uploaded to %s", finalTargetDisplay))
 		if extraArchiveLog != "" {
 			h.wsManager.BroadcastLog(payload.TaskID, strings.TrimSpace(extraArchiveLog))
 		}
@@ -211,6 +230,31 @@ func (h *BuildTaskHandler) HandleBuildISO(ctx context.Context, task *asynq.Task)
 	}
 
 	return nil
+}
+
+func buildBucketObjectURL(bucket models.StorageBucket, objectPath string) string {
+	cleanPath := strings.TrimLeft(strings.TrimSpace(objectPath), "/")
+	if cleanPath == "" {
+		return ""
+	}
+	if models.NormalizeStorageType(bucket.Type) == models.StorageTypeS3 {
+		if domain := storage.NormalizePublicDomain(bucket.PublicDomain); domain != "" {
+			return domain + "/" + cleanPath
+		}
+		endpoint := strings.TrimRight(strings.TrimSpace(bucket.Endpoint), "/")
+		bucketName := strings.Trim(strings.TrimSpace(bucket.BucketName), "/")
+		if endpoint != "" && bucketName != "" {
+			if !strings.Contains(endpoint, "://") {
+				if bucket.UseSSL {
+					endpoint = "https://" + endpoint
+				} else {
+					endpoint = "http://" + endpoint
+				}
+			}
+			return endpoint + "/" + bucketName + "/" + cleanPath
+		}
+	}
+	return cleanPath
 }
 
 func (h *BuildTaskHandler) appendLog(ctx context.Context, taskID string, msg string) error {

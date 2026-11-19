@@ -295,6 +295,32 @@ func (h *BuildHandler) ArchiveToS3(c *fiber.Ctx) error {
 	return c.JSON(utils.SuccessResponse(res))
 }
 
+func (h *BuildHandler) GetArtifactDownloadURL(c *fiber.Ctx) error {
+	taskID := strings.TrimSpace(c.Params("id"))
+	if taskID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorResponse("build task id is required"))
+	}
+
+	var task models.BuildTask
+	if err := h.db.WithContext(c.UserContext()).Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(utils.ErrorResponse("build task not found"))
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+	if task.Status != models.BuildTaskStatusCompleted || strings.TrimSpace(task.OutputISO) == "" {
+		return c.Status(fiber.StatusConflict).JSON(utils.ErrorResponse("build artifact is not available"))
+	}
+
+	expiresSec := parsePositiveInt(c.Query("expires"), 86400)
+	svc := services.NewFileService(h.db, nil)
+	res, err := svc.GetBucketObjectPresignedURL(c.UserContext(), task.StorageBucketID, task.OutputISO, time.Duration(expiresSec)*time.Second)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorResponse(err.Error()))
+	}
+	return c.JSON(utils.SuccessResponse(res))
+}
+
 func (h *BuildHandler) openArtifact(ctx context.Context, bucketID uint, objectPath string) (io.ReadCloser, error) {
 	var bucket models.StorageBucket
 	if err := h.db.WithContext(ctx).First(&bucket, bucketID).Error; err != nil {

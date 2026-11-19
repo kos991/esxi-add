@@ -295,6 +295,60 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     [/output already exists; refusing/i, '输出文件已存在，已拒绝覆盖旧产物', 'error', '输出'],
   ]
 
+  if (/^iso created[:\s]+(.+)$/i.test(trimmed)) {
+    return {
+      raw: line,
+      chinese: '镜像本地封装完成，准备转存至 S3 对象存储…',
+      kind: 'step',
+      badge: '封装',
+      dedupeKey: 'iso:local_created',
+    }
+  }
+
+  const archivingS3 = trimmed.match(/^archiving iso to s3 \(([^:]+):\s*(.+)\)\.{3}$/i)
+  if (archivingS3) {
+    return {
+      raw: line,
+      chinese: `正在将产出镜像转存至 S3 对象存储（${archivingS3[1]} · ${archivingS3[2]}），请稍候…`,
+      kind: 'step',
+      badge: '转存',
+      dedupeKey: 'iso:archiving_s3',
+    }
+  }
+
+  const savingStorage = trimmed.match(/^saving iso to storage \(([^:]+):\s*(.+)\)\.{3}$/i)
+  if (savingStorage) {
+    return {
+      raw: line,
+      chinese: `正在将产出镜像写入存储（${savingStorage[1]} · ${savingStorage[2]}），请稍候…`,
+      kind: 'step',
+      badge: '转存',
+      dedupeKey: 'iso:saving_storage',
+    }
+  }
+
+  const archivedS3 = trimmed.match(/^iso archived to s3 \(([^:]+):\s*(.+)\) and local generated iso cleaned$/i)
+  if (archivedS3) {
+    return {
+      raw: line,
+      chinese: `产出镜像 S3 地址：${archivedS3[2]}（已转存至 S3「${archivedS3[1]}」并清理本地临时镜像）`,
+      kind: 'success',
+      badge: '产物',
+      dedupeKey: 'iso:final_output',
+    }
+  }
+
+  const uploadedIso = trimmed.match(/^iso uploaded to (.+)$/i)
+  if (uploadedIso) {
+    return {
+      raw: line,
+      chinese: `产出镜像 S3 地址：${uploadedIso[1]}`,
+      kind: 'success',
+      badge: '产物',
+      dedupeKey: 'iso:final_output',
+    }
+  }
+
   const rules: Array<[RegExp, string, ChineseLogKind, string]> = [
     [/starting native .*(iso )?build/i, '启动 Linux 原生重封装引擎', 'step', '引擎'],
     [/^using base iso[:\s]+(.+)$/i, '实际使用的基础镜像：$1', 'step', '镜像'],
@@ -306,7 +360,6 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     [/^extracting and injecting drivers.*$/i, '正在解包并注入驱动', 'step', '驱动'],
     [/iso image produced[:\s]+(\d+).*sectors/i, '镜像已生成，共 $1 个扇区', 'step', '封装'],
     [/^written to medium/i, '镜像已写入输出文件', 'step', '封装'],
-    [/^iso created[:\s]+(.+)$/i, '输出的 ISO：$1', 'success', '产物'],
     [/^rebuilding .*iso.*$/i, '正在重新封装可引导镜像', 'step', '封装'],
     [/^starting build\.*$/i, '开始构建', 'step', '构建'],
     [/^cloning profile[:\s]+(.+)$/i, '克隆镜像配置：$1', 'step', '配置'],
@@ -316,8 +369,6 @@ export function formatLogToChinese(line: string): FormattedChineseLog | null {
     [/^loading esxi depot/i, '正在加载 ESXi 软件仓库', 'step', '仓库'],
     [/^getting image profile/i, '正在读取镜像配置', 'step', '配置'],
     [/^no esxi image profiles found/i, '软件仓库中没有可用的镜像配置', 'error', '仓库'],
-    [/^iso uploaded to (.+)$/i, '定制 ISO 已写入存储：$1', 'success', '入库'],
-    [/^iso archived to s3 \(([^:]+):\s*(.+)\) and local generated iso cleaned$/i, '已转存至 S3（$1 · $2）并自动清理本地生成的镜像', 'success', '归档'],
     [/^enabled boot tweak: cpuUniformityHardCheckPanic=FALSE.*$/i, '已注入 Intel 大小核防紫屏内核参数 (并写入装后持久化)', 'step', '参数'],
     [/^enabled boot tweak: allowLegacyCPU=true.*$/i, '已注入放行老旧 CPU 参数 (allowLegacyCPU=true)', 'step', '参数'],
     [/^enabled boot tweak: autoPartitionOSDataSize=8192.*$/i, '已启用 8GB 精简系统盘 (autoPartitionOSDataSize=8192)', 'step', '参数'],
@@ -408,6 +459,21 @@ function translateProgressText(text: string) {
     if (re.test(text)) return text2
   }
   return text
+}
+
+/** 判断构建任务当前是否正处于本地封装完毕、向 S3 对象存储转存上传的阶段。 */
+export function isArchivingPhase(status?: BuildTask['status'], rawLogs?: string[]): boolean {
+  if (status !== 'running' || !rawLogs || rawLogs.length === 0) return false
+  let enteredArchive = false
+  for (const line of rawLogs) {
+    if (/^(archiving iso to s3|saving iso to storage|iso created:)/i.test(line.trim())) {
+      enteredArchive = true
+    }
+    if (/^(iso uploaded to|iso archived to s3)/i.test(line.trim())) {
+      enteredArchive = false
+    }
+  }
+  return enteredArchive
 }
 
 /** 相邻重复的中文行去掉，保留原始日志视图完整。 */
